@@ -1,0 +1,52 @@
+services:
+  database:
+    image: timescale/timescaledb:latest-pg16
+    container_name: flowscope-database
+    environment:
+      POSTGRES_DB: flowscope
+      POSTGRES_USER: flowscope
+      POSTGRES_PASSWORD: flowscope
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./database/migrations/001_initial_schema.sql:/docker-entrypoint-initdb.d/001_initial_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowscope -d flowscope"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: flowscope-backend
+    env_file:
+      - .env
+    environment:
+      FLOWSCOPE_DATABASE_URL: postgresql+asyncpg://flowscope:flowscope@database:5432/flowscope
+      FLOWSCOPE_CORS_ORIGINS: http://localhost:3000
+      FLOWSCOPE_FRONTEND_URL: http://localhost:3000
+    ports:
+      - "8000:8000"
+    depends_on:
+      database:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    container_name: flowscope-frontend
+    env_file:
+      - .env
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  timescale_data:

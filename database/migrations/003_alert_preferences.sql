@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS alert_preferences (
+  user_id VARCHAR(80) PRIMARY KEY,
+  signal_types JSONB NOT NULL DEFAULT '[]',
+  watchlist JSONB NOT NULL DEFAULT '[]',
+  min_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+  debounce_minutes INTEGER NOT NULL DEFAULT 10,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
