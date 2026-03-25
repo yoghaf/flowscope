@@ -23,13 +23,29 @@ export function formatPrice(value: number | null | undefined): string {
     return "--";
   }
 
-  const minimumFractionDigits = numericValue >= 1000 ? 2 : numericValue >= 1 ? 2 : 4;
-  const maximumFractionDigits = numericValue >= 1000 ? 2 : numericValue >= 1 ? 4 : 6;
+  if (numericValue >= 1000) {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(numericValue);
+  }
+  
+  if (numericValue >= 1) {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    }).format(numericValue);
+  }
+
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    minimumFractionDigits,
-    maximumFractionDigits,
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 8,
   }).format(numericValue);
 }
 

@@ -77,19 +77,20 @@ cd /var/www/flowscope
    ```bash
    pip install -r requirements.txt
    ```
-3. Sesuaikan file `.env` untuk config database yang menggunakan kredensial PostgreSQL yang baru Anda buat.
+3. Sesuaikan file `.env` untuk config database yang menggunakan kredensial PostgreSQL yang baru Anda buat. Tambahkan juga aturan CORS untuk mengizinkan web Anda meremote data.
    ```ini
    DATABASE_URL=postgresql://flowdb_user:password_super_kuat@localhost:5432/flowscope
+   FLOWSCOPE_CORS_ORIGINS=http://IP_VPS_ANDA:3000,http://IP_VPS_ANDA,http://localhost:3000
    ```
 4. Verifikasi bahwa database dapat bermigrasi dan backend menyala normal:
    ```bash
-   python -m uvicorn main:app --port 8000
+   python -m uvicorn main:app --host 0.0.0.0 --port 8000
    ```
    *(Tekan CTRL+C jika log terlihat hijau dan API sudah jalan)*
 
 5. **Jalankan Backend Secara Permanen via PM2:**
    ```bash
-   pm2 start "source venv/bin/activate && python -m uvicorn main:app --host 127.0.0.1 --port 8000" --name flowscope-backend
+   pm2 start "source venv/bin/activate && python -m uvicorn main:app --host 0.0.0.0 --port 8000" --name flowscope-backend
    ```
 
 ---
@@ -104,11 +105,17 @@ cd /var/www/flowscope
    ```bash
    npm install
    ```
-3. Sesuaikan URL API backend Anda (opsional, jika Anda menyiapkan koneksi antar-port secara default, biarkan standar).
+3. **PENTING: Tembakkan URL API ke IP Servermu!**
+   Secara default React akan mencoba mengambil data di `localhost`. Agar web bisa diakses dari HP/PC lain, beri tahu Next.js di mana API berada dengan membuat file `.env.local`:
+   ```bash
+   echo "NEXT_PUBLIC_API_URL=http://IP_VPS_ANDA:8000" > .env.local
+   ```
 4. Lakukan Build untuk *Production*:
    ```bash
    npm run build
    ```
+   *(Setiap kali kamu mengubah IP/URL di `.env.local`, kamu wajib melakukan `npm run build` ulang)*.
+   
 5. **Jalankan Frontend Secara Permanen via PM2:**
    ```bash
    pm2 start npm --name "flowscope-frontend" -- start
