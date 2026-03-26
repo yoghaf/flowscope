@@ -18,14 +18,18 @@ logger = logging.getLogger(__name__)
 
 # Binance futures WS for all mark prices + funding (0 API weight)
 _WS_MARK_PRICE_URL = "wss://fstream.binance.com/ws/!markPrice@arr"
+_WS_FORCE_ORDER_URL = "wss://fstream.binance.com/ws/!forceOrder@arr"
 
 # Bulk endpoints (1 call = all symbols)
 _FAPI_TICKER_24HR = "/fapi/v1/ticker/24hr"        # weight 40
 _SPOT_TICKER_24HR = "/api/v3/ticker/24hr"          # weight 40
+_SPOT_KLINES = "/api/v3/klines"
 _FAPI_OPEN_INTEREST = "/fapi/v1/openInterest"      # weight 1 per symbol
 _FAPI_PREMIUM_INDEX = "/fapi/v1/premiumIndex"      # weight 10 (bulk, all symbols)
 _FAPI_GLOBAL_LS_RATIO = "/futures/data/globalLongShortAccountRatio"  # weight 5
 _FAPI_TAKER_LS_RATIO = "/futures/data/takerlongshortRatio"           # weight 5
+_FAPI_OI_HIST = "/futures/data/openInterestHist"
+_FAPI_FUNDING_RATE_HIST = "/fapi/v1/fundingRate"
 _FAPI_KLINES = "/fapi/v1/klines"                   # weight 1-10
 
 # Backfill endpoint
@@ -83,6 +87,7 @@ class BinanceCollector(BaseCollector):
 
         # ── WS state ─────────────────────────────────────────────────
         self._ws_task: asyncio.Task[None] | None = None
+        self._force_order_task: asyncio.Task[None] | None = None
         self._ws_connected = False
         self._ws_reconnect_delay = getattr(settings, "ws_reconnect_delay", 5)
 
@@ -98,6 +103,7 @@ class BinanceCollector(BaseCollector):
         self._symbols = list(symbols)
         self._running = True
         self._ws_task = asyncio.create_task(self._ws_loop())
+        self._force_order_task = asyncio.create_task(self._force_order_loop())
         self._rotary_tasks = [
             asyncio.create_task(self._rotary_oi_loop()),
             asyncio.create_task(self._rotary_ratio_loop()),
@@ -118,6 +124,8 @@ class BinanceCollector(BaseCollector):
             task.cancel()
         if self._ws_task:
             self._ws_task.cancel()
+        if self._force_order_task:
+            self._force_order_task.cancel()
         self._rotary_tasks.clear()
 
     async def close(self) -> None:
@@ -167,6 +175,48 @@ class BinanceCollector(BaseCollector):
                 logger.info(
                     "WS markPrice reconnecting in %ds", self._ws_reconnect_delay
                 )
+                await asyncio.sleep(self._ws_reconnect_delay)
+
+    async def _force_order_loop(self) -> None:
+        """Maintain liquidation cache from public force-order stream."""
+        while self._running:
+            try:
+                logger.info("WS forceOrder connecting to %s", _WS_FORCE_ORDER_URL)
+                async with websockets.connect(
+                    _WS_FORCE_ORDER_URL,
+                    ping_interval=20,
+                    ping_timeout=10,
+                    close_timeout=5,
+                ) as ws:
+                    logger.info("WS forceOrder connected")
+                    async for message in ws:
+                        try:
+                            payload = json.loads(message)
+                            order = payload.get("o") if isinstance(payload, dict) else None
+                            if not isinstance(order, dict):
+                                continue
+                            symbol = order.get("s", "")
+                            side = order.get("S", "")
+                            filled_qty = self.parse_float(order.get("z") or order.get("q"))
+                            avg_price = self.parse_float(order.get("ap") or order.get("p"))
+                            liquidation_value = max(filled_qty * avg_price, 0.0)
+                            if not symbol or liquidation_value <= 0.0:
+                                continue
+                            long_total, short_total = self._liquidation_cache.get(symbol, (0.0, 0.0))
+                            if side == "SELL":
+                                long_total += liquidation_value
+                            elif side == "BUY":
+                                short_total += liquidation_value
+                            self._liquidation_cache[symbol] = (long_total, short_total)
+                        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                            logger.debug("WS forceOrder parse error: %s", exc)
+            except websockets.exceptions.ConnectionClosed as exc:
+                logger.warning("WS forceOrder disconnected: %s", exc)
+            except Exception as exc:
+                logger.error("WS forceOrder error: %s", exc)
+
+            if self._running:
+                logger.info("WS forceOrder reconnecting in %ds", self._ws_reconnect_delay)
                 await asyncio.sleep(self._ws_reconnect_delay)
 
     # ─── rotary REST loops ────────────────────────────────────────────
@@ -447,10 +497,7 @@ class BinanceCollector(BaseCollector):
         Used for DB backfill at startup. Batches requests with delays
         to stay within rate limits.
         """
-        from backend.services.timeframe_aggregator import (
-            TIMEFRAME_DELTAS,
-            TimeframeBucket,
-        )
+        from backend.services.timeframe_aggregator import TIMEFRAME_DELTAS, TimeframeBucket
         from backend.engines.flow_engine import HistoryPoint
 
         interval_map = {"15m": "15m", "1h": "1h", "4h": "4h", "24h": "1d"}
@@ -469,60 +516,163 @@ class BinanceCollector(BaseCollector):
                 override = (limits_override or {}).get(symbol, {})
                 limit = override.get(tf, default_limits.get(tf, 500))
                 interval = interval_map.get(tf, "1h")
+                futures_klines: list[Any] = []
+                spot_klines: list[Any] = []
+                oi_entries: list[dict[str, Any]] = []
+                funding_entries: list[dict[str, Any]] = []
 
-                try:
+                async def fetch_futures_klines() -> None:
+                    nonlocal futures_klines
                     response = await self.client.get(
                         f"{self.rest_url}{_FAPI_KLINES}",
-                        params={
-                            "symbol": symbol,
-                            "interval": interval,
-                            "limit": limit,
-                        },
+                        params={"symbol": symbol, "interval": interval, "limit": limit},
                     )
                     response.raise_for_status()
-                    raw = response.json()
-                except Exception as exc:
-                    logger.debug("Backfill kline failed %s/%s: %s", symbol, tf, exc)
+                    futures_klines = response.json()
+
+                async def fetch_spot_klines() -> None:
+                    nonlocal spot_klines
+                    response = await self.client.get(
+                        f"{self.spot_rest_url}{_SPOT_KLINES}",
+                        params={"symbol": symbol, "interval": interval, "limit": limit},
+                    )
+                    response.raise_for_status()
+                    spot_klines = response.json()
+
+                async def fetch_oi_history() -> None:
+                    nonlocal oi_entries
+                    response = await self.client.get(
+                        f"{self.rest_url}{_FAPI_OI_HIST}",
+                        params={"symbol": symbol, "period": interval, "limit": limit},
+                    )
+                    response.raise_for_status()
+                    oi_entries = response.json()
+
+                async def fetch_funding_history() -> None:
+                    nonlocal funding_entries
+                    response = await self.client.get(
+                        f"{self.rest_url}{_FAPI_FUNDING_RATE_HIST}",
+                        params={"symbol": symbol, "limit": min(max(limit, 50), 1000)},
+                    )
+                    response.raise_for_status()
+                    funding_entries = response.json()
+
+                futures_task = fetch_futures_klines()
+                optional_tasks = [
+                    fetch_spot_klines(),
+                    fetch_oi_history(),
+                    fetch_funding_history(),
+                ]
+
+                futures_result, spot_result, oi_result, funding_result = await asyncio.gather(
+                    futures_task,
+                    *optional_tasks,
+                    return_exceptions=True,
+                )
+
+                if isinstance(futures_result, Exception):
+                    logger.debug("Backfill kline failed %s/%s: %s", symbol, tf, futures_result)
                     return []
+                if isinstance(spot_result, Exception):
+                    logger.debug("Backfill spot kline unavailable %s/%s: %s", symbol, tf, spot_result)
+                    spot_klines = []
+                if isinstance(oi_result, Exception):
+                    logger.debug("Backfill OI history unavailable %s/%s: %s", symbol, tf, oi_result)
+                    oi_entries = []
+                if isinstance(funding_result, Exception):
+                    logger.debug("Backfill funding history unavailable %s/%s: %s", symbol, tf, funding_result)
+                    funding_entries = []
+
+                spot_volume_map = {
+                    int(item[0]): float(item[7]) if len(item) > 7 else float(item[5])
+                    for item in spot_klines
+                }
+                oi_series = sorted(
+                    (
+                        (
+                            int(str(entry.get("timestamp", "0"))),
+                            self.parse_float(entry.get("sumOpenInterest")),
+                        )
+                        for entry in oi_entries
+                    ),
+                    key=lambda item: item[0],
+                )
+                funding_series = sorted(
+                    (
+                        (
+                            int(entry.get("fundingTime", 0)),
+                            self.parse_float(entry.get("fundingRate")),
+                        )
+                        for entry in funding_entries
+                    ),
+                    key=lambda item: item[0],
+                )
+
+                def latest_series_value(series: list[tuple[int, float]], timestamp_ms: int, default: float) -> float:
+                    value = default
+                    for series_ts, series_value in series:
+                        if series_ts <= timestamp_ms:
+                            value = series_value
+                        else:
+                            break
+                    return value
 
                 buckets: list[Any] = []
-                prev_bucket: TimeframeBucket | None = None
-                for item in raw:
+                previous_oi_close = 0.0
+                for item in futures_klines:
                     ts = datetime.fromtimestamp(item[0] / 1000, tz=UTC)
-                    
+                    close_ts = datetime.fromtimestamp(item[6] / 1000, tz=UTC)
+                    timestamp_ms = int(item[0])
                     total_vol = float(item[5])
                     taker_buy_vol = float(item[9]) if len(item) > 9 else 0.0
                     taker_sell_vol = total_vol - taker_buy_vol
-                    # Calculate Taker Buy/Sell Ratio securely
                     taker_ratio = 1.0
                     if taker_sell_vol > 0:
                         taker_ratio = taker_buy_vol / taker_sell_vol
                     elif taker_buy_vol > 0:
-                        taker_ratio = 10.0 # High cap if sell vol is 0
-                        
-                    point = HistoryPoint(
-                        timestamp=ts,
-                        price=float(item[4]),  # close
-                        volume=total_vol,
-                        open_interest=0.0,
-                        funding_rate=0.0,
-                        long_short_ratio=1.0,  # Cannot get from basic kline
-                        taker_buy_sell_ratio=taker_ratio,
-                        spot_volume=0.0,
-                        futures_volume=float(item[7]) if len(item) > 7 else total_vol,
-                        long_liquidations=0.0,
-                        short_liquidations=0.0,
-                        exchange_count=1,
+                        taker_ratio = 10.0
+
+                    spot_quote_volume = spot_volume_map.get(timestamp_ms, 0.0)
+                    futures_quote_volume = float(item[7]) if len(item) > 7 else total_vol
+                    oi_close = latest_series_value(oi_series, timestamp_ms, previous_oi_close)
+                    oi_open = previous_oi_close if previous_oi_close > 0.0 else oi_close
+                    funding_rate = latest_series_value(funding_series, int(item[6]), 0.0)
+
+                    bucket = TimeframeBucket(
+                        symbol=symbol,
+                        timeframe=tf,
+                        bucket_start=ts,
+                        bucket_end=ts + TIMEFRAME_DELTAS[tf],
+                        last_timestamp=close_ts,
+                        open_price=float(item[1]),
+                        high_price=float(item[2]),
+                        low_price=float(item[3]),
+                        close_price=float(item[4]),
+                        open_interest_open=oi_open,
+                        open_interest_high=max(oi_open, oi_close),
+                        open_interest_low=min(oi_open, oi_close),
+                        open_interest_close=oi_close,
+                        spot_volume_open=spot_quote_volume,
+                        spot_volume_close=spot_quote_volume,
+                        spot_volume_delta=spot_quote_volume,
+                        futures_volume_open=futures_quote_volume,
+                        futures_volume_close=futures_quote_volume,
+                        futures_volume_delta=futures_quote_volume,
+                        funding_rate_sum=funding_rate,
+                        funding_rate_close=funding_rate,
+                        long_short_ratio_sum=1.0,
+                        long_short_ratio_close=1.0,
+                        taker_buy_sell_ratio_sum=taker_ratio,
+                        taker_buy_sell_ratio_close=taker_ratio,
+                        long_liquidations_close=0.0,
+                        long_liquidations_total=0.0,
+                        short_liquidations_close=0.0,
+                        short_liquidations_total=0.0,
+                        exchange_count_sum=1,
+                        sample_count=1,
                     )
-                    bucket = TimeframeBucket.from_point(
-                        symbol, tf, point, previous_bucket=prev_bucket
-                    )
-                    bucket.open_price = float(item[1])
-                    bucket.high_price = float(item[2])
-                    bucket.low_price = float(item[3])
-                    bucket.close_price = float(item[4])
                     buckets.append(bucket)
-                    prev_bucket = bucket
+                    previous_oi_close = oi_close
 
                 return buckets
 
