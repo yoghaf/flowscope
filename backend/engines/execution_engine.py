@@ -120,6 +120,8 @@ class ExecutionEngine:
 
         if decision == "Squeeze-Immediate":
             status: SetupStatus = "Triggered"
+        elif decision == "Squeeze-Setup":
+            status = "Ready" if confidence >= 0.75 else "Building"
         elif decision in {"Trap-Long", "Trap-Short"} and confidence >= 0.8:
             status = "Ready"
         elif decision in {"Watchlist-Long", "Watchlist-Short", "Watchlist-Squeeze"}:

@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     app_name: str = "FlowScope API"
     environment: Literal["development", "staging", "production"] = "development"
     debug: bool = True
-    demo_mode: bool = True
+    demo_mode: bool = False
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/flowscope_db"
     cors_origins: Annotated[list[str], NoDecode] = Field(

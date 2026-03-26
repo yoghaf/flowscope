@@ -228,6 +228,11 @@ export interface AssetSnapshot {
   decision_type?: DecisionType;
   reliability_score?: number;
   priority_multiplier?: number;
+  action_bias?: "Bullish" | "Bearish" | "Neutral" | null;
+  action_status?: "Building" | "Ready" | "Triggered" | null;
+  action_confidence_label?: "High" | "Medium" | "Low" | null;
+  action_opportunity_score?: number | null;
+  setup_type?: "Squeeze" | "Trap" | "Accumulation" | "Breakout" | "Continuation" | null;
   tf_conflict?: boolean;
   breakdown: ScoreBreakdown;
   exchange_count: number;

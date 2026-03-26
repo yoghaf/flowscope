@@ -227,6 +227,38 @@ function decisionBias(asset: AssetSnapshot, timeframe: Timeframe): TradeBias {
   }
 }
 
+function mapBackendStatus(status: AssetSnapshot["action_status"]): SetupStatus | null {
+  if (status === "Triggered") {
+    return "Triggered";
+  }
+  if (status === "Ready") {
+    return "Ready";
+  }
+  if (status === "Building") {
+    return "Developing";
+  }
+  return null;
+}
+
+function mapBackendSetupType(setupType: AssetSnapshot["setup_type"]): SetupType | null {
+  if (setupType === "Squeeze") {
+    return "Squeeze";
+  }
+  if (setupType === "Trap") {
+    return "Trap";
+  }
+  if (setupType === "Continuation") {
+    return "Continuation";
+  }
+  if (setupType === "Breakout") {
+    return "Watchlist";
+  }
+  if (setupType === "Accumulation") {
+    return "Watchlist";
+  }
+  return null;
+}
+
 export function buildMarketStory(input: StoryInput) {
   return {
     intent: intentText(input.intent ?? null),
@@ -320,7 +352,9 @@ export function buildActionLayer(
 ): ActionLayer {
   const reliability = toNumberOrNull(asset.reliability_score) ?? 0;
   const decision = asset.decision_type ?? "No-Trade";
-  const tradeBias = decisionBias(asset, timeframe);
+  const backendStatus = mapBackendStatus(asset.action_status);
+  const backendTradeBias = asset.action_bias ?? null;
+  const tradeBias = backendTradeBias ?? decisionBias(asset, timeframe);
   const conflictCount = countConflicts(
     asset.position_intent ?? "None",
     metric(asset, timeframe, "price_change"),
@@ -329,10 +363,12 @@ export function buildActionLayer(
     metric(asset, timeframe, "long_short_ratio_delta"),
   );
 
-  let setupType = setupTypeFromDecision(decision, asset.position_quality);
+  let setupType = mapBackendSetupType(asset.setup_type) ?? setupTypeFromDecision(decision, asset.position_quality);
   let status: SetupStatus = "Wait";
 
-  if (decision === "Squeeze-Immediate") {
+  if (backendStatus) {
+    status = backendStatus;
+  } else if (decision === "Squeeze-Immediate") {
     status = "Triggered";
   } else if (decision === "No-Trade") {
     status = "Wait";
@@ -352,8 +388,8 @@ export function buildActionLayer(
     tradeBias,
     setupType,
     status,
-    confidenceLabel: confidenceLabel(reliability),
-    opportunityScore: reliability * (toNumberOrNull(asset.priority_multiplier) ?? 1),
+    confidenceLabel: asset.action_confidence_label ?? confidenceLabel(reliability),
+    opportunityScore: toNumberOrNull(asset.action_opportunity_score) ?? (reliability * (toNumberOrNull(asset.priority_multiplier) ?? 1)),
   };
 }
 

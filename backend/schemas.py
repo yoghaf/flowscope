@@ -249,6 +249,11 @@ class AssetSnapshot(BaseModel):
     decision_type: DecisionType = "No-Trade"
     reliability_score: float = 0.0
     priority_multiplier: float = 1.0
+    action_bias: TradeBias | None = None
+    action_status: SetupStatus | None = None
+    action_confidence_label: str | None = None
+    action_opportunity_score: float | None = None
+    setup_type: SetupType | None = None
     tf_conflict: bool = False
     breakdown: ScoreBreakdown = Field(default_factory=ScoreBreakdown)
     exchange_count: int = 0

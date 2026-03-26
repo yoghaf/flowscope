@@ -102,6 +102,10 @@ class AssetState:
     reliability_score: float
     priority_multiplier: float
     exchange_count: int
+    action_bias: str | None = None
+    action_status: str | None = None
+    action_confidence_label: str | None = None
+    action_opportunity_score: float | None = None
     setup_type: str | None = None
     execution: ExecutionPlan | None = None
     tf_conflict: bool = False
@@ -1000,6 +1004,10 @@ class SignalService:
                 decision_type=positioning.decision,
                 reliability_score=positioning.reliability_score,
                 priority_multiplier=positioning.priority_multiplier,
+                action_bias=action.bias,
+                action_status=action.status,
+                action_confidence_label=action.confidence_label,
+                action_opportunity_score=action.opportunity_score,
                 setup_type=action.setup_type,
                 execution=execution,
                 exchange_count=bucket.avg_exchange_count,
@@ -1403,6 +1411,11 @@ class SignalService:
             decision_type=asset.decision_type,
             reliability_score=asset.reliability_score,
             priority_multiplier=asset.priority_multiplier,
+            action_bias=asset.action_bias,
+            action_status=asset.action_status,
+            action_confidence_label=asset.action_confidence_label,
+            action_opportunity_score=asset.action_opportunity_score,
+            setup_type=asset.setup_type,
             tf_conflict=asset.tf_conflict,
             breakdown=ScoreBreakdown(**asset.breakdown),
             exchange_count=asset.exchange_count,
@@ -1560,6 +1573,10 @@ class SignalService:
         decision_type: str = "No-Trade",
         reliability_score: float = 0.0,
         priority_multiplier: float = 0.7,
+        action_bias: str | None = None,
+        action_status: str | None = None,
+        action_confidence_label: str | None = None,
+        action_opportunity_score: float | None = None,
         setup_type: str | None = None,
         execution: ExecutionPlan | None = None,
         previous_state: AssetState | None = None,
@@ -1723,6 +1740,10 @@ class SignalService:
             decision_type=decision_type,
             reliability_score=reliability_score,
             priority_multiplier=priority_multiplier,
+            action_bias=action_bias if action_bias is not None else previous_state.action_bias if previous_state is not None else None,
+            action_status=action_status if action_status is not None else previous_state.action_status if previous_state is not None else None,
+            action_confidence_label=action_confidence_label if action_confidence_label is not None else previous_state.action_confidence_label if previous_state is not None else None,
+            action_opportunity_score=action_opportunity_score if action_opportunity_score is not None else previous_state.action_opportunity_score if previous_state is not None else None,
             setup_type=setup_type,
             execution=execution,
             exchange_count=exchange_count,
