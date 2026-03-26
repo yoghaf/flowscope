@@ -15,8 +15,12 @@ class PerformanceEngine:
             return None
 
         trades = await self.database.list_trade_signals()
+        grouped_all: dict[str, list] = {}
+        for trade in trades:
+            grouped_all.setdefault(trade.setup_type, []).append(trade)
+
         closed = [trade for trade in trades if trade.result in ("win", "loss")]
-        if not closed:
+        if not trades:
             return PerformanceResponse(
                 generated_at=datetime.now(UTC),
                 total_trades=0,
@@ -27,6 +31,33 @@ class PerformanceEngine:
                 setups=[],
             )
 
+        if not closed:
+            setups = [
+                SetupPerformance(
+                    setup_type=setup_type,
+                    state=None,
+                    trades=len(trades_for_type),
+                    open_trades=len(trades_for_type),
+                    closed_trades=0,
+                    winrate=0.0,
+                    avg_win=0.0,
+                    avg_loss=0.0,
+                    rr_ratio=0.0,
+                    expectancy=0.0,
+                    validated=False,
+                )
+                for setup_type, trades_for_type in grouped_all.items()
+            ]
+            return PerformanceResponse(
+                generated_at=datetime.now(UTC),
+                total_trades=0,
+                winrate=0.0,
+                expectancy=0.0,
+                best_setup=None,
+                worst_setup=None,
+                setups=sorted(setups, key=lambda item: item.trades, reverse=True),
+            )
+
         total = len(closed)
         wins = [trade for trade in closed if trade.result == "win"]
         losses = [trade for trade in closed if trade.result == "loss"]
@@ -35,15 +66,13 @@ class PerformanceEngine:
         avg_loss = abs(sum(trade.pnl_pct for trade in losses) / len(losses)) if losses else 0.0
         expectancy = (winrate * avg_win) - ((1 - winrate) * avg_loss)
 
-        grouped: dict[str, list] = {}
-        for trade in closed:
-            grouped.setdefault(trade.setup_type, []).append(trade)
-
         setups: list[SetupPerformance] = []
-        for setup_type, trades_for_type in grouped.items():
-            wins_t = [trade for trade in trades_for_type if trade.result == "win"]
-            losses_t = [trade for trade in trades_for_type if trade.result == "loss"]
-            total_t = len(trades_for_type)
+        for setup_type, trades_for_type in grouped_all.items():
+            closed_t = [trade for trade in trades_for_type if trade.result in ("win", "loss")]
+            open_t = [trade for trade in trades_for_type if trade.result == "open"]
+            wins_t = [trade for trade in closed_t if trade.result == "win"]
+            losses_t = [trade for trade in closed_t if trade.result == "loss"]
+            total_t = len(closed_t)
             winrate_t = len(wins_t) / total_t if total_t else 0.0
             avg_win_t = sum(trade.pnl_pct for trade in wins_t) / len(wins_t) if wins_t else 0.0
             avg_loss_t = abs(sum(trade.pnl_pct for trade in losses_t) / len(losses_t)) if losses_t else 0.0
@@ -53,7 +82,9 @@ class PerformanceEngine:
                 SetupPerformance(
                     setup_type=setup_type,
                     state=None,
-                    trades=total_t,
+                    trades=len(trades_for_type),
+                    open_trades=len(open_t),
+                    closed_trades=total_t,
                     winrate=round(winrate_t, 4),
                     avg_win=round(avg_win_t, 4),
                     avg_loss=round(avg_loss_t, 4),
@@ -63,8 +94,9 @@ class PerformanceEngine:
                 )
             )
 
-        best_setup = max(setups, key=lambda item: item.expectancy, default=None)
-        worst_setup = min(setups, key=lambda item: item.expectancy, default=None)
+        setups_with_results = [item for item in setups if item.closed_trades > 0]
+        best_setup = max(setups_with_results, key=lambda item: item.expectancy, default=None)
+        worst_setup = min(setups_with_results, key=lambda item: item.expectancy, default=None)
 
         regime_grouped: dict[str, list] = {}
         for trade in closed:

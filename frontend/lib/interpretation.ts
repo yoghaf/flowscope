@@ -32,7 +32,7 @@ export type RiskLevel = "Low" | "Medium" | "High";
 export type QualityScore = "A" | "B" | "C";
 
 export type ExecutionLayer = {
-  entryType: "Breakout" | "Breakout Watch";
+  entryType: string;
   entryMin: number | null;
   entryMax: number | null;
   invalidation: number | null;
@@ -439,14 +439,60 @@ function qualityScore(confidence: number): QualityScore {
   return confidence > 0.85 ? "A" : confidence >= 0.75 ? "B" : "C";
 }
 
+function defaultEntryTypeForSetup(setupType: SetupType, status: SetupStatus): string {
+  if (setupType === "Squeeze") {
+    return status === "Triggered" ? "Squeeze Trigger" : "Squeeze Watch";
+  }
+  if (setupType === "Trap") {
+    return status === "Triggered" ? "Trap Reversal" : "Trap Watch";
+  }
+  if (setupType === "Continuation") {
+    return status === "Triggered" ? "Continuation Breakout" : "Continuation Watch";
+  }
+  if (setupType === "Watchlist") {
+    return "Watchlist Build";
+  }
+  if (setupType === "Compression") {
+    return "Compression Watch";
+  }
+  return status === "Triggered" ? "Breakout" : "Breakout Watch";
+}
+
+export function describeExecutionPlan(
+  action: ActionLayer,
+  execution: ExecutionLayer,
+  decision: DecisionType | undefined | null,
+): string {
+  if (decision === "No-Trade") {
+    return "NO TRADE - WAIT";
+  }
+  if (execution.entryMin !== null) {
+    return execution.entryType;
+  }
+  if (action.status === "Developing") {
+    return `${action.setupType} setup is building`;
+  }
+  if (action.status === "Ready") {
+    return `Waiting for ${action.setupType.toLowerCase()} trigger`;
+  }
+  if (action.status === "Triggered") {
+    return `${action.setupType} trigger armed`;
+  }
+  if (action.status === "Unstable") {
+    return `${action.setupType} setup is unstable`;
+  }
+  return "Waiting for trigger";
+}
+
 export function buildExecutionLayer(
   asset: AssetSnapshot,
   timeframe: Timeframe,
 ): ExecutionLayer {
   const execution = asset.execution;
+  const action = buildActionLayer(asset, timeframe);
   if (!execution) {
     return {
-      entryType: "Breakout",
+      entryType: defaultEntryTypeForSetup(action.setupType, action.status),
       entryMin: null,
       entryMax: null,
       invalidation: null,
@@ -460,7 +506,7 @@ export function buildExecutionLayer(
   }
 
   return {
-    entryType: execution.entry_type === "Breakout" ? "Breakout" : "Breakout Watch",
+    entryType: execution.entry_type,
     entryMin: execution.entry_min,
     entryMax: execution.entry_max,
     invalidation: execution.invalidation,
@@ -620,26 +666,45 @@ export function buildInterpretation(
   }
 
   const execution = buildExecutionLayer(asset, timeframe);
+  const executionLabel = describeExecutionPlan(action, execution, decision);
+  const isWatchExecution = execution.entryType.includes("Watch");
   const executionContext: ExecutionContext =
     execution.entryMin === null
       ? {
-          entryRationale: "Execution is not armed because the breakout trigger is not valid yet.",
+          entryRationale:
+            action.setupType === "Squeeze"
+              ? "Execution is not armed because the squeeze trigger is not valid yet."
+              : action.setupType === "Trap"
+                ? "Execution is not armed because the trap reversal trigger is not valid yet."
+                : action.setupType === "Continuation"
+                  ? "Execution is not armed because the continuation trigger is not valid yet."
+                  : "Execution is not armed because the setup is still building.",
           invalidationRationale: "No active invalidation because no executable setup is armed.",
-          confirmCondition: "Wait for a valid breakout with OI and volume confirmation.",
+          confirmCondition:
+            action.setupType === "Squeeze"
+              ? "Wait for squeeze release with OI and volume confirmation."
+              : action.setupType === "Trap"
+                ? "Wait for rejection and reversal confirmation before acting."
+                : "Wait for a valid directional trigger with OI and volume confirmation.",
           cancelCondition: "Cancel if the structure degrades or intent returns to neutral.",
           flipBias: "Bias flips only if the opposite fingerprint and validator confirm.",
         }
-      : execution.entryType === "Breakout Watch"
+      : isWatchExecution
         ? {
-            entryRationale: "Execution is staged as a breakout watch and activates only if price reaches the trigger level.",
-            invalidationRationale: "Invalidation sits on the opposite side of the current structure while the breakout is still pending.",
-            confirmCondition: "Confirm entry only if price expands through the trigger with OI and volume support.",
+            entryRationale: `${executionLabel} activates only if price reaches the trigger level.`,
+            invalidationRationale: "Invalidation sits on the opposite side of the current structure while the trigger is still pending.",
+            confirmCondition:
+              action.setupType === "Squeeze"
+                ? "Confirm entry only if the squeeze resolves with OI and volume support."
+                : action.setupType === "Trap"
+                  ? "Confirm entry only if reversal follows through after the trap."
+                  : "Confirm entry only if price expands through the trigger with OI and volume support.",
             cancelCondition: "Cancel if price drifts away from the trigger or positioning collapses before the break.",
             flipBias: "Bias flips if the opposite fingerprint becomes valid and passes the validator.",
           }
       : {
-          entryRationale: "Execution is armed on a breakout trigger that passed the backend gate.",
-          invalidationRationale: "Invalidation is set at the opposite side of the breakout structure.",
+          entryRationale: `${executionLabel} is armed and passed the backend execution gate.`,
+          invalidationRationale: "Invalidation is set at the opposite side of the active structure.",
           confirmCondition: "Entry remains valid while price, OI, and volume stay aligned.",
           cancelCondition: "Cancel if price rejects back through the breakout and OI unwinds.",
           flipBias: "Bias flips if the opposite continuation or squeeze condition becomes dominant.",

@@ -344,6 +344,8 @@ export interface SetupPerformance {
   setup_type: string;
   state?: MarketState | null;
   trades: number;
+  open_trades?: number;
+  closed_trades?: number;
   winrate: number;
   avg_win: number;
   avg_loss: number;

@@ -12,6 +12,7 @@ import {
   buildActionLayer,
   buildExecutionLayer,
   buildInterpretation,
+  describeExecutionPlan,
   formatDecisionBadge,
 } from "@/lib/interpretation";
 import type {
@@ -129,6 +130,7 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
   const story = interpretation.narrative;
   const action = buildActionLayer(asset, timeframe);
   const execution = buildExecutionLayer(asset, timeframe);
+  const executionPlanTitle = describeExecutionPlan(action, execution, asset.decision_type);
   const quality = asset.position_quality ?? "Neutral";
   const decision = asset.decision_type ?? "No-Trade";
   const stateStyle = QUALITY_STYLES[quality] ?? QUALITY_STYLES.Unknown;
@@ -334,7 +336,7 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Execution Plan</p>
               <p className="text-sm font-semibold text-foreground">
-                {decision === "No-Trade" ? "NO TRADE - WAIT" : execution.entryMin === null ? "Waiting for trigger" : `${execution.entryType} entry`}
+                {executionPlanTitle}
               </p>
             </div>
             {decision === "No-Trade" ? null : (

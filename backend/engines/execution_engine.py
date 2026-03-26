@@ -153,6 +153,18 @@ class ExecutionEngine:
     def _quality_score(confidence: float) -> QualityScore:
         return "A" if confidence > 0.85 else "B" if confidence >= 0.75 else "C"
 
+    @staticmethod
+    def _entry_type_label(setup_type: SetupType, breakout_valid: bool) -> str:
+        if setup_type == "Squeeze":
+            return "Squeeze Trigger" if breakout_valid else "Squeeze Watch"
+        if setup_type == "Trap":
+            return "Trap Reversal" if breakout_valid else "Trap Watch"
+        if setup_type == "Continuation":
+            return "Continuation Breakout" if breakout_valid else "Continuation Watch"
+        if setup_type == "Breakout":
+            return "Breakout" if breakout_valid else "Breakout Watch"
+        return "Accumulation Break" if breakout_valid else "Accumulation Watch"
+
     def build_execution(
         self,
         action: ActionAssessment,
@@ -214,7 +226,7 @@ class ExecutionEngine:
         tp2 = entry + (direction * risk * 2.0)
 
         return ExecutionPlan(
-            entry_type="Breakout" if breakout_valid else "Breakout Watch",
+            entry_type=self._entry_type_label(action.setup_type, breakout_valid),
             entry_min=entry,
             entry_max=entry,
             invalidation=invalidation,

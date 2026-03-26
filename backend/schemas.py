@@ -394,6 +394,8 @@ class SetupPerformance(BaseModel):
     setup_type: SetupType
     state: MarketState | None = None
     trades: int
+    open_trades: int = 0
+    closed_trades: int = 0
     winrate: float
     avg_win: float
     avg_loss: float

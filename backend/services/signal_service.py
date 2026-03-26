@@ -360,7 +360,11 @@ class SignalService:
     ) -> CoinDetailResponse:
         symbol = symbol.upper()
         async with self._lock:
-            asset = self.snapshot_cache.get(snapshot_id)
+            if snapshot_id == "latest":
+                state = self.states_by_timeframe.get(timeframe, {}).get(symbol)
+                asset = self._to_asset_snapshot(state, timeframe) if state is not None else None
+            else:
+                asset = self.snapshot_cache.get(snapshot_id)
             if asset is not None and (asset.symbol != symbol or asset.timeframe != timeframe):
                 raise ValueError("Snapshot does not match requested symbol or timeframe")
             cutoff = None

@@ -25,6 +25,7 @@ import {
   buildActionLayer,
   buildExecutionLayer,
   buildInterpretation,
+  describeExecutionPlan,
   formatDecisionBadge,
   setupTypeFromDecision,
 } from "@/lib/interpretation";
@@ -82,6 +83,7 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
   const squeezePercent = Math.round(interpretation.risks.squeezeProbability * 100);
   const action = buildActionLayer(coin, timeframeParam);
   const execution = buildExecutionLayer(coin, timeframeParam);
+  const executionPlanTitle = describeExecutionPlan(action, execution, coin.decision_type);
   const entryRange =
     execution.entryMin === null || execution.entryMax === null
       ? "--"
@@ -94,12 +96,16 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
   const setupKey = setupTypeFromDecision(coin.decision_type, coin.position_quality) ?? "No clear edge";
   const setupStats =
     performanceData?.setups?.find((item) => item.setup_type === setupKey) ?? null;
-  const setupBadge = setupStats?.validated ? "Validated" : "Experimental";
+  const setupHasClosedTrades = (setupStats?.closed_trades ?? 0) > 0;
+  const setupHasOpenTrades = (setupStats?.open_trades ?? 0) > 0;
+  const setupBadge = setupStats?.validated ? "Validated" : setupHasOpenTrades && !setupHasClosedTrades ? "Collecting" : "Experimental";
   const setupBadgeTone = setupStats?.validated
     ? "text-emerald-300 border-emerald-500/30 bg-emerald-500/10"
+    : setupHasOpenTrades && !setupHasClosedTrades
+      ? "text-blue-300 border-blue-500/30 bg-blue-500/10"
     : "text-slate-300 border-white/10 bg-white/5";
-  const winratePercent = setupStats ? Math.round(setupStats.winrate * 100) : null;
-  const expectancyValue = setupStats?.expectancy ?? null;
+  const winratePercent = setupStats && setupHasClosedTrades ? Math.round(setupStats.winrate * 100) : null;
+  const expectancyValue = setupStats && setupHasClosedTrades ? setupStats.expectancy : null;
   const riskTone =
     execution.riskLevel === "High"
       ? "text-red-300 border-red-500/30 bg-red-500/10"
@@ -355,7 +361,7 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Execution Plan</p>
                 <p className="text-sm font-semibold text-foreground">
-                  {coin.decision_type === "No-Trade" ? "NO TRADE - WAIT" : execution.entryMin === null ? "Waiting for trigger" : `${execution.entryType} entry`}
+                  {executionPlanTitle}
                 </p>
               </div>
               {coin.decision_type === "No-Trade" ? null : (
@@ -425,6 +431,11 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
               <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                 <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Trades</p>
                 <p className="text-sm font-semibold text-foreground">{setupStats?.trades ?? "--"}</p>
+                {setupStats ? (
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    Open: {setupStats.open_trades ?? 0} / Closed: {setupStats.closed_trades ?? 0}
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>
