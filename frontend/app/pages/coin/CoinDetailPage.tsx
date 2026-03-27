@@ -24,9 +24,8 @@ import {
 import {
   buildActionLayer,
   buildExecutionLayer,
-  buildInterpretation,
   describeExecutionPlan,
-  formatDecisionBadge,
+  getMarketInterpretation,
   setupTypeFromDecision,
 } from "@/lib/interpretation";
 import type { FlowMetrics, Timeframe } from "@/lib/types";
@@ -78,9 +77,7 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
   const fundingRate = toNumberOrNull(coin.funding_rate);
   const longShortRatio = toNumberOrNull(coin.long_short_ratio);
   const reliability = toNumberOrNull(coin.reliability_score) ?? 0;
-  const interpretation = buildInterpretation(coin, timeframeParam);
-  const conflicts = interpretation.conflicts;
-  const squeezePercent = Math.round(interpretation.risks.squeezeProbability * 100);
+  const marketInterpretation = getMarketInterpretation(coin, timeframeParam);
   const action = buildActionLayer(coin, timeframeParam);
   const execution = buildExecutionLayer(coin, timeframeParam);
   const executionPlanTitle = describeExecutionPlan(action, execution, coin.decision_type);
@@ -120,6 +117,10 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
         : "text-slate-300 border-white/10 bg-white/5";
   const oiChangeValue =
     toNumberOrNull(coin.flow_metrics[`oi_change_${timeframeParam}` as keyof FlowMetrics]);
+  const volumeZValue =
+    toNumberOrNull(coin.flow_metrics[`volume_z_${timeframeParam}` as keyof FlowMetrics]);
+  const fundingTrendValue =
+    toNumberOrNull(coin.flow_metrics[`funding_trend_${timeframeParam}` as keyof FlowMetrics]);
   const dataStatusLabel =
     coin.data_status === "INSUFFICIENT_HISTORY"
       ? "INSUFFICIENT HISTORY"
@@ -165,7 +166,7 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
                 Data: {dataStatusLabel}
               </div>
               <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-foreground">
-                {formatDecisionBadge(coin.decision_type)}
+                {marketInterpretation.state}
               </div>
               <div className="rounded-xl border border-primary/20 bg-primary/10 px-4 py-2 font-semibold text-primary">
                 Reliability: {Math.round(reliability * 100)}%
@@ -248,112 +249,119 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
       <div className="rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/5 to-blue-500/5 p-6 backdrop-blur-xl">
         <div className="space-y-6">
           <div>
-            <h3 className="text-lg font-semibold text-foreground">Market Narrative</h3>
-            <div className="mt-4 grid grid-cols-1 gap-4 text-sm text-muted-foreground md:grid-cols-3">
+            <h3 className="text-lg font-semibold text-foreground">Market State</h3>
+            <div className="mt-4 grid grid-cols-1 gap-4 text-sm md:grid-cols-3">
               <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Intent</p>
-                <p className="mt-2 text-base font-semibold text-foreground">{interpretation.narrative.intent}</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Trend</p>
+                <p className="mt-2 text-base font-semibold text-foreground">{marketInterpretation.trend}</p>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pressure</p>
-                <p className="mt-2 text-base font-semibold text-foreground">{interpretation.narrative.pressure}</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Control</p>
+                <p className="mt-2 text-base font-semibold text-foreground">{marketInterpretation.control}</p>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Expectation</p>
-                <p className="mt-2 text-base font-semibold text-foreground">{interpretation.narrative.expectation}</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">State</p>
+                <p className="mt-2 text-base font-semibold text-foreground">{marketInterpretation.state}</p>
               </div>
-            </div>
-          </div>
-
-          <div>
-            <h4 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Decision Reasoning</h4>
-            <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-base font-semibold text-foreground">{interpretation.decisionReasoning.title}</p>
-              <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
-                {interpretation.decisionReasoning.bullets.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Timing Context</p>
-              <p className="mt-2 text-base font-semibold text-foreground">{interpretation.timing.stage}</p>
-              <p className="mt-2 text-sm text-muted-foreground">{interpretation.timing.rationale}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Structure Context</p>
-              <p className="mt-2 text-base font-semibold text-foreground">{interpretation.structure.label}</p>
-              <p className="mt-2 text-sm text-muted-foreground">{interpretation.structure.explanation}</p>
-            </div>
-          </div>
-
-          <div>
-            <h4 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Positioning Explanation</h4>
-            <p className="mt-3 text-base font-semibold text-foreground">
-              {interpretation.positioning.summary}
-            </p>
-            <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
-              {interpretation.positioning.reasons.map((reason) => (
-                <li key={reason}>{reason}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Decision Confidence</p>
-            <p className="mt-2 text-base font-semibold text-foreground">
-              {interpretation.confidence.label} reliability ({Math.round(reliability * 100)}%)
-            </p>
-            <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
-              {interpretation.confidence.reasons.map((reason) => (
-                <li key={reason}>{reason}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Risk Overview</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Structure</p>
               <div className="mt-3 space-y-2 text-sm text-muted-foreground">
                 <div className="flex items-center justify-between">
-                  <span>Squeeze probability</span>
-                  <span className="font-semibold text-foreground">{squeezePercent}%</span>
+                  <span>Label</span>
+                  <span className="font-semibold text-foreground">{marketInterpretation.structure_label}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span>Crowding level</span>
-                  <span className="font-semibold text-foreground">{interpretation.risks.crowdingLevel}</span>
+                  <span>Shift</span>
+                  <span className="font-semibold text-foreground">{marketInterpretation.structure_shift}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span>Late trend risk</span>
-                  <span className="font-semibold text-foreground">{interpretation.risks.lateTrendRisk}</span>
+                  <span>Recent high</span>
+                  <span className="font-semibold text-foreground">{marketInterpretation.recent_high === null ? "--" : formatPrice(marketInterpretation.recent_high)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Recent low</span>
+                  <span className="font-semibold text-foreground">{marketInterpretation.recent_low === null ? "--" : formatPrice(marketInterpretation.recent_low)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Higher timeframe</span>
+                  <span className="font-semibold text-foreground">{marketInterpretation.higher_timeframe_trend}</span>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Flow</p>
+              <div className="mt-3 space-y-2 text-sm text-muted-foreground">
+                <div className="flex items-center justify-between">
+                  <span>OI intent</span>
+                  <span className="font-semibold text-foreground">{marketInterpretation.oi_intent}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>OI change</span>
+                  <span className={metricTone(oiChangeValue)}>{formatPercent(oiChangeValue)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Volume z-score</span>
+                  <span className="font-semibold text-foreground">{volumeZValue === null ? "--" : volumeZValue.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Funding impulse</span>
+                  <span className={metricTone(fundingTrendValue)}>{formatFundingRate(fundingTrendValue)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Interpretation</p>
+              <p className="mt-3 text-base font-semibold text-foreground">{marketInterpretation.interpretation}</p>
+            </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Risk</p>
+              <div className="mt-3 space-y-2 text-sm text-muted-foreground">
+                <div className="flex items-center justify-between">
+                  <span>Trap risk</span>
+                  <span className="font-semibold text-foreground">{Math.round(marketInterpretation.trap_risk * 100)}%</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Conflict score</span>
+                  <span className="font-semibold text-foreground">{Math.round(marketInterpretation.conflict_score * 100)}%</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Clarity confidence</span>
+                  <span className="font-semibold text-foreground">{Math.round(marketInterpretation.clarity_confidence * 100)}%</span>
                 </div>
               </div>
               <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
-                {interpretation.risks.notes.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
+                {marketInterpretation.risk_notes.length > 0
+                  ? marketInterpretation.risk_notes.map((item) => <li key={item}>{item}</li>)
+                  : <li>No additional risk notes.</li>}
               </ul>
             </div>
             <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Conflict Signals</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Warnings</p>
               <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
-                {conflicts.length
-                  ? conflicts.map((item) => <li key={item}>{item}</li>)
-                  : <li>No major conflicts detected.</li>}
+                {marketInterpretation.warnings.length > 0
+                  ? marketInterpretation.warnings.map((item) => <li key={item}>{item}</li>)
+                  : <li>No major warning flags.</li>}
               </ul>
             </div>
           </div>
 
           <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Invalidation Conditions</p>
-            <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
-              {interpretation.invalidationConditions.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Action</p>
+            <p className="mt-3 text-base font-semibold text-foreground">{marketInterpretation.action}</p>
+            <p className="mt-2 text-sm text-muted-foreground">{marketInterpretation.action_rationale}</p>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">What could make this analysis wrong?</p>
+            <p className="mt-3 text-sm text-muted-foreground">{marketInterpretation.self_critique}</p>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-card/50 p-5 backdrop-blur-xl transition-all hover:border-white/20">
@@ -405,6 +413,25 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
             )}
           </div>
 
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Classifier Trace</p>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-muted-foreground md:grid-cols-3">
+              <div className="flex items-center justify-between md:block">
+                <span>Intent</span>
+                <p className="font-semibold text-foreground">{coin.position_intent ?? "None"}</p>
+              </div>
+              <div className="flex items-center justify-between md:block">
+                <span>Quality</span>
+                <p className="font-semibold text-foreground">{coin.position_quality ?? "Neutral"}</p>
+              </div>
+              <div className="flex items-center justify-between md:block">
+                <span>Decision</span>
+                <p className="font-semibold text-foreground">{coin.decision_type ?? "No-Trade"}</p>
+              </div>
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">These are secondary classifier outputs. Primary interpretation is the market state, flow context, risk, and action above.</p>
+          </div>
+
           <div className="rounded-2xl border border-white/10 bg-card/50 p-5 backdrop-blur-xl transition-all hover:border-white/20">
             <div className="mb-3 flex items-center justify-between">
               <div>
@@ -447,11 +474,11 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
                 <p>NO TRADE - wait for alignment before activating an execution plan.</p>
               ) : (
                 <>
-                  <p>{interpretation.execution.entryRationale}</p>
-                  <p>{interpretation.execution.confirmCondition}</p>
-                  <p>{interpretation.execution.cancelCondition}</p>
-                  <p>{interpretation.execution.invalidationRationale}</p>
-                  <p>{interpretation.execution.flipBias}</p>
+                  <p>Entry stays inactive until price reaches the structural trigger zone shown in the execution plan.</p>
+                  <p>Confirmation requires the active market state to stay aligned with {marketInterpretation.control.toLowerCase()} and {marketInterpretation.oi_intent.toLowerCase()}.</p>
+                  <p>If structure slips back into {marketInterpretation.state.toLowerCase()} or warnings expand, the plan should stay on watch.</p>
+                  <p>Invalidation is the level where the current structural read breaks down, not a prediction target.</p>
+                  <p>If higher timeframe control flips against this setup, the directional read should be reassessed.</p>
                 </>
               )}
             </div>

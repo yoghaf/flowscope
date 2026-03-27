@@ -1,12 +1,16 @@
 import { toNumberOrNull } from "@/lib/formatters";
 import type {
+  ActionDirective,
   AssetSnapshot,
   DecisionType,
   FlowMetrics,
+  MarketControl,
+  MarketInterpretationSnapshot,
   OiIntensity,
   PositionIntent,
   PositionQuality,
   Timeframe,
+  TrendDirection,
 } from "@/lib/types";
 
 export type TradeBias = "Bullish" | "Bearish" | "Neutral";
@@ -111,6 +115,74 @@ type StoryInput = {
   decision?: DecisionType | null;
   reliability?: number | null;
 };
+
+function deriveTrendFromPrice(priceChange: number): TrendDirection {
+  if (priceChange > 0.003) {
+    return "Bullish";
+  }
+  if (priceChange < -0.003) {
+    return "Bearish";
+  }
+  return "Neutral";
+}
+
+function deriveControlFromTrend(trend: TrendDirection): MarketControl {
+  if (trend === "Bullish") {
+    return "Buyer Dominant";
+  }
+  if (trend === "Bearish") {
+    return "Seller Dominant";
+  }
+  return "Neutral";
+}
+
+export function getMarketInterpretation(
+  asset: AssetSnapshot,
+  timeframe: Timeframe,
+): MarketInterpretationSnapshot {
+  if (asset.market_interpretation) {
+    return asset.market_interpretation;
+  }
+
+  const priceChange = metric(asset, timeframe, "price_change");
+  const trend = deriveTrendFromPrice(priceChange);
+  const control = deriveControlFromTrend(trend);
+  const reliability = toNumberOrNull(asset.reliability_score) ?? 0;
+  const fallbackAction: ActionDirective =
+    reliability >= 0.75 ? "WAIT" : asset.decision_type === "No-Trade" ? "NO TRADE" : "WAIT";
+
+  return {
+    trend,
+    control,
+    state: trend === "Neutral" ? "Compression" : "Unclear",
+    oi_intent: "Flat",
+    structure_label: trend === "Neutral" ? "Range" : trend === "Bullish" ? "HH/HL" : "LH/LL",
+    structure_shift: "None",
+    recent_high: toNumberOrNull(asset.flow_metrics?.[`recent_high_${timeframe}` as keyof FlowMetrics]) ?? null,
+    recent_low: toNumberOrNull(asset.flow_metrics?.[`recent_low_${timeframe}` as keyof FlowMetrics]) ?? null,
+    range_mid: toNumberOrNull(asset.flow_metrics?.[`range_mid_${timeframe}` as keyof FlowMetrics]) ?? null,
+    higher_timeframe_trend: "Neutral",
+    higher_timeframe_alignment: "Neutral",
+    counter_trend: false,
+    action: fallbackAction,
+    action_rationale: fallbackAction === "NO TRADE" ? "Direction is not clear enough." : "Wait for clearer structural confirmation.",
+    interpretation: buildMarketStory({
+      intent: asset.position_intent ?? null,
+      quality: asset.position_quality ?? null,
+      decision: asset.decision_type ?? null,
+      reliability,
+    }).expectation,
+    trap_risk: 0,
+    conflict_score: 0,
+    structure_strength: Math.min(1, Math.abs(priceChange) / 0.01),
+    flow_alignment: reliability,
+    trend_alignment: reliability,
+    clarity_confidence: reliability,
+    risk_notes: [],
+    warnings: [],
+    self_critique: "This snapshot is using legacy interpretation fallback and may be less precise than the backend market interpreter.",
+  };
+}
 
 function metric(asset: AssetSnapshot, timeframe: Timeframe, key: string): number {
   return toNumberOrNull(asset.flow_metrics?.[`${key}_${timeframe}` as keyof FlowMetrics]) ?? 0;
@@ -350,37 +422,50 @@ export function buildActionLayer(
   asset: AssetSnapshot,
   timeframe: Timeframe,
 ): ActionLayer {
-  const reliability = toNumberOrNull(asset.reliability_score) ?? 0;
-  const decision = asset.decision_type ?? "No-Trade";
+  const marketInterpretation = getMarketInterpretation(asset, timeframe);
+  const reliability = marketInterpretation.clarity_confidence ?? toNumberOrNull(asset.reliability_score) ?? 0;
   const backendStatus = mapBackendStatus(asset.action_status);
   const backendTradeBias = asset.action_bias ?? null;
-  const tradeBias = backendTradeBias ?? decisionBias(asset, timeframe);
-  const conflictCount = countConflicts(
-    asset.position_intent ?? "None",
-    metric(asset, timeframe, "price_change"),
-    metric(asset, timeframe, "taker_buy_sell_ratio_delta"),
-    metric(asset, timeframe, "funding_trend"),
-    metric(asset, timeframe, "long_short_ratio_delta"),
-  );
+  const interpretedBias: TradeBias =
+    marketInterpretation.control === "Buyer Dominant" || marketInterpretation.trend === "Bullish"
+      ? "Bullish"
+      : marketInterpretation.control === "Seller Dominant" || marketInterpretation.trend === "Bearish"
+        ? "Bearish"
+        : "Neutral";
+  const tradeBias = backendTradeBias ?? interpretedBias;
 
-  let setupType = mapBackendSetupType(asset.setup_type) ?? setupTypeFromDecision(decision, asset.position_quality);
+  let setupType: SetupType;
+  if (marketInterpretation.warnings.includes("High Trap Risk") || asset.decision_type === "Trap-Long" || asset.decision_type === "Trap-Short") {
+    setupType = "Trap";
+  } else if (marketInterpretation.state === "Trend continuation") {
+    setupType = "Continuation";
+  } else if (marketInterpretation.state === "Compression") {
+    setupType =
+      asset.decision_type === "Squeeze-Setup" || asset.decision_type === "Squeeze-Immediate" || asset.decision_type === "Watchlist-Squeeze"
+        ? "Squeeze"
+        : "Compression";
+  } else if (marketInterpretation.state === "Pause after selloff" || marketInterpretation.state === "Pause after rally") {
+    setupType = "Watchlist";
+  } else if (marketInterpretation.state === "Unclear") {
+    setupType = "No clear edge";
+  } else {
+    setupType = mapBackendSetupType(asset.setup_type) ?? setupTypeFromDecision(asset.decision_type, asset.position_quality);
+  }
   let status: SetupStatus = "Wait";
 
-  if (backendStatus) {
-    status = backendStatus;
-  } else if (decision === "Squeeze-Immediate") {
-    status = "Triggered";
-  } else if (decision === "No-Trade") {
+  if (marketInterpretation.action === "NO TRADE") {
     status = "Wait";
-  } else if (conflictCount >= 2) {
+  } else if (marketInterpretation.action === "ENTER") {
+    status = backendStatus ?? "Ready";
+  } else if (marketInterpretation.action === "WAIT") {
+    status = asset.execution ? "Ready" : (backendStatus === "Triggered" ? "Developing" : (backendStatus ?? "Developing"));
+  } else if (marketInterpretation.conflict_score >= 0.45 || marketInterpretation.warnings.includes("High Trap Risk")) {
     status = "Unstable";
-  } else if (reliability >= 0.8) {
-    status = "Ready";
   } else {
-    status = "Developing";
+    status = backendStatus ?? "Developing";
   }
 
-  if (tradeBias === "Neutral" && decision !== "No-Trade") {
+  if (tradeBias === "Neutral" && asset.decision_type !== "No-Trade") {
     setupType = setupType === "No clear edge" ? "Watchlist" : setupType;
   }
 
@@ -389,7 +474,7 @@ export function buildActionLayer(
     setupType,
     status,
     confidenceLabel: asset.action_confidence_label ?? confidenceLabel(reliability),
-    opportunityScore: toNumberOrNull(asset.action_opportunity_score) ?? (reliability * (toNumberOrNull(asset.priority_multiplier) ?? 1)),
+    opportunityScore: toNumberOrNull(asset.action_opportunity_score) ?? reliability,
   };
 }
 

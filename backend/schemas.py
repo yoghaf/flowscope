@@ -34,6 +34,10 @@ QualityScore = Literal["A", "B", "C"]
 TradeResult = Literal["open", "win", "loss", "timeout"]
 MarketRegime = Literal["Trending", "Ranging", "Balanced"]
 VolatilityRegime = Literal["Low", "Medium", "High"]
+TrendDirection = Literal["Bullish", "Bearish", "Neutral"]
+MarketControl = Literal["Buyer Dominant", "Seller Dominant", "Neutral"]
+OiIntent = Literal["Position Building", "Position Closing", "Flat"]
+ActionDirective = Literal["ENTER", "WAIT", "NO TRADE"]
 PositionIntent = Literal["Long Build-up", "Short Build-up", "Absorption", "Pre-Squeeze", "None"]
 OiIntensity = Literal["Low", "Mid", "High"]
 PositionQuality = Literal[
@@ -219,6 +223,33 @@ class ExecutionSnapshot(BaseModel):
     breakout_valid: bool = False
 
 
+class MarketInterpretationSnapshot(BaseModel):
+    trend: TrendDirection = "Neutral"
+    control: MarketControl = "Neutral"
+    state: str = "Unclear"
+    oi_intent: OiIntent = "Flat"
+    structure_label: str = "Range"
+    structure_shift: str = "None"
+    recent_high: float | None = None
+    recent_low: float | None = None
+    range_mid: float | None = None
+    higher_timeframe_trend: TrendDirection = "Neutral"
+    higher_timeframe_alignment: str = "Neutral"
+    counter_trend: bool = False
+    action: ActionDirective = "WAIT"
+    action_rationale: str = "Wait for clearer directional alignment."
+    interpretation: str = "Market context is mixed."
+    trap_risk: float = 0.0
+    conflict_score: float = 0.0
+    structure_strength: float = 0.0
+    flow_alignment: float = 0.0
+    trend_alignment: float = 0.0
+    clarity_confidence: float = 0.0
+    risk_notes: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    self_critique: str = "Higher-timeframe and execution context remain incomplete."
+
+
 class AssetSnapshot(BaseModel):
     symbol: str
     name: str
@@ -260,6 +291,7 @@ class AssetSnapshot(BaseModel):
     phase: str = "Neutral"
     phase_score: float = 0.0
     phase_confidence: float = 0.0
+    market_interpretation: MarketInterpretationSnapshot | None = None
     execution: ExecutionSnapshot | None = None
     debug_trace: DebugTrace | None = None
 

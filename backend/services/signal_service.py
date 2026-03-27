@@ -16,6 +16,7 @@ from backend.data_collector.binance_collector import BinanceCollector
 from backend.database import DatabaseManager
 from backend.engines.execution_engine import ActionAssessment, ExecutionEngine, ExecutionPlan
 from backend.engines.flow_engine import HistoryPoint
+from backend.engines.market_interpreter import MarketInterpretationAssessment, MarketInterpreterEngine
 from backend.engines.positioning_engine import PositioningAssessment, PositioningEngine
 from backend.engines.sharpness_filter import SharpnessAssessment, SharpnessFilter
 from backend.engines.phase_engine import PhaseAssessment, PhaseEngine
@@ -36,6 +37,7 @@ from backend.schemas import (
     FundingPoint,
     HeatmapItem,
     LiquidationPoint,
+    MarketInterpretationSnapshot,
     PriceOpenInterestPoint,
     RealtimeEvent,
     ScannerResponse,
@@ -113,6 +115,7 @@ class AssetState:
     phase_score: float = 0.0
     phase_confidence: float = 0.0
     debug_trace: dict[str, Any] | None = None
+    market_interpretation: dict[str, Any] | None = None
 
 
 class SignalService:
@@ -132,6 +135,7 @@ class SignalService:
 
         self.state_engine = StateEngine()
         self.execution_engine = ExecutionEngine()
+        self.market_interpreter = MarketInterpreterEngine()
         self.positioning_engine = PositioningEngine()
         self.sharpness_filter = SharpnessFilter()
         self.phase_engine = PhaseEngine()
@@ -851,6 +855,14 @@ class SignalService:
                     state_confidence=state_assessment.confidence,
                     state_probabilities=state_assessment.probabilities,
                     score=self._activity_score(flow_metrics, timeframe, TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])),
+                    market_interpretation=self.market_interpreter.build_status_interpretation(
+                        bucket=bucket,
+                        metrics=flow_metrics,
+                        timeframe=timeframe,
+                        signal_status="NO_SIGNAL",
+                        data_status="VALID",
+                        reason="positioning_no_trade",
+                    ).to_dict(),
                     previous_state=previous_state,
                 )
                 self.last_timeframe_update[(symbol, timeframe)] = now
@@ -884,11 +896,57 @@ class SignalService:
                 )
 
             profile = TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])
+            higher_tf_trend, higher_tf_control = self._higher_timeframe_context(symbol, timeframe, updated_states)
+            market_interpretation = self.market_interpreter.evaluate(
+                bucket=bucket,
+                metrics=flow_metrics,
+                timeframe=timeframe,
+                history=history,
+                positioning=positioning,
+                state_assessment=state_assessment,
+                higher_timeframe_trend=higher_tf_trend,
+                higher_timeframe_control=higher_tf_control,
+            )
+            positioning.debug_trace["market_interpretation"] = market_interpretation.to_dict()
+            positioning = self._with_reliability(positioning, market_interpretation.clarity_confidence)
+            if market_interpretation.action == "NO TRADE":
+                self._clear_ready_states(symbol, timeframe)
+                updated_states[timeframe] = self._mark_state_with_status(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    bucket=bucket,
+                    flow_metrics=flow_metrics,
+                    now=now,
+                    reason="interpreter_no_trade",
+                    signal_status="NO_SIGNAL",
+                    data_status="VALID",
+                    market_state=state_assessment.state,
+                    state_confidence=state_assessment.confidence,
+                    state_probabilities=state_assessment.probabilities,
+                    score=self._signal_score(
+                        positioning=positioning,
+                        state_assessment=state_assessment,
+                        sharpness=sharpness,
+                    ),
+                    position_intent=positioning.intent,
+                    oi_intensity=positioning.oi_intensity,
+                    position_quality=positioning.position_quality,
+                    decision_type=positioning.decision,
+                    reliability_score=positioning.reliability_score,
+                    priority_multiplier=positioning.priority_multiplier,
+                    market_interpretation=market_interpretation.to_dict(),
+                    previous_state=previous_state,
+                )
+                self.last_timeframe_update[(symbol, timeframe)] = now
+                continue
             action: ActionAssessment | None = self.execution_engine.build_action(
                 positioning=positioning,
                 state=state_assessment,
                 metrics=flow_metrics,
                 timeframe=timeframe,
+                bucket=bucket,
+                profile=profile,
+                market_interpretation=market_interpretation,
             )
             if action is None:
                 positioning = self._fallback_positioning_from_state(
@@ -913,6 +971,7 @@ class SignalService:
                         state_confidence=state_assessment.confidence,
                         state_probabilities=state_assessment.probabilities,
                         score=self._activity_score(flow_metrics, timeframe, profile),
+                        market_interpretation=market_interpretation.to_dict(),
                         previous_state=previous_state,
                     )
                     self.last_timeframe_update[(symbol, timeframe)] = now
@@ -922,6 +981,9 @@ class SignalService:
                     state=state_assessment,
                     metrics=flow_metrics,
                     timeframe=timeframe,
+                    bucket=bucket,
+                    profile=profile,
+                    market_interpretation=market_interpretation,
                 )
                 if action is None:
                     self._clear_ready_states(symbol, timeframe)
@@ -948,6 +1010,7 @@ class SignalService:
                         decision_type=positioning.decision,
                         reliability_score=positioning.reliability_score,
                         priority_multiplier=positioning.priority_multiplier,
+                        market_interpretation=market_interpretation.to_dict(),
                         previous_state=previous_state,
                     )
                     self.last_timeframe_update[(symbol, timeframe)] = now
@@ -1008,18 +1071,27 @@ class SignalService:
                 decision_type=positioning.decision,
                 reliability_score=positioning.reliability_score,
                 priority_multiplier=positioning.priority_multiplier,
-                action_bias=action.bias,
+                action_bias=(
+                    action.bias
+                    if action.bias != "Neutral"
+                    else "Bullish"
+                    if market_interpretation.trend == "Bullish" or market_interpretation.control == "Buyer Dominant"
+                    else "Bearish"
+                    if market_interpretation.trend == "Bearish" or market_interpretation.control == "Seller Dominant"
+                    else "Neutral"
+                ),
                 action_status=action.status,
                 action_confidence_label=action.confidence_label,
                 action_opportunity_score=action.opportunity_score,
                 setup_type=action.setup_type,
                 execution=execution,
                 exchange_count=bucket.avg_exchange_count,
-                tf_conflict=False,
+                tf_conflict=market_interpretation.higher_timeframe_alignment == "Against Higher Timeframe" or market_interpretation.counter_trend,
                 phase=phase_result.phase,
                 phase_score=phase_result.phase_score,
                 phase_confidence=phase_result.phase_confidence,
                 debug_trace=positioning.debug_trace,
+                market_interpretation=market_interpretation.to_dict(),
             )
             self.last_timeframe_update[(symbol, timeframe)] = now
 
@@ -1426,6 +1498,11 @@ class SignalService:
             phase=asset.phase,
             phase_score=asset.phase_score,
             phase_confidence=asset.phase_confidence,
+            market_interpretation=(
+                MarketInterpretationSnapshot(**asset.market_interpretation)
+                if asset.market_interpretation is not None
+                else None
+            ),
             execution=(
                 ExecutionSnapshot(
                     entry_type=asset.execution.entry_type,
@@ -1583,6 +1660,7 @@ class SignalService:
         action_opportunity_score: float | None = None,
         setup_type: str | None = None,
         execution: ExecutionPlan | None = None,
+        market_interpretation: dict[str, Any] | None = None,
         previous_state: AssetState | None = None,
     ) -> AssetState:
         profile = TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])
@@ -1752,6 +1830,16 @@ class SignalService:
             execution=execution,
             exchange_count=exchange_count,
             tf_conflict=False,
+            market_interpretation=market_interpretation
+            if market_interpretation is not None
+            else self.market_interpreter.build_status_interpretation(
+                bucket=debug_bucket,
+                metrics=flow_metrics,
+                timeframe=timeframe,
+                signal_status=signal_status,
+                data_status=data_status,
+                reason=reason,
+            ).to_dict(),
             debug_trace=self._build_neutral_debug_trace(
                 reason=reason,
                 bucket=debug_bucket,
@@ -2342,6 +2430,8 @@ class SignalService:
             return "confirm"
         if intent == "Pre-Squeeze" and state == "Pre-Squeeze":
             return "confirm"
+        if intent in {"Absorption", "Pre-Squeeze"} and state == "Trap":
+            return "conflict"
         if intent == "Long Build-up" and state in {"Short Build-up", "Trap"}:
             return "conflict"
         if intent == "Short Build-up" and state in {"Long Build-up", "Trap"}:
@@ -2349,6 +2439,43 @@ class SignalService:
         if intent in {"Long Build-up", "Short Build-up"} and state == "Expansion":
             return "confirm"
         return "neutral"
+
+    def _higher_timeframe_context(
+        self,
+        symbol: str,
+        timeframe: str,
+        updated_states: dict[str, AssetState],
+    ) -> tuple[str, str]:
+        preference = {
+            "15m": ["4h", "1h", "24h"],
+            "1h": ["4h", "24h"],
+            "4h": ["24h"],
+            "24h": [],
+        }
+        for candidate in preference.get(timeframe, []):
+            state = updated_states.get(candidate) or self.states_by_timeframe.get(candidate, {}).get(symbol)
+            if state is None or state.market_interpretation is None:
+                continue
+            return (
+                str(state.market_interpretation.get("trend", "Neutral")),
+                str(state.market_interpretation.get("control", "Neutral")),
+            )
+        return "Neutral", "Neutral"
+
+    @staticmethod
+    def _with_reliability(
+        positioning: PositioningAssessment,
+        reliability_score: float,
+    ) -> PositioningAssessment:
+        return PositioningAssessment(
+            intent=positioning.intent,
+            oi_intensity=positioning.oi_intensity,
+            position_quality=positioning.position_quality,
+            decision=positioning.decision,
+            reliability_score=round(reliability_score, 4),
+            priority_multiplier=positioning.priority_multiplier,
+            debug_trace=positioning.debug_trace,
+        )
 
     def _blend_state_positioning(
         self,

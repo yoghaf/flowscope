@@ -11,13 +11,11 @@ import {
 import {
   buildActionLayer,
   buildExecutionLayer,
-  buildInterpretation,
   describeExecutionPlan,
-  formatDecisionBadge,
+  getMarketInterpretation,
 } from "@/lib/interpretation";
 import type {
   AssetSnapshot,
-  DecisionType,
   FlowMetrics,
   PositionQuality,
   SetupPerformance,
@@ -126,8 +124,7 @@ function formatZ(value: number | null): string {
 }
 
 export default function MarketStateCard({ asset, timeframe, setupStats }: MarketStateCardProps) {
-  const interpretation = buildInterpretation(asset, timeframe);
-  const story = interpretation.narrative;
+  const marketInterpretation = getMarketInterpretation(asset, timeframe);
   const action = buildActionLayer(asset, timeframe);
   const execution = buildExecutionLayer(asset, timeframe);
   const executionPlanTitle = describeExecutionPlan(action, execution, asset.decision_type);
@@ -158,12 +155,10 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
   const takerRatio = toNumberOrNull(asset.taker_buy_sell_ratio);
   const longShortRatio = toNumberOrNull(asset.long_short_ratio);
 
-  const conflicts = interpretation.conflicts;
-
   const biasTone =
-    action.tradeBias === "Bullish"
+    marketInterpretation.trend === "Bullish" || marketInterpretation.control === "Buyer Dominant"
       ? "text-emerald-300 border-emerald-500/30 bg-emerald-500/10"
-      : action.tradeBias === "Bearish"
+      : marketInterpretation.trend === "Bearish" || marketInterpretation.control === "Seller Dominant"
         ? "text-red-300 border-red-500/30 bg-red-500/10"
         : "text-slate-300 border-white/10 bg-white/5";
   const setupTone =
@@ -194,6 +189,12 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
       : action.confidenceLabel === "Medium"
         ? "text-amber-300 border-amber-500/30 bg-amber-500/10"
         : "text-slate-300 border-white/10 bg-white/5";
+  const actionTone =
+    marketInterpretation.action === "ENTER"
+      ? "text-emerald-300 border-emerald-500/30 bg-emerald-500/10"
+      : marketInterpretation.action === "WAIT"
+        ? "text-amber-300 border-amber-500/30 bg-amber-500/10"
+        : "text-red-300 border-red-500/30 bg-red-500/10";
 
   const riskTone =
     execution.riskLevel === "High"
@@ -250,7 +251,7 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
 
           <div className="flex flex-col items-end gap-1.5">
             <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${stateStyle.bg} ${stateStyle.text} ${stateStyle.border}`}>
-              {formatDecisionBadge(decision as DecisionType)}
+              {marketInterpretation.state}
             </div>
             {asset.phase && asset.phase !== "Neutral" && (
               <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary shadow-sm shadow-primary/10">
@@ -266,13 +267,16 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
             Data: {dataStatusLabel}
           </span>
           <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${biasTone}`}>
-            Bias: {action.tradeBias}
+            Trend: {marketInterpretation.trend}
           </span>
           <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${setupTone}`}>
-            Setup: {action.setupType}
+            Control: {marketInterpretation.control}
           </span>
           <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${statusTone}`}>
-            Status: {action.status}
+            State: {marketInterpretation.state}
+          </span>
+          <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${actionTone}`}>
+            Action: {marketInterpretation.action}
           </span>
           <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${confidenceTone}`}>
             Confidence: {action.confidenceLabel}
@@ -291,21 +295,21 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
 
         <div className="space-y-3 text-sm">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Intent</p>
-            <p className="text-foreground">{story.intent}</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">OI</p>
+            <p className="text-foreground">{marketInterpretation.oi_intent}</p>
           </div>
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pressure</p>
-            <p className="text-foreground">{story.pressure}</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Interpretation</p>
+            <p className="text-foreground">{marketInterpretation.interpretation}</p>
           </div>
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Expectation</p>
-            <p className="text-foreground">{story.expectation}</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Action Rationale</p>
+            <p className="text-foreground">{marketInterpretation.action_rationale}</p>
           </div>
         </div>
 
         <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Positioning Breakdown</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Classifier Trace</p>
           <div className="grid gap-2 text-sm text-muted-foreground">
             <div className="flex items-center justify-between">
               <span>Intent</span>
@@ -320,15 +324,23 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
               <span className="font-semibold text-foreground">{decision}</span>
             </div>
           </div>
+          <p className="text-xs text-muted-foreground">Secondary pattern tags only. Primary read comes from trend, control, state, and action.</p>
         </div>
 
         <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Conflict Analysis</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Risk Analysis</p>
           <ul className="space-y-1 text-sm text-muted-foreground">
-            {conflicts.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
+            <li>Trap risk: {Math.round(marketInterpretation.trap_risk * 100)}%</li>
+            <li>Conflict score: {Math.round(marketInterpretation.conflict_score * 100)}%</li>
+            {marketInterpretation.warnings.length > 0
+              ? marketInterpretation.warnings.map((item) => <li key={item}>{item}</li>)
+              : <li>No major warning flags.</li>}
           </ul>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Self-Critique</p>
+          <p className="text-sm text-muted-foreground">{marketInterpretation.self_critique}</p>
         </div>
 
         <div className="rounded-xl border border-white/10 bg-white/5 p-4">

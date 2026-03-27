@@ -8,6 +8,10 @@ export type SignalType =
   | "Neutral";
 export type DataStatus = "VALID" | "NO_DATA" | "INSUFFICIENT_HISTORY";
 export type SignalStatus = "VALID_SIGNAL" | "NO_SIGNAL" | "NO_DATA";
+export type TrendDirection = "Bullish" | "Bearish" | "Neutral";
+export type MarketControl = "Buyer Dominant" | "Seller Dominant" | "Neutral";
+export type OiIntentLabel = "Position Building" | "Position Closing" | "Flat";
+export type ActionDirective = "ENTER" | "WAIT" | "NO TRADE";
 
 export type MarketState =
   | "Long Build-up"
@@ -198,6 +202,33 @@ export interface ExecutionSnapshot {
   breakout_valid: boolean;
 }
 
+export interface MarketInterpretationSnapshot {
+  trend: TrendDirection;
+  control: MarketControl;
+  state: string;
+  oi_intent: OiIntentLabel;
+  structure_label: string;
+  structure_shift: string;
+  recent_high: number | null;
+  recent_low: number | null;
+  range_mid: number | null;
+  higher_timeframe_trend: TrendDirection;
+  higher_timeframe_alignment: string;
+  counter_trend: boolean;
+  action: ActionDirective;
+  action_rationale: string;
+  interpretation: string;
+  trap_risk: number;
+  conflict_score: number;
+  structure_strength: number;
+  flow_alignment: number;
+  trend_alignment: number;
+  clarity_confidence: number;
+  risk_notes: string[];
+  warnings: string[];
+  self_critique: string;
+}
+
 export interface AssetSnapshot {
   symbol: string;
   name: string;
@@ -241,6 +272,7 @@ export interface AssetSnapshot {
   phase?: string;
   phase_score?: number;
   phase_confidence?: number;
+  market_interpretation?: MarketInterpretationSnapshot | null;
 }
 
 export interface DashboardMetrics {

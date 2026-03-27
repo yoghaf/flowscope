@@ -7,7 +7,7 @@ from typing import Any
 
 from backend.config import TIMEFRAME_PROFILES
 from backend.engines.adaptive_thresholds import AdaptiveThresholds, build_adaptive_thresholds
-from backend.schemas import DecisionType, FlowMetrics, OiIntensity, PositionIntent, PositionQuality
+from backend.schemas import DecisionType, FlowMetrics, OiIntensity, OiIntent, PositionIntent, PositionQuality
 from backend.services.timeframe_aggregator import TimeframeBucket
 
 
@@ -85,7 +85,14 @@ class PositioningEngine:
 
         adaptive = build_adaptive_thresholds(self._feature_history(history), profile)
         taker_available = self._taker_available(history)
-        intent, intent_trace, intent_strength = self._match_intent(features, profile, adaptive, taker_available)
+        oi_intent = self._oi_intent(features["oi_change"])
+        intent, intent_trace, intent_strength = self._match_intent(
+            features,
+            profile,
+            adaptive,
+            taker_available,
+            oi_intent,
+        )
         oi_intensity, oi_trace = self._oi_intensity(features["oi_delta_z"], features["volume_z"])
         quality, quality_trace = self._position_quality(
             intent=intent,
@@ -125,6 +132,7 @@ class PositioningEngine:
             "intent_logic": {
                 **intent_trace,
                 "intent_strength": intent_strength,
+                "oi_intent": oi_intent,
                 "taker_available": taker_available,
             },
             "oi_intensity": oi_trace,
@@ -185,16 +193,25 @@ class PositioningEngine:
             "market_pressure": self._metric(metrics, "market_pressure", timeframe),
         }
 
+    @staticmethod
+    def _oi_intent(oi_change: float) -> OiIntent:
+        if oi_change > 0.0005:
+            return "Position Building"
+        if oi_change < -0.0005:
+            return "Position Closing"
+        return "Flat"
+
     def _match_intent(
         self,
         features: dict[str, float],
         profile: dict[str, float | int],
         adaptive: AdaptiveThresholds,
         taker_available: bool,
+        oi_intent: OiIntent,
     ) -> tuple[PositionIntent, dict[str, Any], str]:
         evaluations = {
-            "Long Build-up": self._directional_fingerprint(1, features, profile, adaptive, taker_available),
-            "Short Build-up": self._directional_fingerprint(-1, features, profile, adaptive, taker_available),
+            "Long Build-up": self._directional_fingerprint(1, features, profile, adaptive, taker_available, oi_intent),
+            "Short Build-up": self._directional_fingerprint(-1, features, profile, adaptive, taker_available, oi_intent),
             "Absorption": self._absorption_fingerprint(features, profile, adaptive),
             "Pre-Squeeze": self._pre_squeeze_fingerprint(features, profile, adaptive),
         }
@@ -238,13 +255,16 @@ class PositioningEngine:
         profile: dict[str, float | int],
         adaptive: AdaptiveThresholds,
         taker_available: bool,
+        oi_intent: OiIntent,
     ) -> FingerprintResult:
         price_flat = float(profile["price_flat"])
         price_threshold = adaptive.price_move
         oi_threshold = adaptive.oi_abs
         weak_price_threshold = max(price_flat * 0.5, price_threshold * 0.5)
         directional_price = direction * features["price_change"]
-        directional_oi = direction * features["oi_delta_z"]
+        oi_building = oi_intent == "Position Building"
+        oi_closing = oi_intent == "Position Closing"
+        oi_anomaly = abs(features["oi_delta_z"])
         forbidden = (-direction) * features["price_change"] >= price_flat * 0.5
 
         taker_score = self._ratio_score(direction * features["taker_ratio_delta"], max(float(profile["taker_ratio"]), 0.01)) if taker_available else 0.0
@@ -252,16 +272,17 @@ class PositioningEngine:
         funding_score = self._ratio_score(direction * features["funding_trend"], max(float(profile["funding_trend"]), DELTA_EPSILON))
         confirm_score = (0.4 * taker_score) + (0.35 * ls_score) + (0.25 * funding_score)
         confirm_hits = sum([taker_score > 0 if taker_available else False, ls_score > 0, funding_score > 0])
-        hard_match = directional_oi >= oi_threshold and directional_price >= price_threshold and confirm_hits >= 1 and not forbidden
+        hard_match = oi_building and oi_anomaly >= oi_threshold and directional_price >= price_threshold and confirm_hits >= 1 and not forbidden
         weak_match = directional_price >= weak_price_threshold and (
-            confirm_hits >= 1 or (directional_oi >= oi_threshold and features["volume_z"] >= adaptive.volume * 0.8)
+            confirm_hits >= 1 or (oi_building and oi_anomaly >= oi_threshold and features["volume_z"] >= adaptive.volume * 0.8)
         )
         anti_neutral = directional_price > price_flat * 0.5
         score = max(
             0.0,
-            (0.45 * self._ratio_score(directional_oi, oi_threshold))
+            (0.45 * self._ratio_score(oi_anomaly, oi_threshold))
             + (0.30 * self._ratio_score(directional_price, price_threshold))
             + (0.25 * confirm_score)
+            - (0.18 if oi_closing else 0.0)
             - (0.20 if forbidden else 0.0),
         )
         if not hard_match and weak_match:
@@ -271,7 +292,7 @@ class PositioningEngine:
                     1.0,
                     (0.35 * self._ratio_score(directional_price, weak_price_threshold))
                     + (0.25 * max(confirm_score, self._ratio_score(features["volume_z"], max(adaptive.volume, 0.35))))
-                    + (0.15 * self._ratio_score(max(directional_oi, 0.0), max(oi_threshold, 0.3))),
+                    + (0.15 * self._ratio_score(oi_anomaly, max(oi_threshold, 0.3))),
                 ),
             )
         return FingerprintResult(
@@ -283,7 +304,8 @@ class PositioningEngine:
             confirm_hits=confirm_hits,
             trace={
                 "required": {
-                    "oi_gate": directional_oi >= oi_threshold,
+                    "oi_building": oi_building,
+                    "oi_gate": oi_anomaly >= oi_threshold,
                     "price_gate": directional_price >= price_threshold,
                 },
                 "confirm_components": {
@@ -291,6 +313,7 @@ class PositioningEngine:
                     "ls": round(ls_score, 4),
                     "funding": round(funding_score, 4),
                 },
+                "oi_intent": oi_intent,
                 "forbidden": {"opposite_half_flat": forbidden},
             },
         )

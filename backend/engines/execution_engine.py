@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from backend.config import get_settings
+from backend.engines.market_interpreter import MarketInterpretationAssessment
 from backend.engines.positioning_engine import PositioningAssessment
 from backend.engines.state_engine import StateAssessment
 from backend.schemas import FlowMetrics, QualityScore, RiskLevel, SetupStatus, SetupType, TradeBias
@@ -83,52 +84,66 @@ class ExecutionEngine:
         state: StateAssessment,
         metrics: FlowMetrics,
         timeframe: str,
+        bucket: TimeframeBucket,
+        profile: dict[str, float | int],
+        market_interpretation: MarketInterpretationAssessment,
     ) -> ActionAssessment | None:
         decision = positioning.decision
-        confidence = positioning.reliability_score
+        confidence = market_interpretation.clarity_confidence
 
-        if decision == "Continuation-Long":
-            bias: TradeBias | None = "Bullish"
-        elif decision == "Continuation-Short":
-            bias = "Bearish"
-        elif decision == "Trap-Long":
-            bias = "Bullish"
-        elif decision == "Trap-Short":
-            bias = "Bearish"
-        elif decision == "Watchlist-Long":
-            bias = "Bullish"
-        elif decision == "Watchlist-Short":
+        if market_interpretation.control == "Buyer Dominant" or market_interpretation.trend == "Bullish":
+            bias: TradeBias = "Bullish"
+        elif market_interpretation.control == "Seller Dominant" or market_interpretation.trend == "Bearish":
             bias = "Bearish"
         elif decision in {"Squeeze-Setup", "Squeeze-Immediate", "Watchlist-Squeeze"}:
-            bias = self._squeeze_bias(metrics, timeframe)
+            bias = self._squeeze_bias(metrics, timeframe) or "Neutral"
         else:
-            bias = None
+            bias = "Neutral"
 
-        if bias is None:
-            return None
+        direction = 1 if bias == "Bullish" else -1
+        price_change = getattr(metrics, f"price_change_{timeframe}", 0.0)
+        volume_z = getattr(metrics, f"volume_z_{timeframe}", 0.0)
+        oi_delta_z = getattr(metrics, f"oi_delta_z_{timeframe}", 0.0)
+        oi_change = getattr(metrics, f"oi_change_{timeframe}", 0.0)
+        recent_high = getattr(metrics, f"recent_high_{timeframe}", bucket.high_price)
+        recent_low = getattr(metrics, f"recent_low_{timeframe}", bucket.low_price)
+        breakout_entry = (
+            max(bucket.high_price, recent_high)
+            if direction > 0
+            else min(bucket.low_price, recent_low if recent_low > 0 else bucket.low_price)
+            if direction < 0
+            else bucket.close_price
+        )
+        current_price = max(bucket.close_price, 1e-9)
+        breakout_distance = abs(breakout_entry - current_price) / current_price
+        breakout_valid = (
+            abs(price_change) >= float(profile["price_break"])
+            and volume_z >= 0.8
+            and abs(oi_delta_z) >= 0.6
+            and oi_change * direction > 0
+        )
+        trigger_distance_limit = max(float(profile["price_break"]), 0.02)
 
-        if "Squeeze" in decision:
+        if market_interpretation.state == "Compression" or "Squeeze" in decision:
             setup_type: SetupType = "Squeeze"
         elif "Trap" in decision or state.state == "Trap":
             setup_type = "Trap"
+        elif market_interpretation.state == "Trend continuation" or decision.startswith("Continuation"):
+            setup_type = "Continuation"
         elif state.state == "Expansion":
             setup_type = "Breakout"
-        elif decision.startswith("Continuation"):
-            setup_type = "Continuation"
+        elif market_interpretation.state in {"Pause after selloff", "Pause after rally"}:
+            setup_type = "Accumulation"
         else:
             setup_type = "Accumulation"
 
-        if decision == "Squeeze-Immediate":
-            status: SetupStatus = "Triggered"
-        elif decision == "Squeeze-Setup":
-            status = "Ready" if confidence >= 0.75 else "Building"
-        elif decision in {"Trap-Long", "Trap-Short"} and confidence >= 0.8:
+        if market_interpretation.action == "NO TRADE":
+            return None
+        if market_interpretation.action == "ENTER":
+            status: SetupStatus = "Triggered" if breakout_valid and bias != "Neutral" else "Ready"
+        elif breakout_valid and breakout_distance <= trigger_distance_limit and confidence >= 0.72 and bias != "Neutral":
             status = "Ready"
-        elif decision in {"Watchlist-Long", "Watchlist-Short", "Watchlist-Squeeze"}:
-            status = "Building"
-        elif confidence >= 0.85:
-            status = "Triggered"
-        elif confidence >= 0.75:
+        elif confidence >= 0.6 and market_interpretation.action == "WAIT":
             status = "Ready"
         else:
             status = "Building"
@@ -174,7 +189,7 @@ class ExecutionEngine:
         profile: dict[str, float | int],
         confidence: float,
     ) -> ExecutionPlan | None:
-        if action.status not in {"Ready", "Triggered"}:
+        if action.status not in {"Ready", "Triggered"} or action.bias == "Neutral":
             return None
 
         direction = 1 if action.bias == "Bullish" else -1
@@ -200,17 +215,30 @@ class ExecutionEngine:
             and abs(oi_delta_z) >= 0.6
             and oi_change * direction > 0
         )
+        breakout_distance = abs(((max(bucket.high_price, recent_high) if direction > 0 else min(bucket.low_price, recent_low if recent_low > 0 else bucket.low_price)) - current_price)) / max(current_price, 1e-9)
+        pullback_mode = action.setup_type == "Continuation" and action.status == "Ready" and (not breakout_valid or breakout_distance > max(float(profile["price_break"]), 0.02))
 
-        if direction == 1:
-            entry = max(bucket.high_price, recent_high)
-            invalidation = min(bucket.low_price, recent_low if recent_low > 0 else bucket.low_price)
-            if invalidation >= entry:
-                invalidation = min(bucket.low_price, range_mid, entry - atr_abs)
+        if pullback_mode:
+            entry = current_price
+            if direction == 1:
+                invalidation = min(bucket.low_price, current_price - atr_abs)
+                if invalidation >= entry:
+                    invalidation = entry - atr_abs
+            else:
+                invalidation = max(bucket.high_price, current_price + atr_abs)
+                if invalidation <= entry:
+                    invalidation = entry + atr_abs
         else:
-            entry = min(bucket.low_price, recent_low if recent_low > 0 else bucket.low_price)
-            invalidation = max(bucket.high_price, recent_high)
-            if invalidation <= entry:
-                invalidation = max(bucket.high_price, range_mid, entry + atr_abs)
+            if direction == 1:
+                entry = max(bucket.high_price, recent_high)
+                invalidation = min(bucket.low_price, recent_low if recent_low > 0 else bucket.low_price)
+                if invalidation >= entry:
+                    invalidation = min(bucket.low_price, range_mid, entry - atr_abs)
+            else:
+                entry = min(bucket.low_price, recent_low if recent_low > 0 else bucket.low_price)
+                invalidation = max(bucket.high_price, recent_high)
+                if invalidation <= entry:
+                    invalidation = max(bucket.high_price, range_mid, entry + atr_abs)
 
         if action.status == "Triggered" and not breakout_valid:
             return None
@@ -226,7 +254,7 @@ class ExecutionEngine:
         tp2 = entry + (direction * risk * 2.0)
 
         return ExecutionPlan(
-            entry_type=self._entry_type_label(action.setup_type, breakout_valid),
+            entry_type="Continuation Pullback" if pullback_mode else self._entry_type_label(action.setup_type, breakout_valid),
             entry_min=entry,
             entry_max=entry,
             invalidation=invalidation,
