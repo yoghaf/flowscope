@@ -16,9 +16,17 @@ import MetricCard from "@/app/components/MetricCard";
 import { api } from "@/lib/api";
 import { formatFundingRate, formatPercent, shortSymbol, toNumberOrNull } from "@/lib/formatters";
 
+function getDashboardRefreshMs(): number {
+  return 30_000;
+}
+
 export default function DashboardPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard", "1h"],
+    staleTime: 10_000,
+    refetchInterval: getDashboardRefreshMs(),
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
     queryFn: () => api.getDashboard({ symbol: "ALL", timeframe: "1h", snapshotId: "latest" }),
   });
 
@@ -111,7 +119,7 @@ export default function DashboardPage() {
               {data.oi_leaders.map((coin, index) => (
                 <Link
                   key={coin.symbol}
-                  href={`/coin/${coin.symbol}?timeframe=${coin.timeframe}&snapshot_id=${coin.snapshot_id}`}
+                  href={`/coin/${coin.symbol}?timeframe=${coin.timeframe}&snapshot_id=latest`}
                   className="group flex items-center justify-between rounded-xl p-3 transition-all hover:bg-white/5"
                 >
                   <div className="flex items-center gap-3">
@@ -141,7 +149,7 @@ export default function DashboardPage() {
               {data.volume_leaders.map((coin, index) => (
                 <Link
                   key={coin.symbol}
-                  href={`/coin/${coin.symbol}?timeframe=${coin.timeframe}&snapshot_id=${coin.snapshot_id}`}
+                  href={`/coin/${coin.symbol}?timeframe=${coin.timeframe}&snapshot_id=latest`}
                   className="group flex items-center justify-between rounded-xl p-3 transition-all hover:bg-white/5"
                 >
                   <div className="flex items-center gap-3">
@@ -175,7 +183,7 @@ export default function DashboardPage() {
                   return (
                     <Link
                       key={coin.symbol}
-                      href={`/coin/${coin.symbol}?timeframe=${coin.timeframe}&snapshot_id=${coin.snapshot_id}`}
+                      href={`/coin/${coin.symbol}?timeframe=${coin.timeframe}&snapshot_id=latest`}
                       className="group flex items-center justify-between rounded-xl p-3 transition-all hover:bg-white/5"
                     >
                       <div className="flex items-center gap-3">
@@ -229,7 +237,7 @@ export default function DashboardPage() {
               return (
                 <Link
                   key={item.symbol}
-                  href={`/coin/${item.symbol}USDT?timeframe=${item.timeframe}&snapshot_id=${item.snapshot_id}`}
+                  href={`/coin/${item.symbol}USDT?timeframe=${item.timeframe}&snapshot_id=latest`}
                   className={`group relative flex aspect-square flex-col items-center justify-center overflow-hidden rounded-xl border p-4 transition-all duration-300 hover:scale-105 ${colorScheme.border}`}
                   style={{ backgroundColor: colorScheme.bg }}
                 >

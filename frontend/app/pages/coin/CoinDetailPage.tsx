@@ -30,6 +30,19 @@ import {
 } from "@/lib/interpretation";
 import type { FlowMetrics, Timeframe } from "@/lib/types";
 
+function getDetailRefetchInterval(timeframe: Timeframe): number {
+  if (timeframe === "15m") {
+    return 20_000;
+  }
+  if (timeframe === "1h") {
+    return 45_000;
+  }
+  if (timeframe === "4h") {
+    return 90_000;
+  }
+  return 120_000;
+}
+
 function metricTone(value: number | null | undefined): string {
   const numericValue = toNumberOrNull(value);
   if (numericValue === null) {
@@ -47,14 +60,21 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ["coin", symbol.toUpperCase(), timeframeParam, snapshotId],
     enabled: Boolean(timeframeParam && snapshotId),
+    staleTime: 5_000,
+    refetchInterval: timeframeParam && snapshotId === "latest" ? getDetailRefetchInterval(timeframeParam) : false,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
     queryFn: () => api.getCoin(symbol.toUpperCase(), timeframeParam ?? "1h", snapshotId ?? ""),
   });
 
   const { data: performanceData } = useQuery({
     queryKey: ["performance", symbol.toUpperCase(), timeframeParam, snapshotId],
     enabled: Boolean(timeframeParam && snapshotId),
-    queryFn: () => api.getPerformance({ symbol: symbol.toUpperCase(), timeframe: timeframeParam ?? "1h", snapshotId: snapshotId ?? "" }),
     staleTime: 60_000,
+    refetchInterval: snapshotId === "latest" ? 60_000 : false,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
+    queryFn: () => api.getPerformance({ symbol: symbol.toUpperCase(), timeframe: timeframeParam ?? "1h", snapshotId: snapshotId ?? "" }),
   });
 
   if (!timeframeParam || !snapshotId) {

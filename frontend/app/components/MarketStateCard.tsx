@@ -234,7 +234,7 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
       <div className="relative flex flex-col gap-5">
         <div className="flex items-start justify-between gap-3">
           <Link
-            href={`/coin/${asset.symbol}?timeframe=${asset.timeframe}&snapshot_id=${asset.snapshot_id}`}
+            href={`/coin/${asset.symbol}?timeframe=${asset.timeframe}&snapshot_id=latest`}
             className="group flex items-center gap-3"
           >
             <div className="relative">

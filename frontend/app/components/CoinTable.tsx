@@ -77,7 +77,7 @@ export default function CoinTable({
               <tr key={coin.symbol} className="group border-b border-white/5 transition-colors hover:bg-white/5">
                 <td className="px-6 py-4">
                   <Link
-                    href={`/coin/${coin.symbol}?timeframe=${coinTimeframe}&snapshot_id=${coin.snapshot_id}`}
+                    href={`/coin/${coin.symbol}?timeframe=${coinTimeframe}&snapshot_id=latest`}
                     className="flex items-center gap-3"
                   >
                     <div className="relative">

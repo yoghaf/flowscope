@@ -29,6 +29,19 @@ function getScannerStaleTime(timeframe: Timeframe): number {
   return 60_000;
 }
 
+function getScannerRefetchInterval(timeframe: Timeframe): number {
+  if (timeframe === "15m") {
+    return 20_000;
+  }
+  if (timeframe === "1h") {
+    return 45_000;
+  }
+  if (timeframe === "4h") {
+    return 90_000;
+  }
+  return 120_000;
+}
+
 export default function ScannerPage() {
   const searchParams = useSearchParams();
   const [timeframe, setTimeframe] = useState<Timeframe>("1h");
@@ -46,6 +59,9 @@ export default function ScannerPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["scanner", timeframe, signalFilter, scoreRange, searchTerm],
     staleTime: getScannerStaleTime(timeframe),
+    refetchInterval: getScannerRefetchInterval(timeframe),
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
     queryFn: () =>
       api.getScanner({
         symbol: "ALL",
@@ -61,6 +77,9 @@ export default function ScannerPage() {
   const { data: performanceData } = useQuery({
     queryKey: ["performance", timeframe],
     staleTime: 60_000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
     queryFn: () => api.getPerformance({ symbol: "ALL", timeframe, snapshotId: "latest" }),
   });
 
