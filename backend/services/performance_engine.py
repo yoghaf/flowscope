@@ -39,6 +39,9 @@ class PerformanceEngine:
                     trades=len(trades_for_type),
                     open_trades=len(trades_for_type),
                     closed_trades=0,
+                    wins=0,
+                    losses=0,
+                    breakevens=0,
                     winrate=0.0,
                     avg_win=0.0,
                     avg_loss=0.0,
@@ -72,6 +75,7 @@ class PerformanceEngine:
             open_t = [trade for trade in trades_for_type if trade.result == "open"]
             wins_t = [trade for trade in closed_t if trade.result == "win"]
             losses_t = [trade for trade in closed_t if trade.result == "loss"]
+            breakevens_t = [trade for trade in trades_for_type if trade.result == "breakeven"]
             total_t = len(closed_t)
             winrate_t = len(wins_t) / total_t if total_t else 0.0
             avg_win_t = sum(trade.pnl_pct for trade in wins_t) / len(wins_t) if wins_t else 0.0
@@ -85,6 +89,9 @@ class PerformanceEngine:
                     trades=len(trades_for_type),
                     open_trades=len(open_t),
                     closed_trades=total_t,
+                    wins=len(wins_t),
+                    losses=len(losses_t),
+                    breakevens=len(breakevens_t),
                     winrate=round(winrate_t, 4),
                     avg_win=round(avg_win_t, 4),
                     avg_loss=round(avg_loss_t, 4),
@@ -114,6 +121,7 @@ class PerformanceEngine:
         for regime, trades_for_regime in regime_grouped.items():
             wins_r = [trade for trade in trades_for_regime if trade.result == "win"]
             losses_r = [trade for trade in trades_for_regime if trade.result == "loss"]
+            breakevens_r = [trade for trade in trades_for_regime if trade.result == "breakeven"]
             total_r = len(trades_for_regime)
             winrate_r = len(wins_r) / total_r if total_r else 0.0
             avg_win_r = sum(trade.pnl_pct for trade in wins_r) / len(wins_r) if wins_r else 0.0
@@ -124,6 +132,9 @@ class PerformanceEngine:
                 RegimePerformance(
                     regime=regime,
                     trades=total_r,
+                    wins=len(wins_r),
+                    losses=len(losses_r),
+                    breakevens=len(breakevens_r),
                     winrate=round(winrate_r, 4),
                     avg_win=round(avg_win_r, 4),
                     avg_loss=round(avg_loss_r, 4),
@@ -144,6 +155,7 @@ class PerformanceEngine:
         for (setup_type, regime, volatility), trades_for_condition in condition_grouped.items():
             wins_c = [trade for trade in trades_for_condition if trade.result == "win"]
             losses_c = [trade for trade in trades_for_condition if trade.result == "loss"]
+            breakevens_c = [trade for trade in trades_for_condition if trade.result == "breakeven"]
             total_c = len(trades_for_condition)
             winrate_c = len(wins_c) / total_c if total_c else 0.0
             avg_win_c = sum(trade.pnl_pct for trade in wins_c) / len(wins_c) if wins_c else 0.0
@@ -156,6 +168,9 @@ class PerformanceEngine:
                     regime=regime,
                     volatility=volatility,
                     trades=total_c,
+                    wins=len(wins_c),
+                    losses=len(losses_c),
+                    breakevens=len(breakevens_c),
                     winrate=round(winrate_c, 4),
                     avg_win=round(avg_win_c, 4),
                     avg_loss=round(avg_loss_c, 4),

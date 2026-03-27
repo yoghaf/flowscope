@@ -378,6 +378,9 @@ export interface SetupPerformance {
   trades: number;
   open_trades?: number;
   closed_trades?: number;
+  wins?: number;
+  losses?: number;
+  breakevens?: number;
   winrate: number;
   avg_win: number;
   avg_loss: number;
@@ -391,6 +394,9 @@ export interface ConditionPerformance {
   regime: string;
   volatility: string;
   trades: number;
+  wins?: number;
+  losses?: number;
+  breakevens?: number;
   winrate: number;
   avg_win: number;
   avg_loss: number;
@@ -414,6 +420,9 @@ export interface PerformanceResponse {
 export interface RegimePerformance {
   regime: string;
   trades: number;
+  wins?: number;
+  losses?: number;
+  breakevens?: number;
   winrate: number;
   avg_win: number;
   avg_loss: number;

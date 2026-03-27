@@ -7,6 +7,7 @@ from backend.config import Settings
 from backend.database import DatabaseManager
 
 logger = logging.getLogger(__name__)
+BREAKEVEN_EPSILON = 1e-9
 
 
 class TradeEvaluator:
@@ -69,10 +70,18 @@ class TradeEvaluator:
             if exit_price is None and tp1_hit and trailing_stop is not None:
                 if direction > 0 and price <= trailing_stop:
                     exit_price = trailing_stop
-                    payload["result"] = "win"
+                    payload["result"] = (
+                        "breakeven"
+                        if abs(trailing_stop - trade.entry_price) <= max(abs(trade.entry_price), 1.0) * BREAKEVEN_EPSILON
+                        else "win"
+                    )
                 if direction < 0 and price >= trailing_stop:
                     exit_price = trailing_stop
-                    payload["result"] = "win"
+                    payload["result"] = (
+                        "breakeven"
+                        if abs(trailing_stop - trade.entry_price) <= max(abs(trade.entry_price), 1.0) * BREAKEVEN_EPSILON
+                        else "win"
+                    )
 
             if exit_price is None and trade.invalidation_price is not None:
                 if direction > 0 and price <= trade.invalidation_price:

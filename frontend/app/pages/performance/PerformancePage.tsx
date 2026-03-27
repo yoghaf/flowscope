@@ -28,6 +28,22 @@ function formatRrValue(item: { rr_ratio: number; winrate: number; closed_trades?
   return item.rr_ratio.toFixed(2);
 }
 
+function formatWinrateValue(item: { winrate: number; closed_trades?: number; trades: number }) {
+  const closedTrades = item.closed_trades ?? item.trades;
+  if (closedTrades === 0) {
+    return "--";
+  }
+  return `${Math.round(item.winrate * 100)}%`;
+}
+
+function formatExpectancyValue(item: { expectancy: number; closed_trades?: number; trades: number }) {
+  const closedTrades = item.closed_trades ?? item.trades;
+  if (closedTrades === 0) {
+    return "--";
+  }
+  return `${item.expectancy.toFixed(2)}%`;
+}
+
 function SetupSummaryCard({
   title,
   icon,
@@ -50,8 +66,10 @@ function SetupSummaryCard({
           <p className="text-lg font-semibold text-foreground">{setup.setup_type}</p>
           <p>Closed trades: {formatTradeSample(setup).closedTrades}</p>
           <p>Open trades: {formatTradeSample(setup).openTrades}</p>
-          <p>Winrate: {Math.round(setup.winrate * 100)}%</p>
-          <p>Expectancy: {setup.expectancy.toFixed(2)}%</p>
+          <p>Wins / Losses: {setup.wins ?? 0} / {setup.losses ?? 0}</p>
+          <p>Breakevens: {setup.breakevens ?? 0}</p>
+          <p>Winrate: {formatWinrateValue(setup)}</p>
+          <p>Expectancy: {formatExpectancyValue(setup)}</p>
         </div>
       ) : (
         <p className="text-muted-foreground">{emptyText}</p>
@@ -83,6 +101,7 @@ export default function PerformancePage() {
       <div>
         <h1 className="mb-2 text-4xl font-bold tracking-tight text-foreground">Performance</h1>
         <p className="text-lg text-muted-foreground">How FlowScope setups are performing over time</p>
+        <p className="mt-2 text-sm text-muted-foreground">Winrate and expectancy only use closed `win/loss` trades. Open trades and breakevens are shown separately.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -152,13 +171,21 @@ export default function PerformancePage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span>Winrate</span>
-                  <span className="text-foreground">{Math.round(setup.winrate * 100)}%</span>
+                  <span className="text-foreground">{formatWinrateValue(setup)}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span>Expectancy</span>
                   <span className={setup.expectancy >= 0 ? "text-emerald-300" : "text-red-300"}>
-                    {setup.expectancy.toFixed(2)}%
+                    {formatExpectancyValue(setup)}
                   </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Wins / Losses</span>
+                  <span className="text-foreground">{setup.wins ?? 0} / {setup.losses ?? 0}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Breakevens</span>
+                  <span className="text-foreground">{setup.breakevens ?? 0}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span>RR</span>
@@ -198,13 +225,21 @@ export default function PerformancePage() {
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Winrate</span>
-                    <span className="text-foreground">{Math.round(regime.winrate * 100)}%</span>
+                    <span className="text-foreground">{formatWinrateValue(regime)}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Expectancy</span>
                     <span className={regime.expectancy >= 0 ? "text-emerald-300" : "text-red-300"}>
-                      {regime.expectancy.toFixed(2)}%
+                      {formatExpectancyValue(regime)}
                     </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Wins / Losses</span>
+                    <span className="text-foreground">{regime.wins ?? 0} / {regime.losses ?? 0}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Breakevens</span>
+                    <span className="text-foreground">{regime.breakevens ?? 0}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>RR</span>

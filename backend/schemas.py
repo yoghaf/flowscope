@@ -428,6 +428,9 @@ class SetupPerformance(BaseModel):
     trades: int
     open_trades: int = 0
     closed_trades: int = 0
+    wins: int = 0
+    losses: int = 0
+    breakevens: int = 0
     winrate: float
     avg_win: float
     avg_loss: float
@@ -439,6 +442,9 @@ class SetupPerformance(BaseModel):
 class RegimePerformance(BaseModel):
     regime: MarketRegime
     trades: int
+    wins: int = 0
+    losses: int = 0
+    breakevens: int = 0
     winrate: float
     avg_win: float
     avg_loss: float
@@ -452,6 +458,9 @@ class ConditionPerformance(BaseModel):
     regime: MarketRegime
     volatility: VolatilityRegime
     trades: int
+    wins: int = 0
+    losses: int = 0
+    breakevens: int = 0
     winrate: float
     avg_win: float
     avg_loss: float
