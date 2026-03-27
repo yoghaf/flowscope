@@ -145,7 +145,7 @@ export default function ScannerPage() {
 
           <div>
             <label className="mb-3 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Score Range: {scoreRange[0]} - {scoreRange[1]}
+              Clarity Range: {scoreRange[0]} - {scoreRange[1]}
             </label>
             <div className="space-y-3">
               <input

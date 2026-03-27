@@ -1,9 +1,64 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, ArrowUpRight, ShieldCheck, ShieldX } from "lucide-react";
 
 import { api } from "@/lib/api";
+import type { SetupPerformance } from "@/lib/types";
+
+function formatTradeSample(item: { closed_trades?: number; open_trades?: number; trades: number }) {
+  const closedTrades = item.closed_trades ?? item.trades;
+  const openTrades = item.open_trades ?? 0;
+  return {
+    closedTrades,
+    openTrades,
+    totalTrades: item.trades,
+  };
+}
+
+function formatRrValue(item: { rr_ratio: number; winrate: number; closed_trades?: number; trades: number }) {
+  const closedTrades = item.closed_trades ?? item.trades;
+  if (closedTrades === 0) {
+    return "--";
+  }
+  if (item.winrate >= 1 && item.rr_ratio === 0) {
+    return "--";
+  }
+  return item.rr_ratio.toFixed(2);
+}
+
+function SetupSummaryCard({
+  title,
+  icon,
+  setup,
+  emptyText,
+}: {
+  title: string;
+  icon: ReactNode;
+  setup?: SetupPerformance;
+  emptyText: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-card/50 p-6 backdrop-blur-xl">
+      <div className="mb-4 flex items-center gap-2">
+        {icon}
+        <h3 className="font-semibold text-foreground">{title}</h3>
+      </div>
+      {setup ? (
+        <div className="space-y-2 text-sm text-muted-foreground">
+          <p className="text-lg font-semibold text-foreground">{setup.setup_type}</p>
+          <p>Closed trades: {formatTradeSample(setup).closedTrades}</p>
+          <p>Open trades: {formatTradeSample(setup).openTrades}</p>
+          <p>Winrate: {Math.round(setup.winrate * 100)}%</p>
+          <p>Expectancy: {setup.expectancy.toFixed(2)}%</p>
+        </div>
+      ) : (
+        <p className="text-muted-foreground">{emptyText}</p>
+      )}
+    </div>
+  );
+}
 
 export default function PerformancePage() {
   const { data, isLoading } = useQuery({
@@ -32,7 +87,7 @@ export default function PerformancePage() {
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border border-white/10 bg-card/50 p-6 backdrop-blur-xl">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total Trades</p>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Closed Trades</p>
           <p className="text-3xl font-bold text-foreground">{data.total_trades}</p>
         </div>
         <div className="rounded-2xl border border-white/10 bg-card/50 p-6 backdrop-blur-xl">
@@ -52,38 +107,18 @@ export default function PerformancePage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="rounded-2xl border border-white/10 bg-card/50 p-6 backdrop-blur-xl">
-          <div className="mb-4 flex items-center gap-2">
-            <ArrowUpRight className="h-5 w-5 text-emerald-400" />
-            <h3 className="font-semibold text-foreground">Best Setup</h3>
-          </div>
-          {bestSetup ? (
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <p className="text-lg font-semibold text-foreground">{bestSetup.setup_type}</p>
-              <p>Trades: {bestSetup.trades}</p>
-              <p>Winrate: {Math.round(bestSetup.winrate * 100)}%</p>
-              <p>Expectancy: {bestSetup.expectancy.toFixed(2)}%</p>
-            </div>
-          ) : (
-            <p className="text-muted-foreground">No data yet.</p>
-          )}
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-card/50 p-6 backdrop-blur-xl">
-          <div className="mb-4 flex items-center gap-2">
-            <ShieldX className="h-5 w-5 text-red-400" />
-            <h3 className="font-semibold text-foreground">Worst Setup</h3>
-          </div>
-          {worstSetup ? (
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <p className="text-lg font-semibold text-foreground">{worstSetup.setup_type}</p>
-              <p>Trades: {worstSetup.trades}</p>
-              <p>Winrate: {Math.round(worstSetup.winrate * 100)}%</p>
-              <p>Expectancy: {worstSetup.expectancy.toFixed(2)}%</p>
-            </div>
-          ) : (
-            <p className="text-muted-foreground">No data yet.</p>
-          )}
-        </div>
+        <SetupSummaryCard
+          title="Best Setup"
+          icon={<ArrowUpRight className="h-5 w-5 text-emerald-400" />}
+          setup={bestSetup}
+          emptyText="No closed setup data yet."
+        />
+        <SetupSummaryCard
+          title="Worst Setup"
+          icon={<ShieldX className="h-5 w-5 text-red-400" />}
+          setup={worstSetup}
+          emptyText="Need at least two distinct setups with closed trades."
+        />
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-card/50 p-6 backdrop-blur-xl">
@@ -108,8 +143,12 @@ export default function PerformancePage() {
               </div>
               <div className="space-y-1 text-xs text-muted-foreground">
                 <div className="flex items-center justify-between">
-                  <span>Trades</span>
-                  <span className="text-foreground">{setup.trades}</span>
+                  <span>Closed</span>
+                  <span className="text-foreground">{formatTradeSample(setup).closedTrades}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Open</span>
+                  <span className="text-foreground">{formatTradeSample(setup).openTrades}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span>Winrate</span>
@@ -123,7 +162,7 @@ export default function PerformancePage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span>RR</span>
-                  <span className="text-foreground">{setup.rr_ratio.toFixed(2)}</span>
+                  <span className="text-foreground">{formatRrValue(setup)}</span>
                 </div>
               </div>
             </div>
@@ -169,7 +208,7 @@ export default function PerformancePage() {
                   </div>
                   <div className="flex items-center justify-between">
                     <span>RR</span>
-                    <span className="text-foreground">{regime.rr_ratio.toFixed(2)}</span>
+                    <span className="text-foreground">{formatRrValue(regime)}</span>
                   </div>
                 </div>
               </div>

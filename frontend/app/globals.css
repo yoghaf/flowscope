@@ -30,6 +30,16 @@ body {
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+select {
+  color-scheme: dark;
+}
+
+select option,
+select optgroup {
+  background-color: rgb(var(--card));
+  color: rgb(var(--foreground));
+}
+
 @layer base {
   h1 {
     @apply text-2xl font-semibold leading-tight;

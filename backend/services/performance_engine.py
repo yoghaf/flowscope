@@ -95,8 +95,16 @@ class PerformanceEngine:
             )
 
         setups_with_results = [item for item in setups if item.closed_trades > 0]
-        best_setup = max(setups_with_results, key=lambda item: item.expectancy, default=None)
-        worst_setup = min(setups_with_results, key=lambda item: item.expectancy, default=None)
+        ranked_setups = sorted(setups_with_results, key=lambda item: item.expectancy, reverse=True)
+        best_setup = ranked_setups[0] if ranked_setups else None
+        worst_setup = next(
+            (
+                item
+                for item in reversed(ranked_setups)
+                if best_setup is None or item.setup_type != best_setup.setup_type
+            ),
+            None,
+        )
 
         regime_grouped: dict[str, list] = {}
         for trade in closed:

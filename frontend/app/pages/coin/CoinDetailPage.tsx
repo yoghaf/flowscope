@@ -25,6 +25,7 @@ import {
   buildActionLayer,
   buildExecutionLayer,
   describeExecutionPlan,
+  getOpportunityScore,
   getMarketInterpretation,
   setupTypeFromDecision,
 } from "@/lib/interpretation";
@@ -96,7 +97,7 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
   const coin = data.asset;
   const fundingRate = toNumberOrNull(coin.funding_rate);
   const longShortRatio = toNumberOrNull(coin.long_short_ratio);
-  const reliability = toNumberOrNull(coin.reliability_score) ?? 0;
+  const clarityConfidence = getOpportunityScore(coin, timeframeParam);
   const marketInterpretation = getMarketInterpretation(coin, timeframeParam);
   const action = buildActionLayer(coin, timeframeParam);
   const execution = buildExecutionLayer(coin, timeframeParam);
@@ -189,7 +190,7 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
                 {marketInterpretation.state}
               </div>
               <div className="rounded-xl border border-primary/20 bg-primary/10 px-4 py-2 font-semibold text-primary">
-                Reliability: {Math.round(reliability * 100)}%
+                Clarity: {Math.round(clarityConfidence * 100)}%
               </div>
               {coin.phase && coin.phase !== "Neutral" && (
                 <div className="inline-flex items-center gap-1.5 rounded-xl border border-primary/30 bg-primary/20 px-4 py-2 font-bold uppercase tracking-wider text-primary shadow-sm shadow-primary/20">

@@ -336,14 +336,15 @@ class SignalService:
         for asset in assets:
             if signal_type and signal_type != "All" and asset.signal != signal_type:
                 continue
-            if not min_score <= asset.score <= max_score:
+            scanner_score = self._scanner_visibility_score(asset)
+            if not min_score <= scanner_score <= max_score:
                 continue
             if term and term not in asset.symbol.lower() and term not in asset.name.lower():
                 continue
             setup_type = self._setup_type_from_state(asset.market_state)
             regime = self._market_regime(asset.flow_metrics, timeframe)
             volatility = self._volatility_regime(asset.flow_metrics, timeframe)
-            effective_score = asset.score
+            effective_score = scanner_score
             effective_score = self._rank_score(effective_score, asset.priority_multiplier)
             items.append((effective_score, asset))
 
@@ -355,6 +356,16 @@ class SignalService:
         )
         self._log_snapshots(response.items, timeframe)
         return response
+
+    @staticmethod
+    def _scanner_visibility_score(asset: AssetState) -> float:
+        if asset.action_opportunity_score is not None:
+            return max(0.0, min(asset.action_opportunity_score, 1.0))
+        if asset.market_interpretation is not None:
+            clarity = asset.market_interpretation.get("clarity_confidence")
+            if isinstance(clarity, (int, float)):
+                return max(0.0, min(float(clarity), 1.0))
+        return max(0.0, min(asset.reliability_score or asset.score, 1.0))
 
     async def get_coin_detail(
         self,

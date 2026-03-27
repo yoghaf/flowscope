@@ -12,6 +12,7 @@ import {
   buildActionLayer,
   buildExecutionLayer,
   describeExecutionPlan,
+  getOpportunityScore,
   getMarketInterpretation,
 } from "@/lib/interpretation";
 import type {
@@ -131,7 +132,7 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
   const quality = asset.position_quality ?? "Neutral";
   const decision = asset.decision_type ?? "No-Trade";
   const stateStyle = QUALITY_STYLES[quality] ?? QUALITY_STYLES.Unknown;
-  const confidence = Math.round((toNumberOrNull(asset.reliability_score) ?? 0) * 100);
+  const confidence = Math.round(getOpportunityScore(asset, timeframe) * 100);
   const dataStatusLabel =
     asset.data_status === "INSUFFICIENT_HISTORY"
       ? "Insufficient History"
