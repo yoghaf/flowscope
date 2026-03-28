@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import html
+import json
 from datetime import UTC, datetime
 from io import StringIO
 
@@ -256,6 +257,15 @@ class PerformanceEngine:
             "volatility_regime",
             "created_at",
         ]
+        filterable_columns = [
+            "symbol",
+            "timeframe",
+            "setup_type",
+            "state",
+            "bias",
+            "status",
+            "result",
+        ]
 
         header_map = {
             "symbol": "Symbol",
@@ -281,6 +291,16 @@ class PerformanceEngine:
             "volatility_regime": "Vol",
             "created_at": "Opened",
         }
+        filter_options = {
+            column: sorted(
+                {
+                    str(row[column]).strip()
+                    for row in rows
+                    if row.get(column) is not None and str(row[column]).strip()
+                }
+            )
+            for column in filterable_columns
+        }
 
         table_rows = []
         for row in rows:
@@ -299,7 +319,11 @@ class PerformanceEngine:
                 else:
                     rendered = self._display(value)
                 cells.append(f"<td>{html.escape(rendered)}</td>")
-            table_rows.append("<tr>" + "".join(cells) + "</tr>")
+            row_attrs = " ".join(
+                f'data-{column}="{html.escape(str(row.get(column, "")).strip().lower())}"'
+                for column in filterable_columns
+            )
+            table_rows.append(f"<tr {row_attrs}>" + "".join(cells) + "</tr>")
 
         summary_html = "".join(
             f"""
@@ -310,10 +334,25 @@ class PerformanceEngine:
             """
             for label, value in summary_cards
         )
-        table_header_html = "".join(f"<th>{html.escape(header_map[column])}</th>" for column in visible_columns)
-        table_body_html = "".join(table_rows) if table_rows else (
-            f'<tr><td colspan="{len(visible_columns)}" class="empty">No trades match this filter.</td></tr>'
+        filters_html = "".join(
+            f"""
+            <label class="filter-item">
+              <span>{html.escape(header_map[column])}</span>
+              <select id="filter-{html.escape(column)}" data-column="{html.escape(column)}">
+                <option value="">All</option>
+                {"".join(
+                    f'<option value="{html.escape(option.lower())}">{html.escape(option)}</option>'
+                    for option in filter_options[column]
+                )}
+              </select>
+            </label>
+            """
+            for column in filterable_columns
         )
+        table_header_html = "".join(f"<th>{html.escape(header_map[column])}</th>" for column in visible_columns)
+        table_body_html = "".join(table_rows)
+        empty_row_html = f'<tr id="no-rows"><td colspan="{len(visible_columns)}" class="empty">No trades match the active filters.</td></tr>'
+        initial_visible_count = len(rows)
 
         return f"""<!DOCTYPE html>
 <html lang="en">
@@ -370,6 +409,70 @@ class PerformanceEngine:
       border-radius: 16px;
       background: #111827;
     }}
+    .filters {{
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      background: #111827;
+      padding: 16px;
+      margin: 0 0 18px;
+    }}
+    .filters-head {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }}
+    .filters-title {{
+      font-size: 16px;
+      font-weight: 700;
+      color: #f8fafc;
+    }}
+    .filters-meta {{
+      font-size: 13px;
+      color: #94a3b8;
+    }}
+    .filter-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+    }}
+    .filter-item {{
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 12px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }}
+    .filter-item select {{
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 10px 12px;
+      font-size: 13px;
+      outline: none;
+    }}
+    .filter-actions {{
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 14px;
+    }}
+    .filter-reset {{
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.04);
+      color: #e5e7eb;
+      padding: 10px 14px;
+      font-size: 13px;
+      cursor: pointer;
+    }}
+    .filter-reset:hover {{
+      background: rgba(255,255,255,0.08);
+    }}
     table {{
       width: 100%;
       border-collapse: collapse;
@@ -406,14 +509,80 @@ class PerformanceEngine:
   <p>Readable trade table with RR, modal per trade, quantity, and realized dollar performance.</p>
   <p class="meta">Generated at: {html.escape(datetime.now(UTC).isoformat())} | Symbol: {html.escape(symbol)} | Timeframe: {html.escape(timeframe)} | Setup: {html.escape(setup_type or "ALL")}</p>
   <div class="summary">{summary_html}</div>
+  <div class="filters">
+    <div class="filters-head">
+      <div class="filters-title">Table Filters</div>
+      <div id="filter-summary" class="filters-meta">{initial_visible_count} / {initial_visible_count} rows visible</div>
+    </div>
+    <div class="filter-grid">
+      {filters_html}
+    </div>
+    <div class="filter-actions">
+      <button id="reset-filters" class="filter-reset" type="button">Reset Filters</button>
+    </div>
+  </div>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>{table_header_html}</tr>
       </thead>
-      <tbody>{table_body_html}</tbody>
+      <tbody>{table_body_html}{empty_row_html}</tbody>
     </table>
   </div>
+  <script>
+    const filterColumns = {json.dumps(filterable_columns)};
+    const tableRows = Array.from(document.querySelectorAll("tbody tr[data-symbol]"));
+    const noRows = document.getElementById("no-rows");
+    const summary = document.getElementById("filter-summary");
+
+    function applyFilters() {{
+      let visible = 0;
+      for (const row of tableRows) {{
+        let show = true;
+        for (const column of filterColumns) {{
+          const control = document.getElementById(`filter-${{column}}`);
+          const selected = control ? control.value : "";
+          if (selected && row.dataset[column] !== selected) {{
+            show = false;
+            break;
+          }}
+        }}
+        row.style.display = show ? "" : "none";
+        if (show) {{
+          visible += 1;
+        }}
+      }}
+
+      if (noRows) {{
+        noRows.style.display = visible === 0 ? "" : "none";
+      }}
+      if (summary) {{
+        summary.textContent = `${{visible}} / ${{tableRows.length}} rows visible`;
+      }}
+    }}
+
+    for (const column of filterColumns) {{
+      const control = document.getElementById(`filter-${{column}}`);
+      if (control) {{
+        control.addEventListener("change", applyFilters);
+      }}
+    }}
+
+    const resetButton = document.getElementById("reset-filters");
+    if (resetButton) {{
+      resetButton.addEventListener("click", () => {{
+        for (const column of filterColumns) {{
+          const control = document.getElementById(`filter-${{column}}`);
+          if (control) {{
+            control.value = "";
+          }}
+        }}
+        applyFilters();
+      }});
+    }}
+
+    applyFilters();
+  </script>
 </body>
 </html>"""
 
