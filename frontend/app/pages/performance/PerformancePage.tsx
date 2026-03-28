@@ -33,6 +33,7 @@ const FILTER_LABELS: Record<TableFilterKey, string> = {
 };
 
 const FILTER_KEYS = Object.keys(INITIAL_FILTERS) as TableFilterKey[];
+const ALL_TIMEFRAME_OPTIONS = ["15m", "1h", "4h", "24h"];
 
 function formatTradeSample(item: { closed_trades?: number; open_trades?: number; trades: number }) {
   const closedTrades = item.closed_trades ?? item.trades;
@@ -164,6 +165,10 @@ export default function PerformancePage() {
     const rows = tableData?.rows ?? [];
     return FILTER_KEYS.reduce<Record<TableFilterKey, FilterOption[]>>(
       (acc, key) => {
+        if (key === "timeframe") {
+          acc[key] = ALL_TIMEFRAME_OPTIONS.map((option) => ({ value: option.toLowerCase(), label: option }));
+          return acc;
+        }
         const seen = new Map<string, string>();
         rows.forEach((row) => {
           const normalized = normalizeFilterValue(row[key]);
