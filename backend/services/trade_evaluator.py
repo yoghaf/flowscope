@@ -26,6 +26,7 @@ class TradeEvaluator:
             return
 
         now = datetime.now(UTC)
+        catchup_queued = 0
         for trade in open_trades:
             price = await self.signal_service.get_latest_price(trade.symbol, trade.timeframe)
             if price is None or trade.entry_price is None:
@@ -125,4 +126,8 @@ class TradeEvaluator:
             ):
                 trade.result = "open"
                 trade.entry_touched_at = updated_entry_touched_at
-                await self.signal_service.catch_up_trade_entry_notification(trade)
+                queued = await self.signal_service.catch_up_trade_entry_notification(trade)
+                if queued:
+                    catchup_queued += 1
+
+        logger.info("Trade evaluator scanned open_trades=%d catchup_queued=%d", len(open_trades), catchup_queued)

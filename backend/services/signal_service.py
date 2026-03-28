@@ -202,6 +202,16 @@ class SignalService:
 
             await self._bootstrap_live_state()
             await self._snapshot_cycle()
+            await self.trade_evaluator.evaluate()
+            self.performance_snapshot = await self.performance_engine.compute()
+            if self.performance_snapshot:
+                self.setup_expectancy = {
+                    item.setup_type: item.expectancy for item in self.performance_snapshot.setups
+                }
+                self.condition_expectancy = {
+                    (item.setup_type, item.regime, item.volatility): item.expectancy
+                    for item in self.performance_snapshot.conditions
+                }
             self.tasks.append(asyncio.create_task(self._snapshot_loop()))
             self.tasks.append(asyncio.create_task(self._ping_loop()))
             if self.settings.realtime_price_stream_enabled:
