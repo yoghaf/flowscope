@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import Response
 
-from backend.schemas import PerformanceResponse
+from backend.schemas import PerformanceResponse, PerformanceTradeTableResponse
 
 router = APIRouter(tags=["performance"])
 
@@ -19,6 +19,23 @@ async def get_performance(
 ) -> PerformanceResponse:
     service = request.app.state.signal_service
     return await service.get_performance(symbol=symbol, timeframe=timeframe, snapshot_id=snapshot_id)
+
+
+@router.get("/performance/report/data", response_model=PerformanceTradeTableResponse)
+async def get_performance_report_data(
+    request: Request,
+    symbol: str = Query("ALL", min_length=1),
+    timeframe: str = Query("ALL", pattern="^(15m|1h|4h|24h|ALL)$"),
+    setup_type: str | None = Query(None),
+    capital_per_trade: float = Query(100.0, gt=0),
+) -> PerformanceTradeTableResponse:
+    performance_engine = request.app.state.signal_service.performance_engine
+    return await performance_engine.get_trade_report_table(
+        symbol=symbol,
+        timeframe=timeframe,
+        setup_type=setup_type,
+        capital_per_trade=capital_per_trade,
+    )
 
 
 @router.get("/performance/report")

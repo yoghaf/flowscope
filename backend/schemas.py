@@ -469,6 +469,57 @@ class ConditionPerformance(BaseModel):
     validated: bool
 
 
+class PerformanceTradeRow(BaseModel):
+    trade_id: int
+    symbol: str
+    timeframe: str
+    setup_type: str
+    state: str
+    bias: str
+    status: str
+    result: str
+    market_regime: str
+    volatility_regime: str
+    confidence_pct: float | None = None
+    quality_score: str | None = None
+    risk_level: str | None = None
+    signal_timestamp: str
+    created_at: str
+    updated_at: str
+    entry_price: float | None = None
+    invalidation_price: float | None = None
+    target_price_1: float | None = None
+    target_price_2: float | None = None
+    risk_per_unit: float | None = None
+    reward_tp1_per_unit: float | None = None
+    reward_tp2_per_unit: float | None = None
+    planned_rr_tp1: float | None = None
+    planned_rr_tp2: float | None = None
+    capital_per_trade: float | None = None
+    estimated_quantity: float | None = None
+    risk_amount_usd: float | None = None
+    tp1_reward_usd: float | None = None
+    tp2_reward_usd: float | None = None
+    risk_pct_of_capital: float | None = None
+    pnl_pct: float | None = None
+    realized_pnl_usd: float | None = None
+    realized_r_multiple: float | None = None
+    max_profit_pct: float | None = None
+    max_profit_usd: float | None = None
+    max_drawdown_pct: float | None = None
+    max_drawdown_usd: float | None = None
+
+
+class PerformanceTradeTableResponse(BaseModel):
+    generated_at: datetime
+    symbol: str
+    timeframe: str
+    setup_type: str | None = None
+    capital_per_trade: float
+    total_rows: int
+    rows: list[PerformanceTradeRow] = Field(default_factory=list)
+
+
 class PerformanceResponse(BaseModel):
     generated_at: datetime
     total_trades: int

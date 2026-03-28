@@ -405,6 +405,57 @@ export interface ConditionPerformance {
   validated: boolean;
 }
 
+export interface PerformanceTradeRow {
+  trade_id: number;
+  symbol: string;
+  timeframe: string;
+  setup_type: string;
+  state: string;
+  bias: string;
+  status: string;
+  result: string;
+  market_regime: string;
+  volatility_regime: string;
+  confidence_pct?: number | null;
+  quality_score?: string | null;
+  risk_level?: string | null;
+  signal_timestamp: string;
+  created_at: string;
+  updated_at: string;
+  entry_price?: number | null;
+  invalidation_price?: number | null;
+  target_price_1?: number | null;
+  target_price_2?: number | null;
+  risk_per_unit?: number | null;
+  reward_tp1_per_unit?: number | null;
+  reward_tp2_per_unit?: number | null;
+  planned_rr_tp1?: number | null;
+  planned_rr_tp2?: number | null;
+  capital_per_trade?: number | null;
+  estimated_quantity?: number | null;
+  risk_amount_usd?: number | null;
+  tp1_reward_usd?: number | null;
+  tp2_reward_usd?: number | null;
+  risk_pct_of_capital?: number | null;
+  pnl_pct?: number | null;
+  realized_pnl_usd?: number | null;
+  realized_r_multiple?: number | null;
+  max_profit_pct?: number | null;
+  max_profit_usd?: number | null;
+  max_drawdown_pct?: number | null;
+  max_drawdown_usd?: number | null;
+}
+
+export interface PerformanceTradeTableResponse {
+  generated_at: string;
+  symbol: string;
+  timeframe: string;
+  setup_type?: string | null;
+  capital_per_trade: number;
+  total_rows: number;
+  rows: PerformanceTradeRow[];
+}
+
 export interface PerformanceResponse {
   generated_at: string;
   total_trades: number;

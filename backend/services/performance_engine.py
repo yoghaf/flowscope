@@ -7,7 +7,14 @@ from datetime import UTC, datetime
 from io import StringIO
 
 from backend.database import DatabaseManager
-from backend.schemas import ConditionPerformance, PerformanceResponse, RegimePerformance, SetupPerformance
+from backend.schemas import (
+    ConditionPerformance,
+    PerformanceResponse,
+    PerformanceTradeRow,
+    PerformanceTradeTableResponse,
+    RegimePerformance,
+    SetupPerformance,
+)
 
 
 class PerformanceEngine:
@@ -199,6 +206,30 @@ class PerformanceEngine:
         writer.writerows(rows)
 
         return buffer.getvalue()
+
+    async def get_trade_report_table(
+        self,
+        *,
+        symbol: str = "ALL",
+        timeframe: str = "ALL",
+        setup_type: str | None = None,
+        capital_per_trade: float = 100.0,
+    ) -> PerformanceTradeTableResponse:
+        rows = await self._trade_report_rows(
+            symbol=symbol,
+            timeframe=timeframe,
+            setup_type=setup_type,
+            capital_per_trade=capital_per_trade,
+        )
+        return PerformanceTradeTableResponse(
+            generated_at=datetime.now(UTC),
+            symbol=symbol,
+            timeframe=timeframe,
+            setup_type=setup_type,
+            capital_per_trade=capital_per_trade,
+            total_rows=len(rows),
+            rows=[PerformanceTradeRow.model_validate(row) for row in rows],
+        )
 
     async def export_trade_report_html(
         self,

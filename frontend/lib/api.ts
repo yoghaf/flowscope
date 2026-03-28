@@ -5,6 +5,7 @@ import type {
   CoinDetailResponse,
   DashboardResponse,
   PerformanceResponse,
+  PerformanceTradeTableResponse,
   RealtimeEvent,
   ScannerResponse,
   Timeframe,
@@ -113,6 +114,19 @@ export const api = {
       symbol: query.symbol,
       timeframe: query.timeframe,
       snapshot_id: query.snapshotId,
+    });
+  },
+  getPerformanceReportData(query: {
+    symbol?: string;
+    timeframe?: Timeframe | "ALL";
+    setupType?: string;
+    capitalPerTrade: number;
+  }): Promise<PerformanceTradeTableResponse> {
+    return fetchJson<PerformanceTradeTableResponse>("/performance/report/data", {
+      symbol: query.symbol ?? "ALL",
+      timeframe: query.timeframe ?? "ALL",
+      setup_type: query.setupType,
+      capital_per_trade: query.capitalPerTrade,
     });
   },
   downloadPerformanceReport(query: {
