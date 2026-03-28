@@ -95,6 +95,8 @@ class ExecutionEngine:
             bias: TradeBias = "Bullish"
         elif market_interpretation.control == "Seller Dominant" or market_interpretation.trend == "Bearish":
             bias = "Bearish"
+        elif "Pre-Breakdown" in market_interpretation.state:
+            bias = "Bearish"
         elif decision in {"Squeeze-Setup", "Squeeze-Immediate", "Watchlist-Squeeze"}:
             bias = self._squeeze_bias(metrics, timeframe) or "Neutral"
         else:
@@ -141,6 +143,8 @@ class ExecutionEngine:
             return None
         if market_interpretation.action == "ENTER":
             status: SetupStatus = "Triggered" if breakout_valid and bias != "Neutral" else "Ready"
+        elif "Pre-Breakdown" in market_interpretation.state and bias != "Neutral":
+            status = "Ready"
         elif breakout_valid and breakout_distance <= trigger_distance_limit and confidence >= 0.72 and bias != "Neutral":
             status = "Ready"
         elif confidence >= 0.6 and market_interpretation.action == "WAIT":
@@ -239,6 +243,9 @@ class ExecutionEngine:
                 invalidation = max(bucket.high_price, recent_high)
                 if invalidation <= entry:
                     invalidation = max(bucket.high_price, range_mid, entry + atr_abs)
+
+        if (direction == 1 and current_price <= invalidation) or (direction == -1 and current_price >= invalidation):
+            return None
 
         if action.status == "Triggered" and not breakout_valid:
             return None
