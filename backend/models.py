@@ -97,6 +97,21 @@ class MarketDataBucket(Base):
     breakdown_funding: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
 
+class LatestAssetState(Base):
+    __tablename__ = "latest_asset_states"
+
+    symbol: Mapped[str] = mapped_column(String(20), primary_key=True)
+    timeframe: Mapped[str] = mapped_column(String(8), primary_key=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
 class AlertPreference(Base):
     __tablename__ = "alert_preferences"
 

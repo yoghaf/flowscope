@@ -640,6 +640,12 @@ class SignalService:
                 changed_symbols.append(symbol)
 
             assets_to_persist = [self._to_asset_snapshot(asset, "1h") for asset in self.state.values()]
+            latest_state_snapshots = [
+                self._to_asset_snapshot(state, timeframe)
+                for timeframe in TIMEFRAME_ORDER
+                for symbol in changed_symbols
+                if (state := self.states_by_timeframe.get(timeframe, {}).get(symbol)) is not None
+            ]
             bucket_rows = [
                 bucket.to_record()
                 for bucket in self.aggregate_store.latest_buckets_for_symbols(changed_symbols)
@@ -647,6 +653,7 @@ class SignalService:
 
         await self.database.save_market_snapshots(assets_to_persist)
         await self.database.save_market_buckets(bucket_rows)
+        await self.database.save_latest_asset_states(latest_state_snapshots)
 
         if changed_symbols:
             await self.realtime_hub.broadcast(
@@ -1554,6 +1561,72 @@ class SignalService:
         )
         return self._register_snapshot(snapshot)
 
+    @staticmethod
+    def _asset_snapshot_to_state(snapshot: AssetSnapshot) -> AssetState:
+        execution = None
+        if snapshot.execution is not None:
+            execution = ExecutionPlan(
+                entry_type=snapshot.execution.entry_type,
+                entry_min=snapshot.execution.entry_min,
+                entry_max=snapshot.execution.entry_max,
+                invalidation=snapshot.execution.invalidation,
+                target=snapshot.execution.target,
+                target_1=snapshot.execution.target_1,
+                target_2=snapshot.execution.target_2,
+                initial_stop=snapshot.execution.initial_stop,
+                risk_level=snapshot.execution.risk_level,
+                quality_score=snapshot.execution.quality_score,
+                breakout_valid=snapshot.execution.breakout_valid,
+            )
+
+        return AssetState(
+            symbol=snapshot.symbol,
+            name=snapshot.name,
+            timestamp=snapshot.timestamp,
+            price=snapshot.price,
+            spot_volume=snapshot.spot_volume,
+            futures_volume=snapshot.futures_volume,
+            volume=snapshot.volume,
+            open_interest=snapshot.open_interest,
+            funding_rate=snapshot.funding_rate,
+            long_short_ratio=snapshot.long_short_ratio,
+            taker_buy_sell_ratio=snapshot.taker_buy_sell_ratio,
+            long_liquidations=snapshot.long_liquidations,
+            short_liquidations=snapshot.short_liquidations,
+            flow_metrics=snapshot.flow_metrics,
+            score=snapshot.score,
+            signal=snapshot.signal,
+            signal_status=snapshot.signal_status,
+            data_status=snapshot.data_status,
+            breakdown=snapshot.breakdown.model_dump(),
+            market_state=snapshot.market_state,
+            state_confidence=snapshot.state_confidence,
+            state_probabilities=dict(snapshot.state_probabilities),
+            position_intent=snapshot.position_intent,
+            oi_intensity=snapshot.oi_intensity,
+            position_quality=snapshot.position_quality,
+            decision_type=snapshot.decision_type,
+            reliability_score=snapshot.reliability_score,
+            priority_multiplier=snapshot.priority_multiplier,
+            exchange_count=snapshot.exchange_count,
+            action_bias=snapshot.action_bias,
+            action_status=snapshot.action_status,
+            action_confidence_label=snapshot.action_confidence_label,
+            action_opportunity_score=snapshot.action_opportunity_score,
+            setup_type=snapshot.setup_type,
+            execution=execution,
+            tf_conflict=snapshot.tf_conflict,
+            phase=snapshot.phase,
+            phase_score=snapshot.phase_score,
+            phase_confidence=snapshot.phase_confidence,
+            debug_trace=snapshot.debug_trace.model_dump() if snapshot.debug_trace is not None else None,
+            market_interpretation=(
+                snapshot.market_interpretation.model_dump()
+                if snapshot.market_interpretation is not None
+                else None
+            ),
+        )
+
     def _build_neutral_debug_trace(
         self,
         *,
@@ -2020,6 +2093,7 @@ class SignalService:
 
     async def _bootstrap_live_state(self) -> None:
         loaded_symbols = await self._rehydrate_from_database()
+        warmed_snapshots = await self._warm_latest_states_from_database(set(self.symbols))
 
         if not loaded_symbols:
             logger.info("No database history — starting fresh.")
@@ -2029,7 +2103,11 @@ class SignalService:
             # 15m first (staggered), then 1h, then 4h, then 24h
             self.tasks.append(asyncio.create_task(self._staged_backfill_sequence()))
 
-        logger.info("Bootstrap complete. Loaded %d symbols from DB. Starting live data...", len(loaded_symbols))
+        logger.info(
+            "Bootstrap complete. Loaded %d symbols from bucket DB, warmed %d latest state snapshots. Starting live data...",
+            len(loaded_symbols),
+            warmed_snapshots,
+        )
 
     async def _staged_backfill_sequence(self) -> None:
         """Sequential phased backfill: 15m -> 1h -> 4h -> 24h.
@@ -2165,6 +2243,28 @@ class SignalService:
                 await self._update_state(symbol, persist_alerts=False)
 
         return seeded_symbols
+
+    async def _warm_latest_states_from_database(self, symbols: set[str]) -> int:
+        if not self.database.enabled or not symbols:
+            return 0
+
+        snapshots = await self.database.load_latest_asset_states(symbols, TIMEFRAME_ORDER)
+        if not snapshots:
+            return 0
+
+        warmed = 0
+        async with self._lock:
+            for snapshot in snapshots:
+                current = self.states_by_timeframe.get(snapshot.timeframe, {}).get(snapshot.symbol)
+                if current is not None and not self._is_placeholder_state(current):
+                    continue
+                state = self._asset_snapshot_to_state(snapshot)
+                self.states_by_timeframe[snapshot.timeframe][snapshot.symbol] = state
+                if snapshot.timeframe == "1h":
+                    self.state[snapshot.symbol] = state
+                self._register_snapshot(snapshot)
+                warmed += 1
+        return warmed
 
     async def _maybe_record_trade_signal(
         self,

@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.config import Settings
-from backend.models import AlertPreference, Base, MarketData, MarketDataBucket, SignalRecord, TradeSignal
+from backend.models import AlertPreference, Base, LatestAssetState, MarketData, MarketDataBucket, SignalRecord, TradeSignal
 from backend.schemas import AlertEntry, AssetSnapshot
 
 logger = logging.getLogger(__name__)
@@ -153,6 +153,36 @@ class DatabaseManager:
             await session.execute(upsert)
             await session.commit()
 
+    async def save_latest_asset_states(self, snapshots: Iterable[AssetSnapshot]) -> None:
+        if not self.enabled:
+            return
+
+        payload = [
+            {
+                "symbol": snapshot.symbol,
+                "timeframe": snapshot.timeframe,
+                "updated_at": snapshot.timestamp,
+                "snapshot": snapshot.model_dump(mode="json"),
+            }
+            for snapshot in snapshots
+        ]
+        if not payload:
+            return
+
+        statement = pg_insert(LatestAssetState).values(payload)
+        excluded = statement.excluded
+        upsert = statement.on_conflict_do_update(
+            index_elements=["symbol", "timeframe"],
+            set_={
+                "updated_at": excluded.updated_at,
+                "snapshot": excluded.snapshot,
+            },
+        )
+
+        async with self.session_factory() as session:
+            await session.execute(upsert)
+            await session.commit()
+
     async def save_trade_signal(self, payload: dict[str, object]) -> int | None:
         if not self.enabled:
             return None
@@ -280,6 +310,31 @@ class DatabaseManager:
         async with self.session_factory() as session:
             result = await session.scalars(statement)
             return list(result)
+
+    async def load_latest_asset_states(
+        self,
+        symbols: Iterable[str],
+        timeframes: Iterable[str],
+    ) -> list[AssetSnapshot]:
+        if not self.enabled:
+            return []
+
+        symbol_list = list(symbols)
+        timeframe_list = list(timeframes)
+        if not symbol_list or not timeframe_list:
+            return []
+
+        statement = (
+            select(LatestAssetState)
+            .where(LatestAssetState.symbol.in_(symbol_list))
+            .where(LatestAssetState.timeframe.in_(timeframe_list))
+            .order_by(LatestAssetState.symbol.asc(), LatestAssetState.timeframe.asc())
+        )
+
+        async with self.session_factory() as session:
+            result = await session.scalars(statement)
+            rows = list(result)
+        return [AssetSnapshot.model_validate(row.snapshot) for row in rows]
 
     async def load_latest_buckets_all(
         self,
