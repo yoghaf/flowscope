@@ -51,9 +51,7 @@ export default function ScannerPage() {
 
   useEffect(() => {
     const search = searchParams.get("search");
-    if (search) {
-      setSearchTerm(search);
-    }
+    setSearchTerm(search ?? "");
   }, [searchParams]);
 
   const { data, isLoading } = useQuery({

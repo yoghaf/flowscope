@@ -26,6 +26,18 @@ export default function Navbar() {
   };
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!pathname.startsWith("/scanner")) {
+      setQuery("");
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    setQuery(params.get("search") ?? "");
+  }, [pathname]);
+
+  useEffect(() => {
     function handleOutsideClick(event: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setMenuOpen(false);
