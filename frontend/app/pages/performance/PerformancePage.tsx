@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Activity, ArrowDownToLine, ArrowUpRight, Filter, ShieldCheck, ShieldX } from "lucide-react";
 
 import { api } from "@/lib/api";
+import { formatDate, formatTime } from "@/lib/formatters";
 import type { PerformanceTradeRow, SetupPerformance } from "@/lib/types";
 
 type TableFilterKey = "symbol" | "timeframe" | "setup_type" | "state" | "bias" | "status" | "result";
@@ -84,6 +85,35 @@ function formatPercent(value: number | null | undefined, digits = 2) {
     return "--";
   }
   return `${value.toFixed(digits)}%`;
+}
+
+function formatTimestampCell(value: string | null | undefined) {
+  if (!value) {
+    return (
+      <div className="flex flex-col">
+        <span>--</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-w-[120px] flex-col leading-tight">
+      <span>{formatDate(value)}</span>
+      <span className="text-xs text-muted-foreground">{formatTime(value)}</span>
+    </div>
+  );
+}
+
+function formatClosedTimestamp(row: PerformanceTradeRow) {
+  if (row.result === "open") {
+    return (
+      <div className="flex min-w-[120px] flex-col leading-tight">
+        <span>--</span>
+        <span className="text-xs text-muted-foreground">Still open</span>
+      </div>
+    );
+  }
+  return formatTimestampCell(row.updated_at);
 }
 
 function normalizeFilterValue(value: string | number | null | undefined) {
@@ -505,7 +535,7 @@ export default function PerformancePage() {
           {isTableLoading ? (
             <div className="p-6 text-sm text-muted-foreground">Loading trade table...</div>
           ) : (
-            <table className="min-w-[1500px] w-full border-collapse">
+            <table className="min-w-[2400px] w-full border-collapse">
               <thead className="bg-primary/10">
                 <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground">
                   <th className="px-4 py-3">Symbol</th>
@@ -515,12 +545,20 @@ export default function PerformancePage() {
                   <th className="px-4 py-3">Bias</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Result</th>
+                  <th className="px-4 py-3">Signal Time</th>
+                  <th className="px-4 py-3">Opened</th>
+                  <th className="px-4 py-3">Closed / Updated</th>
                   <th className="px-4 py-3">Entry</th>
                   <th className="px-4 py-3">Stop</th>
                   <th className="px-4 py-3">TP1</th>
                   <th className="px-4 py-3">TP2</th>
                   <th className="px-4 py-3">RR TP1</th>
                   <th className="px-4 py-3">RR TP2</th>
+                  <th className="px-4 py-3">Conf %</th>
+                  <th className="px-4 py-3">Quality</th>
+                  <th className="px-4 py-3">Risk</th>
+                  <th className="px-4 py-3">Regime</th>
+                  <th className="px-4 py-3">Vol</th>
                   <th className="px-4 py-3">Modal</th>
                   <th className="px-4 py-3">Qty</th>
                   <th className="px-4 py-3">Risk $</th>
@@ -532,7 +570,7 @@ export default function PerformancePage() {
               <tbody>
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={19} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    <td colSpan={27} className="px-4 py-8 text-center text-sm text-muted-foreground">
                       Tidak ada trade yang cocok dengan filter aktif.
                     </td>
                   </tr>
@@ -546,12 +584,20 @@ export default function PerformancePage() {
                       <td className="px-4 py-3">{row.bias}</td>
                       <td className="px-4 py-3">{row.status}</td>
                       <td className="px-4 py-3">{row.result}</td>
+                      <td className="px-4 py-3">{formatTimestampCell(row.signal_timestamp)}</td>
+                      <td className="px-4 py-3">{formatTimestampCell(row.created_at)}</td>
+                      <td className="px-4 py-3">{formatClosedTimestamp(row)}</td>
                       <td className="px-4 py-3">{formatNumber(row.entry_price, 4)}</td>
                       <td className="px-4 py-3">{formatNumber(row.invalidation_price, 4)}</td>
                       <td className="px-4 py-3">{formatNumber(row.target_price_1, 4)}</td>
                       <td className="px-4 py-3">{formatNumber(row.target_price_2, 4)}</td>
                       <td className="px-4 py-3">{formatNumber(row.planned_rr_tp1, 2)}</td>
                       <td className="px-4 py-3">{formatNumber(row.planned_rr_tp2, 2)}</td>
+                      <td className="px-4 py-3">{formatPercent(row.confidence_pct, 2)}</td>
+                      <td className="px-4 py-3">{row.quality_score ?? "--"}</td>
+                      <td className="px-4 py-3">{row.risk_level ?? "--"}</td>
+                      <td className="px-4 py-3">{row.market_regime}</td>
+                      <td className="px-4 py-3">{row.volatility_regime}</td>
                       <td className="px-4 py-3">{formatNumber(row.capital_per_trade, 4)}</td>
                       <td className="px-4 py-3">{formatNumber(row.estimated_quantity, 6)}</td>
                       <td className="px-4 py-3">{formatNumber(row.risk_amount_usd, 4)}</td>
