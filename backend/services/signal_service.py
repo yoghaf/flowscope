@@ -2576,29 +2576,64 @@ class SignalService:
         bucket: TimeframeBucket,
         state: AssetState,
     ) -> None:
+        entry_alert = self._build_trade_entry_alert(
+            symbol=symbol,
+            timeframe=timeframe,
+            bucket=bucket,
+            state=state,
+        )
         for user_id, preferences in self.user_preferences.items():
-            if not self._should_deliver_trade_entry_notification(
+            block_reason = self._trade_entry_delivery_block_reason(
                 symbol=symbol,
                 timeframe=timeframe,
                 signal=state.signal,
                 preferences=preferences,
-            ):
-                continue
-            if (
-                preferences.telegram_enabled
-                and preferences.telegram_chat_id
-                and self.telegram_notifier.configured
-            ):
-                self._spawn_background_task(
-                    self._send_telegram_trade_entry_notification(
-                        user_id=user_id,
-                        preferences=preferences,
-                        symbol=symbol,
-                        timeframe=timeframe,
-                        bucket=bucket,
-                        state=state,
+            )
+            if block_reason is not None:
+                if user_id != DEFAULT_USER_ID:
+                    logger.info(
+                        "Trade-entry notification skipped user=%s symbol=%s timeframe=%s signal=%s reason=%s",
+                        user_id,
+                        symbol,
+                        timeframe,
+                        state.signal,
+                        block_reason,
                     )
+                continue
+
+            self.user_alerts[user_id].appendleft(entry_alert)
+
+            telegram_block_reason = self._trade_entry_telegram_block_reason(preferences)
+            if telegram_block_reason is not None:
+                if user_id != DEFAULT_USER_ID:
+                    logger.info(
+                        "Trade-entry Telegram skipped user=%s symbol=%s timeframe=%s signal=%s reason=%s",
+                        user_id,
+                        symbol,
+                        timeframe,
+                        state.signal,
+                        telegram_block_reason,
+                    )
+                continue
+
+            if user_id != DEFAULT_USER_ID:
+                logger.info(
+                    "Trade-entry Telegram queued user=%s symbol=%s timeframe=%s signal=%s",
+                    user_id,
+                    symbol,
+                    timeframe,
+                    state.signal,
                 )
+            self._spawn_background_task(
+                self._send_telegram_trade_entry_notification(
+                    user_id=user_id,
+                    preferences=preferences,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    bucket=bucket,
+                    state=state,
+                )
+            )
 
     def _spawn_background_task(self, coro: Any) -> None:
         task = asyncio.create_task(coro)
@@ -2654,6 +2689,31 @@ class SignalService:
                 timeframe,
                 result_message,
             )
+            return
+        logger.info(
+            "Telegram trade-entry sent user=%s symbol=%s timeframe=%s",
+            user_id,
+            symbol,
+            timeframe,
+        )
+
+    @staticmethod
+    def _build_trade_entry_alert(
+        *,
+        symbol: str,
+        timeframe: str,
+        bucket: TimeframeBucket,
+        state: AssetState,
+    ) -> AlertEntry:
+        snapshot_id = f"{symbol.removesuffix('USDT')}_{timeframe.upper()}_{int(bucket.last_timestamp.timestamp())}"
+        return AlertEntry(
+            timestamp=bucket.last_timestamp,
+            symbol=symbol,
+            timeframe=timeframe,
+            snapshot_id=snapshot_id,
+            signal=state.signal,
+            score=state.score,
+        )
 
     def _build_test_telegram_message(self, user_id: str) -> str:
         frontend = self.settings.frontend_url.rstrip("/")
@@ -2781,6 +2841,24 @@ class SignalService:
         return True
 
     @staticmethod
+    def _trade_entry_delivery_block_reason(
+        *,
+        symbol: str,
+        timeframe: str,
+        signal: SignalType,
+        preferences: AlertPreferences,
+    ) -> str | None:
+        if not preferences.enabled:
+            return "notifications_disabled"
+        if preferences.timeframes and timeframe not in preferences.timeframes:
+            return "timeframe_filtered"
+        if preferences.signal_types and signal not in preferences.signal_types:
+            return "signal_type_filtered"
+        if preferences.watchlist and symbol not in preferences.watchlist:
+            return "watchlist_filtered"
+        return None
+
+    @staticmethod
     def _should_deliver_trade_entry_notification(
         *,
         symbol: str,
@@ -2788,15 +2866,24 @@ class SignalService:
         signal: SignalType,
         preferences: AlertPreferences,
     ) -> bool:
-        if not preferences.enabled:
-            return False
-        if preferences.timeframes and timeframe not in preferences.timeframes:
-            return False
-        if preferences.signal_types and signal not in preferences.signal_types:
-            return False
-        if preferences.watchlist and symbol not in preferences.watchlist:
-            return False
-        return True
+        return (
+            SignalService._trade_entry_delivery_block_reason(
+                symbol=symbol,
+                timeframe=timeframe,
+                signal=signal,
+                preferences=preferences,
+            )
+            is None
+        )
+
+    def _trade_entry_telegram_block_reason(self, preferences: AlertPreferences) -> str | None:
+        if not preferences.telegram_enabled:
+            return "telegram_disabled"
+        if not preferences.telegram_chat_id:
+            return "telegram_chat_missing"
+        if not self.telegram_notifier.configured:
+            return "telegram_bot_missing"
+        return None
 
     @staticmethod
     def _normalize_user_id(user_id: str | None) -> str:

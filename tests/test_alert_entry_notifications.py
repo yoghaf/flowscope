@@ -46,3 +46,16 @@ def test_trade_entry_notification_still_respects_watchlist_and_timeframe() -> No
     )
 
     assert allowed is False
+
+
+def test_trade_entry_notification_reports_block_reason() -> None:
+    preferences = make_preferences(watchlist=["BTCUSDT"], timeframes=["1h"])
+
+    reason = SignalService._trade_entry_delivery_block_reason(
+        symbol="ONTUSDT",
+        timeframe="15m",
+        signal="Breakout Watch",
+        preferences=preferences,
+    )
+
+    assert reason == "timeframe_filtered"
