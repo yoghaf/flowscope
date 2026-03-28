@@ -399,10 +399,15 @@ class TimeframeAggregateStore:
             bucket.spot_volume_delta = 0.0
             bucket.futures_volume_delta = 0.0
         history = self.buckets[bucket.timeframe][bucket.symbol]
-        if history and history[-1].bucket_start == bucket.bucket_start:
-            history[-1] = bucket
-            return
-        history.append(bucket)
+        existing_by_start = {item.bucket_start: item for item in history}
+        existing_by_start[bucket.bucket_start] = bucket
+
+        ordered = [existing_by_start[key] for key in sorted(existing_by_start)]
+        maxlen = history.maxlen
+
+        history.clear()
+        for item in (ordered[-maxlen:] if maxlen else ordered):
+            history.append(item)
 
     def latest_buckets_for_symbols(
         self,
