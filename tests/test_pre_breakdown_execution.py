@@ -325,7 +325,8 @@ def test_enter_action_stays_ready_when_breakout_level_has_not_been_touched() -> 
     )
 
     assert execution is not None
-    assert execution.entry_min == 16.49
+    assert execution.entry_type == "Continuation Pullback"
+    assert execution.entry_min == 14.1
 
 
 def test_execution_plan_is_removed_when_price_is_already_beyond_invalidation() -> None:
