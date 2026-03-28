@@ -120,12 +120,14 @@ export const api = {
     timeframe?: Timeframe | "ALL";
     setupType?: string;
     capitalPerTrade: number;
+    format?: "html" | "csv";
   }): Promise<Blob> {
     return fetchBlob("/performance/report", {
       symbol: query.symbol ?? "ALL",
       timeframe: query.timeframe ?? "ALL",
       setup_type: query.setupType,
       capital_per_trade: query.capitalPerTrade,
+      format: query.format ?? "html",
     });
   },
   getAlerts(query: {

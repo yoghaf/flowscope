@@ -93,18 +93,19 @@ export default function PerformancePage() {
     return Number.isFinite(value) && value > 0 ? value : 100;
   }, [capitalPerTrade]);
 
-  async function handleDownloadReport() {
+  async function handleDownloadReport(format: "html" | "csv") {
     try {
       setIsDownloading(true);
       const blob = await api.downloadPerformanceReport({
         symbol: "ALL",
         timeframe: "ALL",
         capitalPerTrade: parsedCapital,
+        format,
       });
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `flowscope-performance-report-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.csv`;
+      anchor.download = `flowscope-performance-report-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.${format}`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -141,7 +142,7 @@ export default function PerformancePage() {
               Export every token position with RR, planned target profile, assumed modal per trade, quantity, and realized USD PnL.
             </p>
             <p className="text-xs text-muted-foreground">
-              Modal di report dihitung sebagai simulasi fixed capital per trade dari harga entry, jadi ini cocok untuk audit performa riil versi sistem.
+              Download `HTML Table` kalau ingin laporan yang langsung rapi dibaca. Download `CSV` kalau ingin olah data lebih lanjut di Excel atau Google Sheets.
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -156,15 +157,26 @@ export default function PerformancePage() {
                 className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary/40 focus:bg-white/10 sm:w-48"
               />
             </label>
-            <button
-              type="button"
-              onClick={handleDownloadReport}
-              disabled={isDownloading}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm font-semibold text-primary transition hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <ArrowDownToLine className="h-4 w-4" />
-              {isDownloading ? "Preparing CSV..." : "Download CSV Report"}
-            </button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => handleDownloadReport("html")}
+                disabled={isDownloading}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm font-semibold text-primary transition hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <ArrowDownToLine className="h-4 w-4" />
+                {isDownloading ? "Preparing..." : "Download HTML Table"}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDownloadReport("csv")}
+                disabled={isDownloading}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-foreground transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <ArrowDownToLine className="h-4 w-4" />
+                {isDownloading ? "Preparing..." : "Download CSV"}
+              </button>
+            </div>
           </div>
         </div>
       </div>

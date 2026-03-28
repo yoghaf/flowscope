@@ -28,18 +28,31 @@ async def download_performance_report(
     timeframe: str = Query("ALL", pattern="^(15m|1h|4h|24h|ALL)$"),
     setup_type: str | None = Query(None),
     capital_per_trade: float = Query(100.0, gt=0),
+    format: str = Query("html", pattern="^(html|csv)$"),
 ) -> Response:
     performance_engine = request.app.state.signal_service.performance_engine
-    csv_content = await performance_engine.export_trade_report_csv(
-        symbol=symbol,
-        timeframe=timeframe,
-        setup_type=setup_type,
-        capital_per_trade=capital_per_trade,
-    )
-    filename = f"flowscope-performance-report-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.csv"
+    if format == "csv":
+        content = await performance_engine.export_trade_report_csv(
+            symbol=symbol,
+            timeframe=timeframe,
+            setup_type=setup_type,
+            capital_per_trade=capital_per_trade,
+        )
+        media_type = "text/csv"
+        extension = "csv"
+    else:
+        content = await performance_engine.export_trade_report_html(
+            symbol=symbol,
+            timeframe=timeframe,
+            setup_type=setup_type,
+            capital_per_trade=capital_per_trade,
+        )
+        media_type = "text/html"
+        extension = "html"
+    filename = f"flowscope-performance-report-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.{extension}"
     return Response(
-        content=csv_content,
-        media_type="text/csv",
+        content=content,
+        media_type=media_type,
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
         },

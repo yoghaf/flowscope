@@ -13,6 +13,8 @@ from backend.services.timeframe_aggregator import TimeframeBucket
 EPSILON = 1e-9
 STRUCTURE_TOLERANCE = 0.001
 OI_CHANGE_EPSILON = 0.0005
+SWING_WINDOW = 3
+PERSISTENCE_WINDOW = 3
 
 
 @dataclass(slots=True)
@@ -85,6 +87,227 @@ class MarketInterpreterEngine:
         if positioning.decision in {"Continuation-Short", "Trap-Short", "Watchlist-Short"}:
             return -1
         return 0
+
+    @staticmethod
+    def detect_failed_rebound(
+        current_high: float,
+        prev_high: float,
+        close: float,
+        range_mid: float,
+        momentum: float,
+    ) -> bool:
+        if prev_high <= 0 or current_high <= 0 or range_mid <= 0:
+            return False
+        return (
+            current_high < prev_high * (1.0 - STRUCTURE_TOLERANCE)
+            and close < range_mid
+            and momentum <= 0.0
+        )
+
+    @staticmethod
+    def detect_inefficient_build(
+        oi_intent: OiIntent,
+        price_change: float,
+        control: MarketControl,
+    ) -> bool:
+        return (
+            oi_intent == "Position Building"
+            and (price_change <= 0.0 or abs(price_change) < 0.003)
+            and control != "Buyer Dominant"
+        )
+
+    @staticmethod
+    def htf_not_support(
+        htf_trend: TrendDirection,
+        htf_control: MarketControl,
+    ) -> bool:
+        return htf_trend == "Bearish" or htf_control == "Seller Dominant"
+
+    @staticmethod
+    def detect_distribution_risk(
+        failed_rebound: bool,
+        inefficient_build: bool,
+        higher_timeframe_not_supporting: bool,
+    ) -> tuple[str, int]:
+        score = 0
+        if failed_rebound:
+            score += 2
+        if inefficient_build:
+            score += 2
+        if higher_timeframe_not_supporting:
+            score += 2
+        if score >= 4:
+            return "HIGH", score
+        if score >= 2:
+            return "MEDIUM", score
+        return "LOW", score
+
+    @staticmethod
+    def confirm_persistence(last_3_flags: list[bool]) -> bool:
+        return sum(1 for flag in last_3_flags if flag) >= 2
+
+    @staticmethod
+    def _price_change(bucket: TimeframeBucket) -> float:
+        if bucket.open_price <= 0:
+            return 0.0
+        return (bucket.close_price - bucket.open_price) / bucket.open_price
+
+    def _swing_high(self, window: list[TimeframeBucket]) -> float:
+        if not window:
+            return 0.0
+        return max(point.high_price for point in window)
+
+    def _short_window_momentum(self, window: list[TimeframeBucket]) -> float:
+        if not window:
+            return 0.0
+        open_price = window[0].open_price
+        if open_price <= 0:
+            return 0.0
+        return (window[-1].close_price - open_price) / open_price
+
+    def _local_control_from_history(
+        self,
+        history: list[TimeframeBucket],
+        profile: dict[str, float | int],
+    ) -> MarketControl:
+        if len(history) < (SWING_WINDOW * 2):
+            return "Neutral"
+        prior_window = history[-(SWING_WINDOW * 2):-SWING_WINDOW]
+        recent_window = history[-SWING_WINDOW:]
+        prior_high = self._swing_high(prior_window)
+        prior_low = min((point.low_price for point in prior_window), default=0.0)
+        current_high = self._swing_high(recent_window)
+        current_low = min((point.low_price for point in recent_window), default=0.0)
+        hh = current_high > prior_high * (1.0 + STRUCTURE_TOLERANCE) if prior_high > 0 else False
+        hl = current_low > prior_low * (1.0 + STRUCTURE_TOLERANCE) if prior_low > 0 else False
+        lh = current_high < prior_high * (1.0 - STRUCTURE_TOLERANCE) if prior_high > 0 else False
+        ll = current_low < prior_low * (1.0 - STRUCTURE_TOLERANCE) if prior_low > 0 else False
+        momentum = self._short_window_momentum(recent_window)
+        momentum_threshold = max(float(profile["price_flat"]) * 0.5, 0.001)
+        if hh and hl and momentum > momentum_threshold:
+            return "Buyer Dominant"
+        if lh and ll and momentum < -momentum_threshold:
+            return "Seller Dominant"
+        return "Neutral"
+
+    def _distribution_risk_assessment(
+        self,
+        *,
+        bucket: TimeframeBucket,
+        history: list[TimeframeBucket],
+        range_mid: float,
+        oi_intent: OiIntent,
+        price_change: float,
+        control: MarketControl,
+        higher_timeframe_trend: TrendDirection,
+        higher_timeframe_control: MarketControl,
+        breakout_valid: bool,
+        profile: dict[str, float | int],
+    ) -> dict[str, object]:
+        if len(history) < (SWING_WINDOW * 2):
+            return {
+                "failed_rebound": False,
+                "inefficient_build": False,
+                "htf_not_support": False,
+                "risk_label": "LOW",
+                "risk_score": 0,
+                "persistent": False,
+                "active": False,
+            }
+
+        prior_window = history[-(SWING_WINDOW * 2):-SWING_WINDOW]
+        recent_window = history[-SWING_WINDOW:]
+        prev_high = self._swing_high(prior_window)
+        current_high = self._swing_high(recent_window)
+        momentum = self._short_window_momentum(recent_window)
+
+        failed_rebound = self.detect_failed_rebound(
+            current_high=current_high,
+            prev_high=prev_high,
+            close=bucket.close_price,
+            range_mid=range_mid,
+            momentum=momentum,
+        )
+        inefficient_build = self.detect_inefficient_build(
+            oi_intent=oi_intent,
+            price_change=price_change,
+            control=control,
+        )
+        higher_timeframe_not_supporting = self.htf_not_support(
+            higher_timeframe_trend,
+            higher_timeframe_control,
+        )
+        risk_label, risk_score = self.detect_distribution_risk(
+            failed_rebound=failed_rebound,
+            inefficient_build=inefficient_build,
+            higher_timeframe_not_supporting=higher_timeframe_not_supporting,
+        )
+
+        historical_flags: list[bool] = []
+        for offset in range(PERSISTENCE_WINDOW):
+            end = len(history) - offset
+            if end < (SWING_WINDOW * 2):
+                break
+            subset = history[:end]
+            prior_subset = subset[-(SWING_WINDOW * 2):-SWING_WINDOW]
+            recent_subset = subset[-SWING_WINDOW:]
+            subset_prev_high = self._swing_high(prior_subset)
+            subset_current_high = self._swing_high(recent_subset)
+            subset_close = subset[-1].close_price
+            subset_recent_low = min((point.low_price for point in subset[-20:]), default=subset[-1].low_price)
+            subset_range_mid = (subset_prev_high + subset_recent_low) / 2.0 if subset_prev_high > 0 else 0.0
+            subset_momentum = self._short_window_momentum(recent_subset)
+            subset_oi_change = (
+                (subset[-1].open_interest_close - subset[-1].open_interest_open) / subset[-1].open_interest_open
+                if subset[-1].open_interest_open > 0
+                else 0.0
+            )
+            subset_oi_intent = self._oi_intent(subset_oi_change)
+            subset_price_change = self._price_change(subset[-1])
+            subset_control = self._local_control_from_history(subset, profile)
+            subset_failed_rebound = self.detect_failed_rebound(
+                current_high=subset_current_high,
+                prev_high=subset_prev_high,
+                close=subset_close,
+                range_mid=subset_range_mid,
+                momentum=subset_momentum,
+            )
+            subset_inefficient_build = self.detect_inefficient_build(
+                oi_intent=subset_oi_intent,
+                price_change=subset_price_change,
+                control=subset_control,
+            )
+            subset_label, _ = self.detect_distribution_risk(
+                failed_rebound=subset_failed_rebound,
+                inefficient_build=subset_inefficient_build,
+                higher_timeframe_not_supporting=higher_timeframe_not_supporting,
+            )
+            historical_flags.append(subset_label == "HIGH")
+
+        persistence = self.confirm_persistence(historical_flags)
+        invalidated = (
+            bucket.close_price > range_mid
+            or breakout_valid
+            or higher_timeframe_trend == "Bullish"
+            or higher_timeframe_control == "Buyer Dominant"
+        )
+        active = (
+            risk_label == "HIGH"
+            and persistence
+            and failed_rebound
+            and not invalidated
+            and higher_timeframe_trend != "Bullish"
+            and higher_timeframe_control != "Buyer Dominant"
+        )
+        return {
+            "failed_rebound": failed_rebound,
+            "inefficient_build": inefficient_build,
+            "htf_not_support": higher_timeframe_not_supporting,
+            "risk_label": risk_label,
+            "risk_score": risk_score,
+            "persistent": persistence,
+            "active": active,
+        }
 
     @staticmethod
     def _market_control(
@@ -444,6 +667,21 @@ class MarketInterpreterEngine:
             metrics=metrics,
             timeframe=timeframe,
         )
+        recent_high = self._metric(metrics, "recent_high", timeframe, bucket.high_price)
+        recent_low = self._metric(metrics, "recent_low", timeframe, bucket.low_price)
+        range_mid = self._metric(metrics, "range_mid", timeframe, (recent_high + recent_low) / 2.0 if recent_high or recent_low else bucket.close_price)
+        distribution_risk = self._distribution_risk_assessment(
+            bucket=bucket,
+            history=history,
+            range_mid=range_mid,
+            oi_intent=oi_intent,
+            price_change=self._metric(metrics, "price_change", timeframe),
+            control=control,
+            higher_timeframe_trend=higher_timeframe_trend,
+            higher_timeframe_control=higher_timeframe_control,
+            breakout_valid=breakout_valid,
+            profile=profile,
+        )
 
         raw_clarity = (
             (0.35 * trend_alignment)
@@ -460,9 +698,16 @@ class MarketInterpreterEngine:
             clarity_confidence = min(clarity_confidence, 0.59)
         if state_label in {"Compression", "Unclear"} or control == "Neutral":
             clarity_confidence = min(clarity_confidence, 0.65)
+        if distribution_risk["risk_label"] == "MEDIUM":
+            clarity_confidence = min(clarity_confidence * 0.85, 0.68)
+        if distribution_risk["active"]:
+            clarity_confidence = min(clarity_confidence * 0.55, 0.49)
         clarity_confidence = round(self._clamp(clarity_confidence), 4)
 
-        if clarity_confidence < 0.35:
+        if distribution_risk["active"]:
+            action = "WAIT"
+            action_rationale = "Prepare for breakdown, avoid long until price reclaims strength or breakout validation returns."
+        elif clarity_confidence < 0.35:
             action: ActionDirective = "NO TRADE"
             action_rationale = "Directional clarity is too low to justify a trade."
         elif breakout_valid and not counter_trend and trap_risk < 0.6 and conflict_score < 0.45 and clarity_confidence >= 0.72:
@@ -478,9 +723,6 @@ class MarketInterpreterEngine:
                 action_rationale = "Direction is forming, but risk and conflict still need to improve."
 
         alignment_text = self._higher_timeframe_alignment(trend, higher_timeframe_trend)
-        recent_high = self._metric(metrics, "recent_high", timeframe, bucket.high_price)
-        recent_low = self._metric(metrics, "recent_low", timeframe, bucket.low_price)
-        range_mid = self._metric(metrics, "range_mid", timeframe, (recent_high + recent_low) / 2.0 if recent_high or recent_low else bucket.close_price)
 
         risk_notes: list[str] = []
         warnings: list[str] = []
@@ -496,6 +738,17 @@ class MarketInterpreterEngine:
             warnings.append("High Trap Risk")
         if counter_trend:
             warnings.append("Counter-trend setup")
+        if distribution_risk["failed_rebound"]:
+            risk_notes.append("Rebound failed: the latest swing high stayed below the prior swing high and price could not reclaim the range midpoint.")
+        if distribution_risk["inefficient_build"]:
+            risk_notes.append("Open interest is building but price is not advancing, which points to weak positioning rather than healthy upside acceptance.")
+        if distribution_risk["htf_not_support"]:
+            risk_notes.append("Higher timeframe trend/control does not support upside, so local rebounds carry distribution risk.")
+        if distribution_risk["risk_label"] != "LOW":
+            warnings.append(f"Distribution Risk: {distribution_risk['risk_label']}")
+        if distribution_risk["active"]:
+            warnings.append("Bearish Lean")
+            risk_notes.append("Pre-breakdown warning cancels if price reclaims the range midpoint, breakout validation becomes active, or the higher timeframe turns bullish.")
 
         if control == "Seller Dominant":
             control_text = "Sellers still control structure."
@@ -515,10 +768,19 @@ class MarketInterpreterEngine:
         else:
             interpretation = f"{control_text} Flow and structure do not line up cleanly enough to call direction with conviction."
 
+        final_state = state_label
+        if distribution_risk["active"]:
+            final_state = f"{state_label} (Pre-Breakdown)"
+            interpretation = (
+                "Market shows early weakness: rebound failed, new positions are entering but price is not advancing, "
+                "and higher timeframe does not support upside. This indicates distribution risk before breakdown."
+            )
         if counter_trend:
             interpretation += " The active setup is counter-trend against the broader structure."
 
-        if state_label == "Compression":
+        if distribution_risk["active"]:
+            self_critique = "This analysis can be wrong if the failed rebound flips into a valid reclaim above range mid, because early weakness often appears before real squeeze continuation."
+        elif state_label == "Compression":
             self_critique = "This analysis can be wrong if contained price action is distribution rather than absorption, because the model still needs structural break confirmation."
         elif counter_trend:
             self_critique = "This analysis can be wrong if the dominant trend resumes, because counter-trend squeezes fail fast when structure does not break."
@@ -530,7 +792,7 @@ class MarketInterpreterEngine:
         return MarketInterpretationAssessment(
             trend=trend,
             control=control,
-            state=state_label,
+            state=final_state,
             oi_intent=oi_intent,
             structure_label=structure_label,
             structure_shift=structure_shift,

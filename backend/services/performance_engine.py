@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import html
 from datetime import UTC, datetime
 from io import StringIO
 
@@ -24,16 +25,22 @@ class PerformanceEngine:
             return None
         return numerator / denominator
 
-    async def export_trade_report_csv(
+    @staticmethod
+    def _display(value: float | int | str | None, digits: int | None = None) -> str:
+        if value is None:
+            return "--"
+        if isinstance(value, float) and digits is not None:
+            return f"{value:.{digits}f}"
+        return str(value)
+
+    async def _filtered_trades(
         self,
         *,
         symbol: str = "ALL",
         timeframe: str = "ALL",
         setup_type: str | None = None,
-        capital_per_trade: float = 100.0,
-    ) -> str:
+    ) -> list:
         trades = await self.database.list_trade_signals()
-
         filtered = []
         for trade in trades:
             if symbol != "ALL" and trade.symbol != symbol:
@@ -43,8 +50,105 @@ class PerformanceEngine:
             if setup_type and trade.setup_type != setup_type:
                 continue
             filtered.append(trade)
-
         filtered.sort(key=lambda trade: trade.created_at, reverse=True)
+        return filtered
+
+    async def _trade_report_rows(
+        self,
+        *,
+        symbol: str = "ALL",
+        timeframe: str = "ALL",
+        setup_type: str | None = None,
+        capital_per_trade: float = 100.0,
+    ) -> list[dict[str, object]]:
+        filtered = await self._filtered_trades(
+            symbol=symbol,
+            timeframe=timeframe,
+            setup_type=setup_type,
+        )
+
+        rows: list[dict[str, object]] = []
+        for trade in filtered:
+            entry = trade.entry_price
+            invalidation = trade.invalidation_price
+            target_1 = trade.target_price_1 or trade.target_price
+            target_2 = trade.target_price_2 or target_1
+
+            risk_per_unit = abs(entry - invalidation) if entry is not None and invalidation is not None else None
+            reward_tp1 = abs(target_1 - entry) if entry is not None and target_1 is not None else None
+            reward_tp2 = abs(target_2 - entry) if entry is not None and target_2 is not None else None
+            rr_tp1 = self._safe_div(reward_tp1, risk_per_unit) if reward_tp1 is not None and risk_per_unit is not None else None
+            rr_tp2 = self._safe_div(reward_tp2, risk_per_unit) if reward_tp2 is not None and risk_per_unit is not None else None
+
+            quantity = (capital_per_trade / entry) if entry and entry > 0 else None
+            risk_amount_usd = quantity * risk_per_unit if quantity is not None and risk_per_unit is not None else None
+            tp1_reward_usd = quantity * reward_tp1 if quantity is not None and reward_tp1 is not None else None
+            tp2_reward_usd = quantity * reward_tp2 if quantity is not None and reward_tp2 is not None else None
+            risk_pct_of_capital = self._safe_div(risk_amount_usd * 100, capital_per_trade) if risk_amount_usd is not None else None
+
+            realized_pnl_usd = capital_per_trade * (trade.pnl_pct / 100)
+            max_profit_usd = capital_per_trade * (trade.max_profit_pct / 100)
+            max_drawdown_usd = capital_per_trade * (trade.max_drawdown_pct / 100)
+            realized_r_multiple = self._safe_div(realized_pnl_usd, risk_amount_usd) if risk_amount_usd is not None else None
+
+            rows.append(
+                {
+                    "trade_id": trade.id,
+                    "symbol": trade.symbol,
+                    "timeframe": trade.timeframe,
+                    "setup_type": trade.setup_type,
+                    "state": trade.state,
+                    "bias": trade.bias,
+                    "status": trade.status,
+                    "result": trade.result,
+                    "market_regime": trade.market_regime,
+                    "volatility_regime": trade.volatility_regime,
+                    "confidence_pct": self._round(trade.confidence * 100, 2),
+                    "quality_score": trade.quality_score,
+                    "risk_level": trade.risk_level,
+                    "signal_timestamp": trade.timestamp.isoformat(),
+                    "created_at": trade.created_at.isoformat(),
+                    "updated_at": trade.updated_at.isoformat(),
+                    "entry_price": self._round(entry, 6),
+                    "invalidation_price": self._round(invalidation, 6),
+                    "target_price_1": self._round(target_1, 6),
+                    "target_price_2": self._round(target_2, 6),
+                    "risk_per_unit": self._round(risk_per_unit, 6),
+                    "reward_tp1_per_unit": self._round(reward_tp1, 6),
+                    "reward_tp2_per_unit": self._round(reward_tp2, 6),
+                    "planned_rr_tp1": self._round(rr_tp1, 4),
+                    "planned_rr_tp2": self._round(rr_tp2, 4),
+                    "capital_per_trade": self._round(capital_per_trade, 2),
+                    "estimated_quantity": self._round(quantity, 8),
+                    "risk_amount_usd": self._round(risk_amount_usd, 2),
+                    "tp1_reward_usd": self._round(tp1_reward_usd, 2),
+                    "tp2_reward_usd": self._round(tp2_reward_usd, 2),
+                    "risk_pct_of_capital": self._round(risk_pct_of_capital, 4),
+                    "pnl_pct": self._round(trade.pnl_pct, 4),
+                    "realized_pnl_usd": self._round(realized_pnl_usd, 2),
+                    "realized_r_multiple": self._round(realized_r_multiple, 4),
+                    "max_profit_pct": self._round(trade.max_profit_pct, 4),
+                    "max_profit_usd": self._round(max_profit_usd, 2),
+                    "max_drawdown_pct": self._round(trade.max_drawdown_pct, 4),
+                    "max_drawdown_usd": self._round(max_drawdown_usd, 2),
+                }
+            )
+        return rows
+
+    async def export_trade_report_csv(
+        self,
+        *,
+        symbol: str = "ALL",
+        timeframe: str = "ALL",
+        setup_type: str | None = None,
+        capital_per_trade: float = 100.0,
+    ) -> str:
+        rows = await self._trade_report_rows(
+            symbol=symbol,
+            timeframe=timeframe,
+            setup_type=setup_type,
+            capital_per_trade=capital_per_trade,
+        )
 
         buffer = StringIO()
         writer = csv.DictWriter(
@@ -91,74 +195,227 @@ class PerformanceEngine:
             ],
         )
         writer.writeheader()
-
-        for trade in filtered:
-            entry = trade.entry_price
-            invalidation = trade.invalidation_price
-            target_1 = trade.target_price_1 or trade.target_price
-            target_2 = trade.target_price_2 or target_1
-
-            risk_per_unit = abs(entry - invalidation) if entry is not None and invalidation is not None else None
-            reward_tp1 = abs(target_1 - entry) if entry is not None and target_1 is not None else None
-            reward_tp2 = abs(target_2 - entry) if entry is not None and target_2 is not None else None
-            rr_tp1 = self._safe_div(reward_tp1, risk_per_unit) if reward_tp1 is not None and risk_per_unit is not None else None
-            rr_tp2 = self._safe_div(reward_tp2, risk_per_unit) if reward_tp2 is not None and risk_per_unit is not None else None
-
-            quantity = (capital_per_trade / entry) if entry and entry > 0 else None
-            risk_amount_usd = quantity * risk_per_unit if quantity is not None and risk_per_unit is not None else None
-            tp1_reward_usd = quantity * reward_tp1 if quantity is not None and reward_tp1 is not None else None
-            tp2_reward_usd = quantity * reward_tp2 if quantity is not None and reward_tp2 is not None else None
-            risk_pct_of_capital = self._safe_div(risk_amount_usd * 100, capital_per_trade) if risk_amount_usd is not None else None
-
-            realized_pnl_usd = capital_per_trade * (trade.pnl_pct / 100)
-            max_profit_usd = capital_per_trade * (trade.max_profit_pct / 100)
-            max_drawdown_usd = capital_per_trade * (trade.max_drawdown_pct / 100)
-            realized_r_multiple = self._safe_div(realized_pnl_usd, risk_amount_usd) if risk_amount_usd is not None else None
-
-            writer.writerow(
-                {
-                    "trade_id": trade.id,
-                    "symbol": trade.symbol,
-                    "timeframe": trade.timeframe,
-                    "setup_type": trade.setup_type,
-                    "state": trade.state,
-                    "bias": trade.bias,
-                    "status": trade.status,
-                    "result": trade.result,
-                    "market_regime": trade.market_regime,
-                    "volatility_regime": trade.volatility_regime,
-                    "confidence_pct": self._round(trade.confidence * 100, 2),
-                    "quality_score": trade.quality_score,
-                    "risk_level": trade.risk_level,
-                    "signal_timestamp": trade.timestamp.isoformat(),
-                    "created_at": trade.created_at.isoformat(),
-                    "updated_at": trade.updated_at.isoformat(),
-                    "entry_price": self._round(entry, 6),
-                    "invalidation_price": self._round(invalidation, 6),
-                    "target_price_1": self._round(target_1, 6),
-                    "target_price_2": self._round(target_2, 6),
-                    "risk_per_unit": self._round(risk_per_unit, 6),
-                    "reward_tp1_per_unit": self._round(reward_tp1, 6),
-                    "reward_tp2_per_unit": self._round(reward_tp2, 6),
-                    "planned_rr_tp1": self._round(rr_tp1, 4),
-                    "planned_rr_tp2": self._round(rr_tp2, 4),
-                    "capital_per_trade": self._round(capital_per_trade, 2),
-                    "estimated_quantity": self._round(quantity, 8),
-                    "risk_amount_usd": self._round(risk_amount_usd, 2),
-                    "tp1_reward_usd": self._round(tp1_reward_usd, 2),
-                    "tp2_reward_usd": self._round(tp2_reward_usd, 2),
-                    "risk_pct_of_capital": self._round(risk_pct_of_capital, 4),
-                    "pnl_pct": self._round(trade.pnl_pct, 4),
-                    "realized_pnl_usd": self._round(realized_pnl_usd, 2),
-                    "realized_r_multiple": self._round(realized_r_multiple, 4),
-                    "max_profit_pct": self._round(trade.max_profit_pct, 4),
-                    "max_profit_usd": self._round(max_profit_usd, 2),
-                    "max_drawdown_pct": self._round(trade.max_drawdown_pct, 4),
-                    "max_drawdown_usd": self._round(max_drawdown_usd, 2),
-                }
-            )
+        writer.writerows(rows)
 
         return buffer.getvalue()
+
+    async def export_trade_report_html(
+        self,
+        *,
+        symbol: str = "ALL",
+        timeframe: str = "ALL",
+        setup_type: str | None = None,
+        capital_per_trade: float = 100.0,
+    ) -> str:
+        rows = await self._trade_report_rows(
+            symbol=symbol,
+            timeframe=timeframe,
+            setup_type=setup_type,
+            capital_per_trade=capital_per_trade,
+        )
+        closed_rows = [row for row in rows if row["result"] in {"win", "loss"}]
+        wins = sum(1 for row in closed_rows if row["result"] == "win")
+        losses = sum(1 for row in closed_rows if row["result"] == "loss")
+        breakevens = sum(1 for row in rows if row["result"] == "breakeven")
+        open_trades = sum(1 for row in rows if row["result"] == "open")
+        winrate = (wins / len(closed_rows) * 100) if closed_rows else 0.0
+        total_realized = sum(float(row["realized_pnl_usd"] or 0.0) for row in rows)
+
+        summary_cards = [
+            ("Rows", str(len(rows))),
+            ("Closed", str(len(closed_rows))),
+            ("Open", str(open_trades)),
+            ("Wins / Losses", f"{wins} / {losses}"),
+            ("Breakevens", str(breakevens)),
+            ("Winrate", f"{winrate:.2f}%"),
+            ("Total Realized PnL", f"${total_realized:,.2f}"),
+            ("Modal / Trade", f"${capital_per_trade:,.2f}"),
+        ]
+
+        visible_columns = [
+            "symbol",
+            "timeframe",
+            "setup_type",
+            "state",
+            "bias",
+            "status",
+            "result",
+            "entry_price",
+            "invalidation_price",
+            "target_price_1",
+            "target_price_2",
+            "planned_rr_tp1",
+            "planned_rr_tp2",
+            "capital_per_trade",
+            "estimated_quantity",
+            "risk_amount_usd",
+            "realized_pnl_usd",
+            "realized_r_multiple",
+            "pnl_pct",
+            "market_regime",
+            "volatility_regime",
+            "created_at",
+        ]
+
+        header_map = {
+            "symbol": "Symbol",
+            "timeframe": "TF",
+            "setup_type": "Setup",
+            "state": "State",
+            "bias": "Bias",
+            "status": "Status",
+            "result": "Result",
+            "entry_price": "Entry",
+            "invalidation_price": "Stop",
+            "target_price_1": "TP1",
+            "target_price_2": "TP2",
+            "planned_rr_tp1": "RR TP1",
+            "planned_rr_tp2": "RR TP2",
+            "capital_per_trade": "Modal",
+            "estimated_quantity": "Qty",
+            "risk_amount_usd": "Risk $",
+            "realized_pnl_usd": "Realized $",
+            "realized_r_multiple": "R-Multiple",
+            "pnl_pct": "PnL %",
+            "market_regime": "Regime",
+            "volatility_regime": "Vol",
+            "created_at": "Opened",
+        }
+
+        table_rows = []
+        for row in rows:
+            cells = []
+            for column in visible_columns:
+                value = row[column]
+                if isinstance(value, float):
+                    if column in {"estimated_quantity"}:
+                        rendered = self._display(value, 6)
+                    elif column in {"pnl_pct"}:
+                        rendered = f"{value:.2f}%"
+                    elif column in {"planned_rr_tp1", "planned_rr_tp2", "realized_r_multiple"}:
+                        rendered = self._display(value, 2)
+                    else:
+                        rendered = self._display(value, 4)
+                else:
+                    rendered = self._display(value)
+                cells.append(f"<td>{html.escape(rendered)}</td>")
+            table_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+        summary_html = "".join(
+            f"""
+            <div class="card">
+              <div class="label">{html.escape(label)}</div>
+              <div class="value">{html.escape(value)}</div>
+            </div>
+            """
+            for label, value in summary_cards
+        )
+        table_header_html = "".join(f"<th>{html.escape(header_map[column])}</th>" for column in visible_columns)
+        table_body_html = "".join(table_rows) if table_rows else (
+            f'<tr><td colspan="{len(visible_columns)}" class="empty">No trades match this filter.</td></tr>'
+        )
+
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>FlowScope Performance Report</title>
+  <style>
+    body {{
+      font-family: Arial, sans-serif;
+      background: #0b1020;
+      color: #e5e7eb;
+      margin: 0;
+      padding: 24px;
+    }}
+    h1 {{
+      margin: 0 0 8px;
+      font-size: 28px;
+    }}
+    p {{
+      margin: 0;
+      color: #94a3b8;
+    }}
+    .meta {{
+      margin-top: 8px;
+      font-size: 14px;
+    }}
+    .summary {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+      margin: 24px 0;
+    }}
+    .card {{
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px;
+      background: #111827;
+      padding: 14px 16px;
+    }}
+    .label {{
+      color: #94a3b8;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }}
+    .value {{
+      font-size: 22px;
+      font-weight: 700;
+      color: #f8fafc;
+    }}
+    .table-wrap {{
+      overflow-x: auto;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      background: #111827;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1500px;
+    }}
+    th, td {{
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      text-align: left;
+      white-space: nowrap;
+      font-size: 13px;
+    }}
+    th {{
+      position: sticky;
+      top: 0;
+      background: #172036;
+      color: #cbd5e1;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+    }}
+    tr:nth-child(even) td {{
+      background: rgba(255,255,255,0.015);
+    }}
+    .empty {{
+      text-align: center;
+      color: #94a3b8;
+      padding: 24px;
+    }}
+  </style>
+</head>
+<body>
+  <h1>FlowScope Performance Report</h1>
+  <p>Readable trade table with RR, modal per trade, quantity, and realized dollar performance.</p>
+  <p class="meta">Generated at: {html.escape(datetime.now(UTC).isoformat())} | Symbol: {html.escape(symbol)} | Timeframe: {html.escape(timeframe)} | Setup: {html.escape(setup_type or "ALL")}</p>
+  <div class="summary">{summary_html}</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>{table_header_html}</tr>
+      </thead>
+      <tbody>{table_body_html}</tbody>
+    </table>
+  </div>
+</body>
+</html>"""
 
     async def compute(self) -> PerformanceResponse | None:
         if not self.database.enabled:
