@@ -1133,6 +1133,7 @@ class SignalService:
                 state=state_assessment,
                 action=action,
                 execution=execution,
+                asset_state=current_state,
             )
 
         combined_states: dict[str, AssetState] = {
@@ -2265,6 +2266,7 @@ class SignalService:
         state: StateAssessment,
         action: ActionAssessment,
         execution: ExecutionPlan,
+        asset_state: AssetState,
     ) -> None:
         if not self.database.enabled:
             return
@@ -2354,6 +2356,12 @@ class SignalService:
         trade_id = await self.database.save_trade_signal(payload)
         if trade_id:
             self.last_trade_signal_at[key] = bucket.last_timestamp
+            self._dispatch_trade_entry_notification(
+                symbol=symbol,
+                timeframe=timeframe,
+                bucket=bucket,
+                state=asset_state,
+            )
             expectancy = self.setup_expectancy.get(action.setup_type, 0.0)
             if execution.quality_score == "A" and expectancy > 0:
                 logger.info(
@@ -2521,6 +2529,38 @@ class SignalService:
                     )
                 )
 
+    def _dispatch_trade_entry_notification(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        bucket: TimeframeBucket,
+        state: AssetState,
+    ) -> None:
+        for user_id, preferences in self.user_preferences.items():
+            if not self._should_deliver_trade_entry_notification(
+                symbol=symbol,
+                timeframe=timeframe,
+                signal=state.signal,
+                preferences=preferences,
+            ):
+                continue
+            if (
+                preferences.telegram_enabled
+                and preferences.telegram_chat_id
+                and self.telegram_notifier.configured
+            ):
+                self._spawn_background_task(
+                    self._send_telegram_trade_entry_notification(
+                        user_id=user_id,
+                        preferences=preferences,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        bucket=bucket,
+                        state=state,
+                    )
+                )
+
     def _spawn_background_task(self, coro: Any) -> None:
         task = asyncio.create_task(coro)
         self.background_tasks.add(task)
@@ -2544,6 +2584,35 @@ class SignalService:
                 user_id,
                 alert.symbol,
                 alert.timeframe,
+                result_message,
+            )
+
+    async def _send_telegram_trade_entry_notification(
+        self,
+        *,
+        user_id: str,
+        preferences: AlertPreferences,
+        symbol: str,
+        timeframe: str,
+        bucket: TimeframeBucket,
+        state: AssetState,
+    ) -> None:
+        if not preferences.telegram_chat_id:
+            return
+        message = self._build_telegram_trade_entry_message(
+            user_id=user_id,
+            symbol=symbol,
+            timeframe=timeframe,
+            bucket=bucket,
+            state=state,
+        )
+        ok, result_message = await self.telegram_notifier.send_message(preferences.telegram_chat_id, message)
+        if not ok:
+            logger.warning(
+                "Telegram trade-entry send failed user=%s symbol=%s timeframe=%s reason=%s",
+                user_id,
+                symbol,
+                timeframe,
                 result_message,
             )
 
@@ -2608,6 +2677,46 @@ class SignalService:
         ]
         return "\n".join(body)
 
+    def _build_telegram_trade_entry_message(
+        self,
+        *,
+        user_id: str,
+        symbol: str,
+        timeframe: str,
+        bucket: TimeframeBucket,
+        state: AssetState,
+    ) -> str:
+        escaped_symbol = self.telegram_notifier.escape(symbol.removesuffix("USDT"))
+        escaped_timeframe = self.telegram_notifier.escape(timeframe)
+        escaped_setup = self.telegram_notifier.escape(state.setup_type or "Unknown")
+        escaped_bias = self.telegram_notifier.escape(state.action_bias or "Neutral")
+        escaped_market_state = self.telegram_notifier.escape(state.market_state)
+        frontend = self.settings.frontend_url.rstrip("/")
+        detail_url = f"{frontend}/coin/{symbol}?timeframe={timeframe}&snapshot_id=latest"
+
+        execution_lines: list[str] = []
+        if state.execution is not None:
+            if state.execution.entry_min is not None:
+                execution_lines.append(f"Entry: <code>{state.execution.entry_min:.6f}</code>")
+            if state.execution.invalidation is not None:
+                execution_lines.append(f"Stop: <code>{state.execution.invalidation:.6f}</code>")
+            if state.execution.target_1 is not None:
+                execution_lines.append(f"TP1: <code>{state.execution.target_1:.6f}</code>")
+            if state.execution.target_2 is not None:
+                execution_lines.append(f"TP2: <code>{state.execution.target_2:.6f}</code>")
+
+        body = [
+            "<b>FlowScope Entry Triggered</b>",
+            f"Asset: <b>{escaped_symbol}</b> | TF: <b>{escaped_timeframe}</b>",
+            f"Setup: <b>{escaped_setup}</b> | Bias: <b>{escaped_bias}</b>",
+            f"State: <b>{escaped_market_state}</b>",
+            f"Price Now: <code>{state.price:.6f}</code>",
+            *execution_lines,
+            f"Time: {bucket.last_timestamp.isoformat()}",
+            f"Open: {self.telegram_notifier.escape(detail_url)}",
+        ]
+        return "\n".join(body)
+
     def _should_deliver_alert(
         self,
         user_id: str,
@@ -2630,6 +2739,24 @@ class SignalService:
                 delta = (alert.timestamp - last).total_seconds()
                 if delta < preferences.debounce_minutes * 60:
                     return False
+        return True
+
+    @staticmethod
+    def _should_deliver_trade_entry_notification(
+        *,
+        symbol: str,
+        timeframe: str,
+        signal: SignalType,
+        preferences: AlertPreferences,
+    ) -> bool:
+        if not preferences.enabled:
+            return False
+        if preferences.timeframes and timeframe not in preferences.timeframes:
+            return False
+        if preferences.signal_types and signal not in preferences.signal_types:
+            return False
+        if preferences.watchlist and symbol not in preferences.watchlist:
+            return False
         return True
 
     @staticmethod
