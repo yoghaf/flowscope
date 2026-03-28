@@ -144,6 +144,9 @@ class Settings(BaseSettings):
     taker_batch_size: int = 10       # Taker ratio symbols per cycle (weight 5 each)
     ws_reconnect_delay: int = 5      # WebSocket reconnect delay in seconds
     staged_ticker_interval: int = 300  # Bulk ticker refresh interval (seconds)
+    telegram_alerts_enabled: bool = True
+    telegram_bot_token: str | None = None
+    telegram_api_base: str = "https://api.telegram.org"
 
     binance_rest_url: str = "https://fapi.binance.com"
     binance_spot_rest_url: str = "https://api.binance.com"

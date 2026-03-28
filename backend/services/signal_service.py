@@ -45,12 +45,14 @@ from backend.schemas import (
     SignalType,
     SignalStatus,
     PerformanceResponse,
+    TelegramTestResponse,
     VolumePoint,
 )
 from backend.services.performance_engine import PerformanceEngine
 from backend.services.trade_evaluator import TradeEvaluator
 from backend.services.market_universe import MarketUniverseService
 from backend.services.realtime import RealtimeHub
+from backend.services.telegram_notifier import TelegramNotifier
 from backend.services.timeframe_aggregator import (
     TIMEFRAME_DELTAS,
     TIMEFRAME_ORDER,
@@ -141,6 +143,7 @@ class SignalService:
         self.phase_engine = PhaseEngine()
         self.performance_engine = PerformanceEngine(database)
         self.trade_evaluator = TradeEvaluator(settings, database, self)
+        self.telegram_notifier = TelegramNotifier(settings)
         self.aggregate_store = TimeframeAggregateStore(settings.history_retention_points)
         self.symbols: list[str] = []
         self.states_by_timeframe: dict[str, dict[str, AssetState]] = {
@@ -163,6 +166,7 @@ class SignalService:
         self.condition_expectancy: dict[tuple[str, str, str], float] = {}
         self.performance_snapshot = None
         self.tasks: list[asyncio.Task[Any]] = []
+        self.background_tasks: set[asyncio.Task[Any]] = set()
         self._lock = asyncio.Lock()
         self._running = False
         self.ready_since: dict[tuple[str, str, str], datetime] = {}
@@ -208,6 +212,12 @@ class SignalService:
         for task in self.tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        for task in list(self.background_tasks):
+            task.cancel()
+        for task in list(self.background_tasks):
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        await self.telegram_notifier.close()
         await self.universe_service.close()
         await asyncio.gather(*(collector.close() for collector in self.collectors), return_exceptions=True)
 
@@ -1186,7 +1196,7 @@ class SignalService:
                 score=state.score,
             )
             self.alerts.appendleft(alert)
-            self._dispatch_alert(alert)
+            self._dispatch_alert(alert, state=state)
             await self.database.save_signal(alert, state.breakdown)
             return alert
 
@@ -2283,6 +2293,7 @@ class SignalService:
         user_id = self._normalize_user_id(user_id)
         cached = self.user_preferences.get(user_id)
         if cached:
+            cached.telegram_configured = self.telegram_notifier.configured
             return cached
 
         record = await self.database.get_alert_preferences(user_id)
@@ -2294,6 +2305,9 @@ class SignalService:
                 min_score=record.min_score,
                 debounce_minutes=record.debounce_minutes,
                 enabled=record.enabled,
+                telegram_enabled=record.telegram_enabled,
+                telegram_chat_id=record.telegram_chat_id,
+                telegram_configured=self.telegram_notifier.configured,
                 updated_at=record.updated_at,
             )
         else:
@@ -2321,12 +2335,32 @@ class SignalService:
             preferences.debounce_minutes = max(0, min(update.debounce_minutes, 1440))
         if update.enabled is not None:
             preferences.enabled = update.enabled
+        if update.telegram_enabled is not None:
+            preferences.telegram_enabled = update.telegram_enabled
+        if update.telegram_chat_id is not None:
+            chat_id = update.telegram_chat_id.strip() if update.telegram_chat_id else None
+            preferences.telegram_chat_id = chat_id or None
 
         preferences.updated_at = datetime.now(UTC)
+        preferences.telegram_configured = self.telegram_notifier.configured
         self.user_preferences[user_id] = preferences
         await self.database.upsert_alert_preferences(self._preferences_payload(preferences))
         await self._reset_user_alerts(user_id, preferences)
         return preferences
+
+    async def send_test_telegram_alert(self, user_id: str) -> TelegramTestResponse:
+        user_id = self._normalize_user_id(user_id)
+        preferences = await self.get_alert_preferences(user_id)
+        if not self.telegram_notifier.configured:
+            return TelegramTestResponse(ok=False, message="Telegram bot token belum dikonfigurasi di server.")
+        if not preferences.telegram_enabled:
+            return TelegramTestResponse(ok=False, message="Telegram notifications masih off di preferences user ini.")
+        if not preferences.telegram_chat_id:
+            return TelegramTestResponse(ok=False, message="Telegram chat ID belum diisi.")
+
+        message = self._build_test_telegram_message(user_id)
+        ok, result_message = await self.telegram_notifier.send_message(preferences.telegram_chat_id, message)
+        return TelegramTestResponse(ok=ok, message=result_message)
 
     async def _ensure_user_initialized(
         self,
@@ -2362,12 +2396,112 @@ class SignalService:
                     self.user_alerts[user_id].appendleft(alert)
                     self.last_alert_at[(user_id, alert.symbol)] = alert.timestamp
 
-    def _dispatch_alert(self, alert: AlertEntry) -> None:
+    def _dispatch_alert(self, alert: AlertEntry, state: AssetState | None = None) -> None:
         for user_id, preferences in self.user_preferences.items():
             if not self._should_deliver_alert(user_id, alert, preferences):
                 continue
             self.user_alerts[user_id].appendleft(alert)
             self.last_alert_at[(user_id, alert.symbol)] = alert.timestamp
+            if (
+                preferences.telegram_enabled
+                and preferences.telegram_chat_id
+                and self.telegram_notifier.configured
+            ):
+                self._spawn_background_task(
+                    self._send_telegram_alert(
+                        user_id=user_id,
+                        preferences=preferences,
+                        alert=alert,
+                        state=state,
+                    )
+                )
+
+    def _spawn_background_task(self, coro: Any) -> None:
+        task = asyncio.create_task(coro)
+        self.background_tasks.add(task)
+        task.add_done_callback(self.background_tasks.discard)
+
+    async def _send_telegram_alert(
+        self,
+        *,
+        user_id: str,
+        preferences: AlertPreferences,
+        alert: AlertEntry,
+        state: AssetState | None,
+    ) -> None:
+        if not preferences.telegram_chat_id:
+            return
+        message = self._build_telegram_alert_message(user_id=user_id, alert=alert, state=state)
+        ok, result_message = await self.telegram_notifier.send_message(preferences.telegram_chat_id, message)
+        if not ok:
+            logger.warning(
+                "Telegram alert send failed user=%s symbol=%s timeframe=%s reason=%s",
+                user_id,
+                alert.symbol,
+                alert.timeframe,
+                result_message,
+            )
+
+    def _build_test_telegram_message(self, user_id: str) -> str:
+        frontend = self.settings.frontend_url.rstrip("/")
+        return (
+            "<b>FlowScope Telegram Test</b>\n"
+            f"User: <code>{self.telegram_notifier.escape(user_id)}</code>\n"
+            "Status: Telegram integration is active.\n"
+            f"Time: {datetime.now(UTC).isoformat()}\n"
+            f"Dashboard: {self.telegram_notifier.escape(frontend)}/alerts"
+        )
+
+    def _build_telegram_alert_message(
+        self,
+        *,
+        user_id: str,
+        alert: AlertEntry,
+        state: AssetState | None,
+    ) -> str:
+        symbol = self.telegram_notifier.escape(alert.symbol.removesuffix("USDT"))
+        signal = self.telegram_notifier.escape(alert.signal)
+        timeframe = self.telegram_notifier.escape(alert.timeframe)
+        frontend = self.settings.frontend_url.rstrip("/")
+        detail_url = f"{frontend}/coin/{alert.symbol}?timeframe={alert.timeframe}&snapshot_id={alert.snapshot_id}"
+
+        state_label = self.telegram_notifier.escape(state.market_state) if state is not None else "Unknown"
+        bias = self.telegram_notifier.escape(state.action_bias or "Neutral") if state is not None else "Neutral"
+        action = self.telegram_notifier.escape(state.market_interpretation.get("action", "WAIT")) if state and state.market_interpretation else "WAIT"
+        score_pct = round(alert.score * 100)
+        price = f"{state.price:.6f}" if state is not None else "--"
+        setup = self.telegram_notifier.escape(state.setup_type or "Unknown") if state is not None else "Unknown"
+
+        execution_lines: list[str] = []
+        if state is not None and state.execution is not None:
+            if state.execution.entry_min is not None:
+                execution_lines.append(f"Entry: <code>{state.execution.entry_min:.6f}</code>")
+            if state.execution.invalidation is not None:
+                execution_lines.append(f"Stop: <code>{state.execution.invalidation:.6f}</code>")
+            if state.execution.target_1 is not None:
+                execution_lines.append(f"TP1: <code>{state.execution.target_1:.6f}</code>")
+            if state.execution.target_2 is not None:
+                execution_lines.append(f"TP2: <code>{state.execution.target_2:.6f}</code>")
+
+        warning_lines: list[str] = []
+        if state is not None and state.market_interpretation:
+            warnings = state.market_interpretation.get("warnings", [])
+            if isinstance(warnings, list) and warnings:
+                warning_lines.append("Warnings: " + ", ".join(self.telegram_notifier.escape(str(item)) for item in warnings[:3]))
+
+        body = [
+            "<b>FlowScope Alert</b>",
+            f"Asset: <b>{symbol}</b> | TF: <b>{timeframe}</b>",
+            f"Signal: <b>{signal}</b> | Setup: <b>{setup}</b>",
+            f"Bias: <b>{bias}</b> | Action: <b>{action}</b>",
+            f"State: <b>{state_label}</b> | Score: <b>{score_pct}%</b>",
+            f"Price: <code>{price}</code>",
+            *execution_lines,
+            *warning_lines,
+            f"Time: {alert.timestamp.isoformat()}",
+            f"Open: {self.telegram_notifier.escape(detail_url)}",
+        ]
+        return "\n".join(body)
 
     def _should_deliver_alert(
         self,
@@ -2417,6 +2551,9 @@ class SignalService:
             min_score=0.0,
             debounce_minutes=10,
             enabled=True,
+            telegram_enabled=False,
+            telegram_chat_id=None,
+            telegram_configured=False,
             updated_at=None,
         )
 
@@ -2825,5 +2962,7 @@ class SignalService:
             "min_score": preferences.min_score,
             "debounce_minutes": preferences.debounce_minutes,
             "enabled": preferences.enabled,
+            "telegram_enabled": preferences.telegram_enabled,
+            "telegram_chat_id": preferences.telegram_chat_id,
             "updated_at": preferences.updated_at or datetime.now(UTC),
         }

@@ -351,6 +351,9 @@ export interface AlertPreferences {
   min_score: number;
   debounce_minutes: number;
   enabled: boolean;
+  telegram_enabled?: boolean;
+  telegram_chat_id?: string | null;
+  telegram_configured?: boolean;
   updated_at?: string | null;
 }
 
@@ -360,6 +363,13 @@ export interface AlertPreferencesUpdate {
   min_score?: number;
   debounce_minutes?: number;
   enabled?: boolean;
+  telegram_enabled?: boolean;
+  telegram_chat_id?: string | null;
+}
+
+export interface TelegramTestResponse {
+  ok: boolean;
+  message: string;
 }
 
 export interface CoinDetailResponse {

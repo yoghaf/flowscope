@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
 
-from backend.schemas import AlertPreferences, AlertPreferencesUpdate, AlertsResponse
+from backend.schemas import AlertPreferences, AlertPreferencesUpdate, AlertsResponse, TelegramTestResponse
 
 router = APIRouter(tags=["alerts"])
 
@@ -51,3 +51,12 @@ async def update_alert_preferences(
 ) -> AlertPreferences:
     service = request.app.state.signal_service
     return await service.update_alert_preferences(resolve_user_id(request, user_id), payload)
+
+
+@router.post("/alerts/test-telegram", response_model=TelegramTestResponse)
+async def test_telegram_alert(
+    request: Request,
+    user_id: str | None = Query(default=None),
+) -> TelegramTestResponse:
+    service = request.app.state.signal_service
+    return await service.send_test_telegram_alert(resolve_user_id(request, user_id))

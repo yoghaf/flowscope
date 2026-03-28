@@ -8,6 +8,7 @@ import type {
   PerformanceTradeTableResponse,
   RealtimeEvent,
   ScannerResponse,
+  TelegramTestResponse,
   Timeframe,
 } from "@/lib/types";
 import { getUserId } from "@/lib/user";
@@ -169,6 +170,11 @@ export const api = {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
+    });
+  },
+  testTelegramAlert(): Promise<TelegramTestResponse> {
+    return fetchJson<TelegramTestResponse>("/alerts/test-telegram", undefined, {
+      method: "POST",
     });
   },
   getWebSocketUrl(): string {

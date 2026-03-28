@@ -4,7 +4,7 @@ import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
@@ -34,6 +34,18 @@ class DatabaseManager:
         try:
             async with self.engine.begin() as connection:
                 await connection.run_sync(Base.metadata.create_all)
+                await connection.execute(
+                    text(
+                        "ALTER TABLE alert_preferences "
+                        "ADD COLUMN IF NOT EXISTS telegram_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE alert_preferences "
+                        "ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(80)"
+                    )
+                )
             self.enabled = True
         except Exception as exc:
             logger.warning("Database initialization skipped: %s", exc)
@@ -229,6 +241,8 @@ class DatabaseManager:
                 "min_score": excluded.min_score,
                 "debounce_minutes": excluded.debounce_minutes,
                 "enabled": excluded.enabled,
+                "telegram_enabled": excluded.telegram_enabled,
+                "telegram_chat_id": excluded.telegram_chat_id,
                 "updated_at": excluded.updated_at,
             },
         )

@@ -372,6 +372,9 @@ class AlertPreferences(BaseModel):
     min_score: float = 0.0
     debounce_minutes: int = 10
     enabled: bool = True
+    telegram_enabled: bool = False
+    telegram_chat_id: str | None = None
+    telegram_configured: bool = False
     updated_at: datetime | None = None
 
 
@@ -381,6 +384,13 @@ class AlertPreferencesUpdate(BaseModel):
     min_score: float | None = None
     debounce_minutes: int | None = None
     enabled: bool | None = None
+    telegram_enabled: bool | None = None
+    telegram_chat_id: str | None = None
+
+
+class TelegramTestResponse(BaseModel):
+    ok: bool
+    message: str
 
 
 class CoinDetailResponse(BaseModel):

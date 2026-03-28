@@ -106,6 +106,8 @@ class AlertPreference(Base):
     min_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     debounce_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    telegram_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

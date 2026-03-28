@@ -29,8 +29,12 @@ export default function AlertsPage() {
   const [minScore, setMinScore] = useState(0);
   const [debounceMinutes, setDebounceMinutes] = useState(10);
   const [enabledTypes, setEnabledTypes] = useState<SignalType[]>([]);
+  const [telegramEnabled, setTelegramEnabled] = useState(false);
+  const [telegramChatId, setTelegramChatId] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [telegramMessage, setTelegramMessage] = useState<string | null>(null);
+  const [testingTelegram, setTestingTelegram] = useState(false);
   const [timeframe, setTimeframe] = useState<Timeframe>("1h");
 
   const { data, isLoading, isError } = useQuery({
@@ -59,6 +63,8 @@ export default function AlertsPage() {
     setDebounceMinutes(preferences.debounce_minutes ?? 10);
     setEnabledTypes(preferences.signal_types ?? []);
     setWatchlistInput(preferences.watchlist.map(shortSymbol).join(", "));
+    setTelegramEnabled(preferences.telegram_enabled ?? false);
+    setTelegramChatId(preferences.telegram_chat_id ?? "");
   }, [preferences]);
 
   const filteredAlerts = useMemo(() => {
@@ -88,6 +94,8 @@ export default function AlertsPage() {
       watchlist,
       min_score: Math.max(0, Math.min(minScore, 100)) / 100,
       debounce_minutes: Math.max(0, Math.min(debounceMinutes, 1440)),
+      telegram_enabled: telegramEnabled,
+      telegram_chat_id: telegramChatId.trim() || null,
     };
 
     try {
@@ -122,6 +130,20 @@ export default function AlertsPage() {
     anchor.download = `flowscope-alerts-${stamp}.csv`;
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleTestTelegram = async () => {
+    try {
+      setTestingTelegram(true);
+      setTelegramMessage(null);
+      const response = await api.testTelegramAlert();
+      setTelegramMessage(response.message);
+    } catch {
+      setTelegramMessage("Failed to send Telegram test message");
+    } finally {
+      setTestingTelegram(false);
+      setTimeout(() => setTelegramMessage(null), 3000);
+    }
   };
 
   return (
@@ -245,6 +267,64 @@ export default function AlertsPage() {
               className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-foreground transition-all focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
             <p className="text-xs text-muted-foreground">Minimum minutes between alerts per symbol.</p>
+          </div>
+        </div>
+
+        <div className="mt-6 grid gap-4 md:grid-cols-3">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Telegram Delivery</label>
+              <span
+                className={`text-[11px] font-semibold uppercase tracking-wider ${
+                  preferences?.telegram_configured ? "text-emerald-300" : "text-amber-300"
+                }`}
+              >
+                {preferences?.telegram_configured ? "Bot Ready" : "Bot Missing"}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setTelegramEnabled((current) => !current)}
+                className={`relative inline-flex h-7 w-12 items-center rounded-full transition-all duration-300 ${
+                  telegramEnabled ? "bg-primary shadow-lg shadow-primary/30" : "bg-white/10"
+                }`}
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform duration-300 ${
+                    telegramEnabled ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+              <span className={telegramEnabled ? "text-sm font-semibold text-primary" : "text-sm font-semibold text-muted-foreground"}>
+                {telegramEnabled ? "Telegram On" : "Telegram Off"}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">Aktifkan pengiriman alert ke Telegram untuk user/browser ini.</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Telegram Chat ID</label>
+            <input
+              value={telegramChatId}
+              onChange={(event) => setTelegramChatId(event.target.value)}
+              placeholder="123456789 atau -100..."
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-foreground transition-all focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            <p className="text-xs text-muted-foreground">Isi chat ID tujuan bot Telegram. Simpan preferences sebelum test.</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Telegram Test</label>
+            <button
+              onClick={handleTestTelegram}
+              disabled={testingTelegram}
+              className="w-full rounded-xl border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary transition-all hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {testingTelegram ? "Sending Test..." : "Send Test Message"}
+            </button>
+            <p className="text-xs text-muted-foreground">
+              {telegramMessage ?? "Gunakan untuk cek bot token server + chat ID kamu sudah valid."}
+            </p>
           </div>
         </div>
 
