@@ -2168,6 +2168,8 @@ class SignalService:
     ) -> None:
         if not self.database.enabled:
             return
+        if self.settings.demo_mode:
+            return
         if action.status != "Triggered":
             return
         if execution.entry_min is None or execution.invalidation is None or execution.target is None:
@@ -2192,6 +2194,23 @@ class SignalService:
             if execution.entry_max is None
             else (execution.entry_min + execution.entry_max) / 2
         )
+        reference_price = max(bucket.close_price, 1e-9)
+        if not self._execution_levels_sane(
+            reference_price=reference_price,
+            entry_price=entry_price,
+            execution=execution,
+        ):
+            logger.warning(
+                "Skipping implausible trade signal symbol=%s timeframe=%s close=%.8f entry=%s invalidation=%s target1=%s target2=%s",
+                symbol,
+                timeframe,
+                reference_price,
+                f"{entry_price:.8f}" if entry_price is not None else "None",
+                f"{execution.invalidation:.8f}" if execution.invalidation is not None else "None",
+                f"{execution.target_1:.8f}" if execution.target_1 is not None else "None",
+                f"{execution.target_2:.8f}" if execution.target_2 is not None else "None",
+            )
+            return
 
         regime = self._market_regime(flow_metrics, timeframe)
         volatility = self._volatility_regime(flow_metrics, timeframe)
@@ -2231,6 +2250,34 @@ class SignalService:
                     symbol,
                     action.bias,
                 )
+
+    @staticmethod
+    def _execution_levels_sane(
+        *,
+        reference_price: float,
+        entry_price: float | None,
+        execution: ExecutionPlan,
+    ) -> bool:
+        reference = max(abs(reference_price), 1e-9)
+        levels = [
+            entry_price,
+            execution.entry_min,
+            execution.entry_max,
+            execution.invalidation,
+            execution.target,
+            execution.target_1,
+            execution.target_2,
+            execution.initial_stop,
+        ]
+        for level in levels:
+            if level is None:
+                continue
+            if not math.isfinite(level) or level <= 0:
+                return False
+            ratio = max(level / reference, reference / level)
+            if ratio > 25.0:
+                return False
+        return True
 
     async def get_alert_preferences(self, user_id: str) -> AlertPreferences:
         user_id = self._normalize_user_id(user_id)
