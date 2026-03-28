@@ -209,7 +209,7 @@ export default function AlertsPage() {
         </button>
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-card/50 p-6 backdrop-blur-xl transition-all hover:border-white/20">
+      <div id="alert-preferences" className="rounded-2xl border border-white/10 bg-card/50 p-6 backdrop-blur-xl transition-all hover:border-white/20">
         <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">
