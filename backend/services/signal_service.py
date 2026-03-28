@@ -1125,6 +1125,8 @@ class SignalService:
             )
             self.last_timeframe_update[(symbol, timeframe)] = now
 
+            current_state = updated_states[timeframe]
+
             await self._maybe_record_trade_signal(
                 symbol=symbol,
                 timeframe=timeframe,
