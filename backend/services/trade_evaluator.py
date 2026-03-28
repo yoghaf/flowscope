@@ -29,10 +29,18 @@ class TradeEvaluator:
             price = await self.signal_service.get_latest_price(trade.symbol, trade.timeframe)
             if price is None or trade.entry_price is None:
                 continue
+            aggregate_store = getattr(self.signal_service, "aggregate_store", None)
+            bucket = (
+                aggregate_store.latest_bucket(trade.symbol, trade.timeframe, closed_only=False)
+                if aggregate_store is not None
+                else None
+            )
+            high_price = bucket.high_price if bucket is not None else price
+            low_price = bucket.low_price if bucket is not None else price
 
             bias = trade.bias
             direction = 1 if bias == "Bullish" else -1 if bias == "Bearish" else 1
-            triggered = price >= trade.entry_price if direction > 0 else price <= trade.entry_price
+            triggered = high_price >= trade.entry_price if direction > 0 else low_price <= trade.entry_price
 
             payload: dict[str, object] = {"updated_at": now}
 
@@ -49,47 +57,45 @@ class TradeEvaluator:
             payload["max_drawdown_pct"] = min(trade.max_drawdown_pct, pnl_pct)
 
             if trade.target_price_1 is not None and not trade.tp1_hit:
-                if direction > 0 and price >= trade.target_price_1:
+                if direction > 0 and high_price >= trade.target_price_1:
                     payload["tp1_hit"] = True
                     payload["trailing_stop_price"] = trade.entry_price
-                if direction < 0 and price <= trade.target_price_1:
+                if direction < 0 and low_price <= trade.target_price_1:
                     payload["tp1_hit"] = True
                     payload["trailing_stop_price"] = trade.entry_price
 
             exit_price = None
+            hit_target_2 = False
+            hit_invalidation = False
             if trade.target_price_2 is not None:
-                if direction > 0 and price >= trade.target_price_2:
-                    exit_price = trade.target_price_2
-                    payload["result"] = "win"
-                if direction < 0 and price <= trade.target_price_2:
-                    exit_price = trade.target_price_2
-                    payload["result"] = "win"
+                hit_target_2 = high_price >= trade.target_price_2 if direction > 0 else low_price <= trade.target_price_2
+            if trade.invalidation_price is not None:
+                hit_invalidation = low_price <= trade.invalidation_price if direction > 0 else high_price >= trade.invalidation_price
+
+            if hit_invalidation:
+                exit_price = trade.invalidation_price
+                payload["result"] = "loss"
+            elif hit_target_2:
+                exit_price = trade.target_price_2
+                payload["result"] = "win"
 
             trailing_stop = payload.get("trailing_stop_price", trade.trailing_stop_price)
             tp1_hit = payload.get("tp1_hit", trade.tp1_hit)
             if exit_price is None and tp1_hit and trailing_stop is not None:
-                if direction > 0 and price <= trailing_stop:
+                if direction > 0 and low_price <= trailing_stop:
                     exit_price = trailing_stop
                     payload["result"] = (
                         "breakeven"
                         if abs(trailing_stop - trade.entry_price) <= max(abs(trade.entry_price), 1.0) * BREAKEVEN_EPSILON
                         else "win"
                     )
-                if direction < 0 and price >= trailing_stop:
+                if direction < 0 and high_price >= trailing_stop:
                     exit_price = trailing_stop
                     payload["result"] = (
                         "breakeven"
                         if abs(trailing_stop - trade.entry_price) <= max(abs(trade.entry_price), 1.0) * BREAKEVEN_EPSILON
                         else "win"
                     )
-
-            if exit_price is None and trade.invalidation_price is not None:
-                if direction > 0 and price <= trade.invalidation_price:
-                    exit_price = trade.invalidation_price
-                    payload["result"] = "loss"
-                if direction < 0 and price >= trade.invalidation_price:
-                    exit_price = trade.invalidation_price
-                    payload["result"] = "loss"
 
             if exit_price is not None:
                 payload["pnl_pct"] = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100

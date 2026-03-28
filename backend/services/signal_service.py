@@ -2168,7 +2168,7 @@ class SignalService:
     ) -> None:
         if not self.database.enabled:
             return
-        if action.status != "Ready":
+        if action.status != "Triggered":
             return
         if execution.entry_min is None or execution.invalidation is None or execution.target is None:
             return
@@ -2177,6 +2177,14 @@ class SignalService:
         dedupe_window = TIMEFRAME_DELTAS.get(timeframe, timedelta(minutes=60))
         last = self.last_trade_signal_at.get(key)
         if last and bucket.last_timestamp - last < dedupe_window:
+            return
+        if await self.database.has_open_trade_signal(
+            symbol=symbol,
+            timeframe=timeframe,
+            state=state.state,
+            setup_type=action.setup_type,
+            bias=action.bias,
+        ):
             return
 
         entry_price = (

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 from datetime import UTC, datetime
+from io import StringIO
 
 from backend.database import DatabaseManager
 from backend.schemas import ConditionPerformance, PerformanceResponse, RegimePerformance, SetupPerformance
@@ -9,6 +11,154 @@ from backend.schemas import ConditionPerformance, PerformanceResponse, RegimePer
 class PerformanceEngine:
     def __init__(self, database: DatabaseManager) -> None:
         self.database = database
+
+    @staticmethod
+    def _round(value: float | None, digits: int = 4) -> float | None:
+        if value is None:
+            return None
+        return round(value, digits)
+
+    @staticmethod
+    def _safe_div(numerator: float, denominator: float) -> float | None:
+        if abs(denominator) <= 1e-12:
+            return None
+        return numerator / denominator
+
+    async def export_trade_report_csv(
+        self,
+        *,
+        symbol: str = "ALL",
+        timeframe: str = "ALL",
+        setup_type: str | None = None,
+        capital_per_trade: float = 100.0,
+    ) -> str:
+        trades = await self.database.list_trade_signals()
+
+        filtered = []
+        for trade in trades:
+            if symbol != "ALL" and trade.symbol != symbol:
+                continue
+            if timeframe != "ALL" and trade.timeframe != timeframe:
+                continue
+            if setup_type and trade.setup_type != setup_type:
+                continue
+            filtered.append(trade)
+
+        filtered.sort(key=lambda trade: trade.created_at, reverse=True)
+
+        buffer = StringIO()
+        writer = csv.DictWriter(
+            buffer,
+            fieldnames=[
+                "trade_id",
+                "symbol",
+                "timeframe",
+                "setup_type",
+                "state",
+                "bias",
+                "status",
+                "result",
+                "market_regime",
+                "volatility_regime",
+                "confidence_pct",
+                "quality_score",
+                "risk_level",
+                "signal_timestamp",
+                "created_at",
+                "updated_at",
+                "entry_price",
+                "invalidation_price",
+                "target_price_1",
+                "target_price_2",
+                "risk_per_unit",
+                "reward_tp1_per_unit",
+                "reward_tp2_per_unit",
+                "planned_rr_tp1",
+                "planned_rr_tp2",
+                "capital_per_trade",
+                "estimated_quantity",
+                "risk_amount_usd",
+                "tp1_reward_usd",
+                "tp2_reward_usd",
+                "risk_pct_of_capital",
+                "pnl_pct",
+                "realized_pnl_usd",
+                "realized_r_multiple",
+                "max_profit_pct",
+                "max_profit_usd",
+                "max_drawdown_pct",
+                "max_drawdown_usd",
+            ],
+        )
+        writer.writeheader()
+
+        for trade in filtered:
+            entry = trade.entry_price
+            invalidation = trade.invalidation_price
+            target_1 = trade.target_price_1 or trade.target_price
+            target_2 = trade.target_price_2 or target_1
+
+            risk_per_unit = abs(entry - invalidation) if entry is not None and invalidation is not None else None
+            reward_tp1 = abs(target_1 - entry) if entry is not None and target_1 is not None else None
+            reward_tp2 = abs(target_2 - entry) if entry is not None and target_2 is not None else None
+            rr_tp1 = self._safe_div(reward_tp1, risk_per_unit) if reward_tp1 is not None and risk_per_unit is not None else None
+            rr_tp2 = self._safe_div(reward_tp2, risk_per_unit) if reward_tp2 is not None and risk_per_unit is not None else None
+
+            quantity = (capital_per_trade / entry) if entry and entry > 0 else None
+            risk_amount_usd = quantity * risk_per_unit if quantity is not None and risk_per_unit is not None else None
+            tp1_reward_usd = quantity * reward_tp1 if quantity is not None and reward_tp1 is not None else None
+            tp2_reward_usd = quantity * reward_tp2 if quantity is not None and reward_tp2 is not None else None
+            risk_pct_of_capital = self._safe_div(risk_amount_usd * 100, capital_per_trade) if risk_amount_usd is not None else None
+
+            realized_pnl_usd = capital_per_trade * (trade.pnl_pct / 100)
+            max_profit_usd = capital_per_trade * (trade.max_profit_pct / 100)
+            max_drawdown_usd = capital_per_trade * (trade.max_drawdown_pct / 100)
+            realized_r_multiple = self._safe_div(realized_pnl_usd, risk_amount_usd) if risk_amount_usd is not None else None
+
+            writer.writerow(
+                {
+                    "trade_id": trade.id,
+                    "symbol": trade.symbol,
+                    "timeframe": trade.timeframe,
+                    "setup_type": trade.setup_type,
+                    "state": trade.state,
+                    "bias": trade.bias,
+                    "status": trade.status,
+                    "result": trade.result,
+                    "market_regime": trade.market_regime,
+                    "volatility_regime": trade.volatility_regime,
+                    "confidence_pct": self._round(trade.confidence * 100, 2),
+                    "quality_score": trade.quality_score,
+                    "risk_level": trade.risk_level,
+                    "signal_timestamp": trade.timestamp.isoformat(),
+                    "created_at": trade.created_at.isoformat(),
+                    "updated_at": trade.updated_at.isoformat(),
+                    "entry_price": self._round(entry, 6),
+                    "invalidation_price": self._round(invalidation, 6),
+                    "target_price_1": self._round(target_1, 6),
+                    "target_price_2": self._round(target_2, 6),
+                    "risk_per_unit": self._round(risk_per_unit, 6),
+                    "reward_tp1_per_unit": self._round(reward_tp1, 6),
+                    "reward_tp2_per_unit": self._round(reward_tp2, 6),
+                    "planned_rr_tp1": self._round(rr_tp1, 4),
+                    "planned_rr_tp2": self._round(rr_tp2, 4),
+                    "capital_per_trade": self._round(capital_per_trade, 2),
+                    "estimated_quantity": self._round(quantity, 8),
+                    "risk_amount_usd": self._round(risk_amount_usd, 2),
+                    "tp1_reward_usd": self._round(tp1_reward_usd, 2),
+                    "tp2_reward_usd": self._round(tp2_reward_usd, 2),
+                    "risk_pct_of_capital": self._round(risk_pct_of_capital, 4),
+                    "pnl_pct": self._round(trade.pnl_pct, 4),
+                    "realized_pnl_usd": self._round(realized_pnl_usd, 2),
+                    "realized_r_multiple": self._round(realized_r_multiple, 4),
+                    "max_profit_pct": self._round(trade.max_profit_pct, 4),
+                    "max_profit_usd": self._round(max_profit_usd, 2),
+                    "max_drawdown_pct": self._round(trade.max_drawdown_pct, 4),
+                    "max_drawdown_usd": self._round(max_drawdown_usd, 2),
+                }
+            )
+
+        return buffer.getvalue()
 
     async def compute(self) -> PerformanceResponse | None:
         if not self.database.enabled:

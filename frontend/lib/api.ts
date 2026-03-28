@@ -44,6 +44,37 @@ async function fetchJson<T>(
   return response.json() as Promise<T>;
 }
 
+async function fetchBlob(
+  path: string,
+  query?: Record<string, string | number | undefined>,
+  init?: RequestInit,
+): Promise<Blob> {
+  const url = new URL(path, API_BASE_URL);
+  Object.entries(query ?? {}).forEach(([key, value]) => {
+    if (value === undefined || value === "") {
+      return;
+    }
+    url.searchParams.set(key, String(value));
+  });
+
+  const headers = new Headers(init?.headers);
+  if (typeof window !== "undefined") {
+    headers.set("X-User-Id", getUserId());
+  }
+
+  const response = await fetch(url.toString(), {
+    cache: "no-store",
+    ...init,
+    headers,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status}`);
+  }
+
+  return response.blob();
+}
+
 export const api = {
   getDashboard(query: { symbol: string; timeframe: Timeframe; snapshotId: string }): Promise<DashboardResponse> {
     return fetchJson<DashboardResponse>("/dashboard", {
@@ -82,6 +113,19 @@ export const api = {
       symbol: query.symbol,
       timeframe: query.timeframe,
       snapshot_id: query.snapshotId,
+    });
+  },
+  downloadPerformanceReport(query: {
+    symbol?: string;
+    timeframe?: Timeframe | "ALL";
+    setupType?: string;
+    capitalPerTrade: number;
+  }): Promise<Blob> {
+    return fetchBlob("/performance/report", {
+      symbol: query.symbol ?? "ALL",
+      timeframe: query.timeframe ?? "ALL",
+      setup_type: query.setupType,
+      capital_per_trade: query.capitalPerTrade,
     });
   },
   getAlerts(query: {
