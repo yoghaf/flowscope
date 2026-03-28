@@ -423,6 +423,9 @@ class TradeSignalEntry(BaseModel):
     target_price_2: float | None
     trailing_stop_price: float | None
     tp1_hit: bool
+    entry_touched_at: datetime | None = None
+    closed_at: datetime | None = None
+    close_reason: str | None = None
     risk_level: RiskLevel
     quality_score: QualityScore
     confidence: float
@@ -497,6 +500,9 @@ class PerformanceTradeRow(BaseModel):
     risk_level: str | None = None
     signal_timestamp: str
     created_at: str
+    entry_touched_at: str | None = None
+    closed_at: str | None = None
+    close_reason: str | None = None
     updated_at: str
     entry_price: float | None = None
     invalidation_price: float | None = None

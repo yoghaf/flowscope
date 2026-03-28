@@ -433,6 +433,9 @@ export interface PerformanceTradeRow {
   risk_level?: string | null;
   signal_timestamp: string;
   created_at: string;
+  entry_touched_at?: string | null;
+  closed_at?: string | null;
+  close_reason?: string | null;
   updated_at: string;
   entry_price?: number | null;
   invalidation_price?: number | null;

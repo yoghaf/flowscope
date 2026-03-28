@@ -52,6 +52,24 @@ class DatabaseManager:
                         "ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(80)"
                     )
                 )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE trade_signals "
+                        "ADD COLUMN IF NOT EXISTS entry_touched_at TIMESTAMPTZ"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE trade_signals "
+                        "ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE trade_signals "
+                        "ADD COLUMN IF NOT EXISTS close_reason VARCHAR(32)"
+                    )
+                )
             self.enabled = True
         except Exception as exc:
             logger.warning("Database initialization skipped: %s", exc)

@@ -46,6 +46,8 @@ class TradeEvaluator:
 
             if triggered and trade.status != "Triggered":
                 payload["status"] = "Triggered"
+            if triggered and trade.entry_touched_at is None:
+                payload["entry_touched_at"] = bucket.last_timestamp if bucket is not None else now
 
             if not triggered:
                 await self.database.update_trade_signal(trade.id, payload)
@@ -75,9 +77,11 @@ class TradeEvaluator:
             if hit_invalidation:
                 exit_price = trade.invalidation_price
                 payload["result"] = "loss"
+                payload["close_reason"] = "Invalidation"
             elif hit_target_2:
                 exit_price = trade.target_price_2
                 payload["result"] = "win"
+                payload["close_reason"] = "Target 2"
 
             trailing_stop = payload.get("trailing_stop_price", trade.trailing_stop_price)
             tp1_hit = payload.get("tp1_hit", trade.tp1_hit)
@@ -89,6 +93,7 @@ class TradeEvaluator:
                         if abs(trailing_stop - trade.entry_price) <= max(abs(trade.entry_price), 1.0) * BREAKEVEN_EPSILON
                         else "win"
                     )
+                    payload["close_reason"] = "Breakeven Stop" if payload["result"] == "breakeven" else "Trailing Stop"
                 if direction < 0 and high_price >= trailing_stop:
                     exit_price = trailing_stop
                     payload["result"] = (
@@ -96,8 +101,10 @@ class TradeEvaluator:
                         if abs(trailing_stop - trade.entry_price) <= max(abs(trade.entry_price), 1.0) * BREAKEVEN_EPSILON
                         else "win"
                     )
+                    payload["close_reason"] = "Breakeven Stop" if payload["result"] == "breakeven" else "Trailing Stop"
 
             if exit_price is not None:
                 payload["pnl_pct"] = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
+                payload["closed_at"] = bucket.last_timestamp if bucket is not None else now
 
             await self.database.update_trade_signal(trade.id, payload)

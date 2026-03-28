@@ -105,6 +105,9 @@ function formatTimestampCell(value: string | null | undefined) {
 }
 
 function formatClosedTimestamp(row: PerformanceTradeRow) {
+  if (row.closed_at) {
+    return formatTimestampCell(row.closed_at);
+  }
   if (row.result === "open") {
     return (
       <div className="flex min-w-[120px] flex-col leading-tight">
@@ -114,6 +117,18 @@ function formatClosedTimestamp(row: PerformanceTradeRow) {
     );
   }
   return formatTimestampCell(row.updated_at);
+}
+
+function formatEntryTouched(row: PerformanceTradeRow) {
+  if (row.entry_touched_at) {
+    return formatTimestampCell(row.entry_touched_at);
+  }
+  return (
+    <div className="flex min-w-[120px] flex-col leading-tight">
+      <span>--</span>
+      <span className="text-xs text-muted-foreground">No touch log</span>
+    </div>
+  );
 }
 
 function normalizeFilterValue(value: string | number | null | undefined) {
@@ -535,7 +550,7 @@ export default function PerformancePage() {
           {isTableLoading ? (
             <div className="p-6 text-sm text-muted-foreground">Loading trade table...</div>
           ) : (
-            <table className="min-w-[2400px] w-full border-collapse">
+            <table className="min-w-[2700px] w-full border-collapse">
               <thead className="bg-primary/10">
                 <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground">
                   <th className="px-4 py-3">Symbol</th>
@@ -546,8 +561,10 @@ export default function PerformancePage() {
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Result</th>
                   <th className="px-4 py-3">Signal Time</th>
-                  <th className="px-4 py-3">Opened</th>
+                  <th className="px-4 py-3">Recorded</th>
+                  <th className="px-4 py-3">Entry Touched</th>
                   <th className="px-4 py-3">Closed / Updated</th>
+                  <th className="px-4 py-3">Close Reason</th>
                   <th className="px-4 py-3">Entry</th>
                   <th className="px-4 py-3">Stop</th>
                   <th className="px-4 py-3">TP1</th>
@@ -570,7 +587,7 @@ export default function PerformancePage() {
               <tbody>
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={27} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    <td colSpan={29} className="px-4 py-8 text-center text-sm text-muted-foreground">
                       Tidak ada trade yang cocok dengan filter aktif.
                     </td>
                   </tr>
@@ -586,7 +603,9 @@ export default function PerformancePage() {
                       <td className="px-4 py-3">{row.result}</td>
                       <td className="px-4 py-3">{formatTimestampCell(row.signal_timestamp)}</td>
                       <td className="px-4 py-3">{formatTimestampCell(row.created_at)}</td>
+                      <td className="px-4 py-3">{formatEntryTouched(row)}</td>
                       <td className="px-4 py-3">{formatClosedTimestamp(row)}</td>
+                      <td className="px-4 py-3">{row.close_reason ?? (row.result === "open" ? "Still open" : "--")}</td>
                       <td className="px-4 py-3">{formatNumber(row.entry_price, 4)}</td>
                       <td className="px-4 py-3">{formatNumber(row.invalidation_price, 4)}</td>
                       <td className="px-4 py-3">{formatNumber(row.target_price_1, 4)}</td>
