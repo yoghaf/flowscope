@@ -185,6 +185,8 @@ class SignalService:
         self.symbols = await self.universe_service.get_symbols(self.settings.universe_size)
         self._running = True
 
+        await self._preload_alert_preferences()
+
         if self.settings.demo_mode:
             await self._seed_demo_data()
             self.tasks.append(asyncio.create_task(self._demo_loop()))
@@ -2495,6 +2497,32 @@ class SignalService:
             return
         await self._seed_user_alerts(user_id, preferences)
         self.user_initialized.add(user_id)
+
+    async def _preload_alert_preferences(self) -> None:
+        if not self.database.enabled:
+            return
+
+        records = await self.database.list_alert_preferences()
+        if not records:
+            return
+
+        for record in records:
+            preferences = AlertPreferences(
+                user_id=record.user_id,
+                timeframes=[tf for tf in (record.timeframes or []) if tf in TIMEFRAME_ORDER],
+                signal_types=record.signal_types or list(DEFAULT_SIGNAL_TYPES),
+                watchlist=record.watchlist or [],
+                min_score=record.min_score,
+                debounce_minutes=record.debounce_minutes,
+                enabled=record.enabled,
+                telegram_enabled=record.telegram_enabled,
+                telegram_chat_id=record.telegram_chat_id,
+                telegram_configured=self.telegram_notifier.configured,
+                updated_at=record.updated_at,
+            )
+            self.user_preferences[record.user_id] = preferences
+
+        logger.info("Preloaded %d alert preference(s) from database.", len(records))
 
     async def _reset_user_alerts(
         self,

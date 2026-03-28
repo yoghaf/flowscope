@@ -308,6 +308,14 @@ class DatabaseManager:
         async with self.session_factory() as session:
             return await session.get(AlertPreference, user_id)
 
+    async def list_alert_preferences(self) -> list[AlertPreference]:
+        if not self.enabled:
+            return []
+        statement = select(AlertPreference).order_by(AlertPreference.updated_at.desc())
+        async with self.session_factory() as session:
+            result = await session.scalars(statement)
+            return list(result)
+
     async def upsert_alert_preferences(self, payload: dict[str, object]) -> None:
         if not self.enabled:
             return
