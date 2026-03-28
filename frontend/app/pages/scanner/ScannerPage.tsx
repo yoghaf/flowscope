@@ -48,11 +48,19 @@ export default function ScannerPage() {
   const [signalFilter, setSignalFilter] = useState<(typeof SIGNAL_OPTIONS)[number]>("All");
   const [scoreRange, setScoreRange] = useState<[number, number]>([0, 100]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [clockTick, setClockTick] = useState(() => Date.now());
 
   useEffect(() => {
     const search = searchParams.get("search");
     setSearchTerm(search ?? "");
   }, [searchParams]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setClockTick(Date.now());
+    }, 1_000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   const { data, isLoading, isFetching, dataUpdatedAt, refetch } = useQuery({
     queryKey: ["scanner", timeframe, signalFilter, scoreRange, searchTerm],
@@ -132,8 +140,18 @@ export default function ScannerPage() {
     if (timeframe !== "15m" || !latestAssetTimestamp) {
       return false;
     }
-    return Date.now() - latestAssetTimestamp.getTime() > 10 * 60 * 1000;
-  }, [latestAssetTimestamp, timeframe]);
+    return clockTick - latestAssetTimestamp.getTime() > 10 * 60 * 1000;
+  }, [clockTick, latestAssetTimestamp, timeframe]);
+
+  useEffect(() => {
+    if (timeframe !== "15m" || !isFifteenMinuteStale) {
+      return;
+    }
+    const recoveryInterval = window.setInterval(() => {
+      void refetch();
+    }, 5_000);
+    return () => window.clearInterval(recoveryInterval);
+  }, [isFifteenMinuteStale, refetch, timeframe]);
 
   return (
     <div className="space-y-6">
@@ -246,20 +264,20 @@ export default function ScannerPage() {
             <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1">
               Latest asset ts {formattedLatestAssetTime}
             </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1">
+              Auto refresh {timeframe === "15m" ? "20s" : timeframe === "1h" ? "45s" : timeframe === "4h" ? "90s" : "120s"}
+            </span>
             {isFifteenMinuteStale ? (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-red-300">
-                15m stale suspected
+                15m stale suspected · recovery 5s
               </span>
             ) : null}
           </div>
         </div>
-        <button
-          onClick={() => void refetch()}
-          className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-foreground transition-all hover:border-white/20 hover:bg-white/10"
-        >
+        <div className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-foreground">
           <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
-          Refresh Now
-        </button>
+          {isFetching ? "Refreshing…" : "Auto refresh active"}
+        </div>
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-card/50 p-6 backdrop-blur-xl transition-all hover:border-white/20">
