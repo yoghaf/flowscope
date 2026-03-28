@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from backend.config import Settings
 from backend.database import DatabaseManager
+from backend.services.timeframe_aggregator import TIMEFRAME_DELTAS
 
 logger = logging.getLogger(__name__)
 BREAKEVEN_EPSILON = 1e-9
@@ -43,6 +44,7 @@ class TradeEvaluator:
             triggered = high_price >= trade.entry_price if direction > 0 else low_price <= trade.entry_price
 
             payload: dict[str, object] = {"updated_at": now}
+            timeout_window = TIMEFRAME_DELTAS.get(trade.timeframe, TIMEFRAME_DELTAS["1h"]) * max(self.settings.entry_touch_timeout_buckets, 1)
 
             if triggered and trade.status != "Triggered":
                 payload["status"] = "Triggered"
@@ -50,6 +52,10 @@ class TradeEvaluator:
                 payload["entry_touched_at"] = bucket.last_timestamp if bucket is not None else now
 
             if not triggered:
+                if trade.entry_touched_at is None and now - trade.timestamp >= timeout_window:
+                    payload["result"] = "timeout"
+                    payload["closed_at"] = bucket.last_timestamp if bucket is not None else now
+                    payload["close_reason"] = "Entry Never Touched"
                 await self.database.update_trade_signal(trade.id, payload)
                 continue
 

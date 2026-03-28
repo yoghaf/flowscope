@@ -128,6 +128,7 @@ class Settings(BaseSettings):
     max_symbols_per_stream: int = 80
     signal_emit_threshold: float = 0.02
     trade_evaluator_interval_seconds: int = 180
+    entry_touch_timeout_buckets: int = 2
     auto_filter_negative_expectancy: bool = False
     expectancy_boost_factor: float = 0.15
     signal_decay_per_bucket: float = 0.08
