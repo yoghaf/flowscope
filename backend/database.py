@@ -264,6 +264,33 @@ class DatabaseManager:
             result = await session.execute(statement)
             return result.first() is not None
 
+    async def has_trade_signal_event(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        state: str,
+        setup_type: str,
+        bias: str,
+        timestamp: datetime,
+    ) -> bool:
+        if not self.enabled:
+            return False
+
+        statement = (
+            select(TradeSignal.id)
+            .where(TradeSignal.symbol == symbol)
+            .where(TradeSignal.timeframe == timeframe)
+            .where(TradeSignal.state == state)
+            .where(TradeSignal.setup_type == setup_type)
+            .where(TradeSignal.bias == bias)
+            .where(TradeSignal.timestamp == timestamp)
+            .limit(1)
+        )
+        async with self.session_factory() as session:
+            result = await session.execute(statement)
+            return result.first() is not None
+
     async def list_trade_signals(self, result_filter: str | None = None) -> list[TradeSignal]:
         if not self.enabled:
             return []

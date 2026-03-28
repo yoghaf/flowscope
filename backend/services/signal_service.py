@@ -2290,6 +2290,15 @@ class SignalService:
             bias=action.bias,
         ):
             return
+        if await self.database.has_trade_signal_event(
+            symbol=symbol,
+            timeframe=timeframe,
+            state=state.state,
+            setup_type=action.setup_type,
+            bias=action.bias,
+            timestamp=bucket.last_timestamp,
+        ):
+            return
 
         entry_price = (
             execution.entry_min
