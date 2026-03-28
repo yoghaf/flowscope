@@ -61,6 +61,12 @@ class DatabaseManager:
                 await connection.execute(
                     text(
                         "ALTER TABLE trade_signals "
+                        "ADD COLUMN IF NOT EXISTS entry_notification_sent_at TIMESTAMPTZ"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE trade_signals "
                         "ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ"
                     )
                 )

@@ -48,6 +48,7 @@ from backend.schemas import (
     TelegramTestResponse,
     VolumePoint,
 )
+from backend.models import TradeSignal
 from backend.services.performance_engine import PerformanceEngine
 from backend.services.trade_evaluator import TradeEvaluator
 from backend.services.market_universe import MarketUniverseService
@@ -2356,6 +2357,7 @@ class SignalService:
             "trailing_stop_price": execution.initial_stop,
             "tp1_hit": False,
             "entry_touched_at": bucket.last_timestamp,
+            "entry_notification_sent_at": None,
             "closed_at": None,
             "close_reason": None,
             "risk_level": execution.risk_level,
@@ -2370,6 +2372,7 @@ class SignalService:
         if trade_id:
             self.last_trade_signal_at[key] = bucket.last_timestamp
             self._dispatch_trade_entry_notification(
+                trade_id=trade_id,
                 symbol=symbol,
                 timeframe=timeframe,
                 bucket=bucket,
@@ -2571,6 +2574,7 @@ class SignalService:
     def _dispatch_trade_entry_notification(
         self,
         *,
+        trade_id: int | None,
         symbol: str,
         timeframe: str,
         bucket: TimeframeBucket,
@@ -2626,6 +2630,7 @@ class SignalService:
                 )
             self._spawn_background_task(
                 self._send_telegram_trade_entry_notification(
+                    trade_id=trade_id,
                     user_id=user_id,
                     preferences=preferences,
                     symbol=symbol,
@@ -2664,6 +2669,7 @@ class SignalService:
     async def _send_telegram_trade_entry_notification(
         self,
         *,
+        trade_id: int | None,
         user_id: str,
         preferences: AlertPreferences,
         symbol: str,
@@ -2690,12 +2696,106 @@ class SignalService:
                 result_message,
             )
             return
+        if trade_id is not None:
+            await self.database.update_trade_signal(
+                trade_id,
+                {
+                    "entry_notification_sent_at": datetime.now(UTC),
+                    "updated_at": datetime.now(UTC),
+                },
+            )
         logger.info(
             "Telegram trade-entry sent user=%s symbol=%s timeframe=%s",
             user_id,
             symbol,
             timeframe,
         )
+
+    async def catch_up_trade_entry_notification(self, trade: TradeSignal) -> bool:
+        if trade.result != "open" or trade.entry_touched_at is None or trade.entry_notification_sent_at is not None:
+            return False
+
+        catchup_window = timedelta(minutes=max(self.settings.entry_notification_catchup_minutes, 1))
+        anchor_time = trade.entry_touched_at or trade.created_at
+        if datetime.now(UTC) - anchor_time > catchup_window:
+            return False
+
+        state = self.states_by_timeframe.get(trade.timeframe, {}).get(trade.symbol)
+        signal = self._infer_signal_type_from_trade(trade, state)
+        alert = self._build_trade_entry_alert_from_trade(trade=trade, signal=signal, score=state.score if state is not None else trade.confidence)
+        bucket = self.aggregate_store.latest_bucket(trade.symbol, trade.timeframe, closed_only=False)
+
+        queued = False
+        for user_id, preferences in self.user_preferences.items():
+            block_reason = self._trade_entry_delivery_block_reason(
+                symbol=trade.symbol,
+                timeframe=trade.timeframe,
+                signal=signal,
+                preferences=preferences,
+            )
+            if block_reason is not None:
+                if user_id != DEFAULT_USER_ID:
+                    logger.info(
+                        "Trade-entry catch-up skipped user=%s trade_id=%s symbol=%s timeframe=%s signal=%s reason=%s",
+                        user_id,
+                        trade.id,
+                        trade.symbol,
+                        trade.timeframe,
+                        signal,
+                        block_reason,
+                    )
+                continue
+
+            telegram_block_reason = self._trade_entry_telegram_block_reason(preferences)
+            if telegram_block_reason is not None:
+                if user_id != DEFAULT_USER_ID:
+                    logger.info(
+                        "Trade-entry catch-up Telegram skipped user=%s trade_id=%s symbol=%s timeframe=%s signal=%s reason=%s",
+                        user_id,
+                        trade.id,
+                        trade.symbol,
+                        trade.timeframe,
+                        signal,
+                        telegram_block_reason,
+                    )
+                continue
+
+            if bucket is None:
+                if user_id != DEFAULT_USER_ID:
+                    logger.info(
+                        "Trade-entry catch-up skipped user=%s trade_id=%s symbol=%s timeframe=%s signal=%s reason=no_live_bucket",
+                        user_id,
+                        trade.id,
+                        trade.symbol,
+                        trade.timeframe,
+                        signal,
+                    )
+                continue
+
+            queued = True
+            self.user_alerts[user_id].appendleft(alert)
+            if user_id != DEFAULT_USER_ID:
+                logger.info(
+                    "Trade-entry catch-up queued user=%s trade_id=%s symbol=%s timeframe=%s signal=%s",
+                    user_id,
+                    trade.id,
+                    trade.symbol,
+                    trade.timeframe,
+                    signal,
+                )
+            self._spawn_background_task(
+                self._send_telegram_trade_entry_notification(
+                    trade_id=trade.id,
+                    user_id=user_id,
+                    preferences=preferences,
+                    symbol=trade.symbol,
+                    timeframe=trade.timeframe,
+                    bucket=bucket,
+                    state=self._state_for_trade_notification(trade, signal, state),
+                )
+            )
+
+        return queued
 
     @staticmethod
     def _build_trade_entry_alert(
@@ -2713,6 +2813,99 @@ class SignalService:
             snapshot_id=snapshot_id,
             signal=state.signal,
             score=state.score,
+        )
+
+    @staticmethod
+    def _build_trade_entry_alert_from_trade(
+        *,
+        trade: TradeSignal,
+        signal: SignalType,
+        score: float,
+    ) -> AlertEntry:
+        snapshot_id = f"{trade.symbol.removesuffix('USDT')}_{trade.timeframe.upper()}_{int(trade.timestamp.timestamp())}"
+        return AlertEntry(
+            timestamp=trade.entry_touched_at or trade.created_at,
+            symbol=trade.symbol,
+            timeframe=trade.timeframe,
+            snapshot_id=snapshot_id,
+            signal=signal,
+            score=max(0.0, min(score, 1.0)),
+        )
+
+    @staticmethod
+    def _infer_signal_type_from_trade(trade: TradeSignal, state: AssetState | None) -> SignalType:
+        if state is not None and state.signal != "Neutral":
+            return state.signal
+
+        setup_name = (trade.setup_type or "").lower()
+        state_name = (trade.state or "").lower()
+        if "squeeze" in setup_name or "pre-squeeze" in state_name:
+            return "Long Squeeze" if trade.bias == "Bullish" else "Short Squeeze"
+        return "Breakout Watch"
+
+    def _state_for_trade_notification(
+        self,
+        trade: TradeSignal,
+        signal: SignalType,
+        state: AssetState | None,
+    ) -> AssetState:
+        if state is not None:
+            return state
+
+        return AssetState(
+            symbol=trade.symbol,
+            name=self.universe_service.get_name(trade.symbol),
+            timestamp=trade.entry_touched_at or trade.created_at,
+            price=trade.entry_price,
+            spot_volume=None,
+            futures_volume=None,
+            volume=None,
+            open_interest=None,
+            funding_rate=None,
+            long_short_ratio=None,
+            taker_buy_sell_ratio=None,
+            long_liquidations=None,
+            short_liquidations=None,
+            flow_metrics=FlowMetrics(),
+            score=max(0.0, min(trade.confidence, 1.0)),
+            signal=signal,
+            signal_status="VALID_SIGNAL",
+            data_status="VALID",
+            breakdown=ScoreBreakdown().model_dump(),
+            market_state=trade.state,
+            state_confidence=max(0.0, min(trade.confidence, 1.0)),
+            state_probabilities={"Neutral": 1.0},
+            position_intent="None",
+            oi_intensity="Low",
+            position_quality="Neutral",
+            decision_type="No-Trade",
+            reliability_score=max(0.0, min(trade.confidence, 1.0)),
+            priority_multiplier=1.0,
+            action_bias=trade.bias,
+            action_status=trade.status,
+            action_confidence_label="Medium",
+            action_opportunity_score=max(0.0, min(trade.confidence, 1.0)),
+            setup_type=trade.setup_type,
+            tf_conflict=False,
+            exchange_count=0,
+            phase="Unknown",
+            phase_score=0.0,
+            phase_confidence=0.0,
+            debug_trace={},
+            market_interpretation={},
+            execution=ExecutionPlan(
+                entry_type=trade.setup_type,
+                entry_min=trade.entry_price,
+                entry_max=trade.entry_price,
+                invalidation=trade.invalidation_price,
+                target=trade.target_price_2 or trade.target_price_1 or trade.target_price,
+                target_1=trade.target_price_1,
+                target_2=trade.target_price_2,
+                initial_stop=trade.trailing_stop_price,
+                risk_level=trade.risk_level,
+                quality_score=trade.quality_score,
+                breakout_valid=True,
+            ),
         )
 
     def _build_test_telegram_message(self, user_id: str) -> str:

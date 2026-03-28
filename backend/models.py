@@ -153,6 +153,7 @@ class TradeSignal(Base):
     trailing_stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     tp1_hit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     entry_touched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    entry_notification_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     close_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     risk_level: Mapped[str] = mapped_column(String(12), nullable=False)

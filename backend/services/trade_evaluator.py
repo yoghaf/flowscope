@@ -114,3 +114,15 @@ class TradeEvaluator:
                 payload["closed_at"] = bucket.last_timestamp if bucket is not None else now
 
             await self.database.update_trade_signal(trade.id, payload)
+
+            updated_result = payload.get("result", trade.result)
+            updated_entry_touched_at = payload.get("entry_touched_at", trade.entry_touched_at)
+            if (
+                updated_result == "open"
+                and updated_entry_touched_at is not None
+                and getattr(trade, "entry_notification_sent_at", None) is None
+                and hasattr(self.signal_service, "catch_up_trade_entry_notification")
+            ):
+                trade.result = "open"
+                trade.entry_touched_at = updated_entry_touched_at
+                await self.signal_service.catch_up_trade_entry_notification(trade)
