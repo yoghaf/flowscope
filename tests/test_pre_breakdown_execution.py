@@ -262,6 +262,72 @@ def test_breakdown_trigger_requires_enter_plus_valid_break() -> None:
     assert execution.breakout_valid is True
 
 
+def test_enter_action_stays_ready_when_breakout_level_has_not_been_touched() -> None:
+    execution_engine = ExecutionEngine()
+    bucket = make_bucket(
+        11,
+        open_price=14.00,
+        high_price=14.30,
+        low_price=13.80,
+        close_price=14.10,
+        oi_open=1000.0,
+        oi_close=1060.0,
+    )
+    metrics = make_metrics(
+        price_change_15m=0.018,
+        oi_change_15m=0.04,
+        oi_delta_z_15m=1.3,
+        volume_z_15m=1.5,
+        market_pressure_15m=0.35,
+        recent_high_15m=16.49,
+        recent_low_15m=12.15,
+        range_mid_15m=14.32,
+    )
+    interpretation = manual_interpretation(
+        trend="Bullish",
+        control="Buyer Dominant",
+        state="Trend continuation",
+        action="ENTER",
+        clarity_confidence=0.84,
+    )
+    positioning = PositioningAssessment(
+        intent="Long Build-up",
+        oi_intensity="Mid",
+        position_quality="Building Longs",
+        decision="Continuation-Long",
+        reliability_score=0.8,
+        priority_multiplier=0.8,
+        debug_trace={},
+    )
+    state = make_state(state_name="Expansion")
+
+    action = execution_engine.build_action(
+        positioning=positioning,
+        state=state,
+        metrics=metrics,
+        timeframe="15m",
+        bucket=bucket,
+        profile=TIMEFRAME_PROFILES["15m"],
+        market_interpretation=interpretation,
+    )
+
+    assert action is not None
+    assert action.bias == "Bullish"
+    assert action.status == "Ready"
+
+    execution = execution_engine.build_execution(
+        action=action,
+        bucket=bucket,
+        metrics=metrics,
+        timeframe="15m",
+        profile=TIMEFRAME_PROFILES["15m"],
+        confidence=interpretation.clarity_confidence,
+    )
+
+    assert execution is not None
+    assert execution.entry_min == 16.49
+
+
 def test_execution_plan_is_removed_when_price_is_already_beyond_invalidation() -> None:
     execution_engine = ExecutionEngine()
     bucket = make_bucket(

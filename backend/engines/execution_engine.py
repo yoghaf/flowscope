@@ -38,6 +38,27 @@ class ExecutionEngine:
     def __init__(self) -> None:
         self.settings = get_settings()
 
+    @staticmethod
+    def _breakout_entry(
+        direction: int,
+        bucket: TimeframeBucket,
+        recent_high: float,
+        recent_low: float,
+    ) -> float:
+        if direction > 0:
+            return max(bucket.high_price, recent_high)
+        if direction < 0:
+            return min(bucket.low_price, recent_low if recent_low > 0 else bucket.low_price)
+        return bucket.close_price
+
+    @staticmethod
+    def _entry_touched(direction: int, bucket: TimeframeBucket, entry: float) -> bool:
+        if direction > 0:
+            return bucket.high_price >= entry
+        if direction < 0:
+            return bucket.low_price <= entry
+        return False
+
     def _get_volatility_regime(self, atr: float, price: float) -> str:
         atr_percent = atr / price if price > 0 else 0.0
         if atr_percent >= self.settings.high_vol_threshold:
@@ -109,13 +130,8 @@ class ExecutionEngine:
         oi_change = getattr(metrics, f"oi_change_{timeframe}", 0.0)
         recent_high = getattr(metrics, f"recent_high_{timeframe}", bucket.high_price)
         recent_low = getattr(metrics, f"recent_low_{timeframe}", bucket.low_price)
-        breakout_entry = (
-            max(bucket.high_price, recent_high)
-            if direction > 0
-            else min(bucket.low_price, recent_low if recent_low > 0 else bucket.low_price)
-            if direction < 0
-            else bucket.close_price
-        )
+        breakout_entry = self._breakout_entry(direction, bucket, recent_high, recent_low)
+        breakout_touched = self._entry_touched(direction, bucket, breakout_entry)
         current_price = max(bucket.close_price, 1e-9)
         breakout_distance = abs(breakout_entry - current_price) / current_price
         breakout_valid = (
@@ -142,7 +158,7 @@ class ExecutionEngine:
         if market_interpretation.action == "NO TRADE":
             return None
         if market_interpretation.action == "ENTER":
-            status: SetupStatus = "Triggered" if breakout_valid and bias != "Neutral" else "Ready"
+            status: SetupStatus = "Triggered" if breakout_valid and breakout_touched and bias != "Neutral" else "Ready"
         elif "Pre-Breakdown" in market_interpretation.state and bias != "Neutral":
             status = "Ready"
         elif breakout_valid and breakout_distance <= trigger_distance_limit and confidence >= 0.72 and bias != "Neutral":
@@ -219,7 +235,9 @@ class ExecutionEngine:
             and abs(oi_delta_z) >= 0.6
             and oi_change * direction > 0
         )
-        breakout_distance = abs(((max(bucket.high_price, recent_high) if direction > 0 else min(bucket.low_price, recent_low if recent_low > 0 else bucket.low_price)) - current_price)) / max(current_price, 1e-9)
+        breakout_entry = self._breakout_entry(direction, bucket, recent_high, recent_low)
+        breakout_touched = self._entry_touched(direction, bucket, breakout_entry)
+        breakout_distance = abs((breakout_entry - current_price)) / max(current_price, 1e-9)
         pullback_mode = action.setup_type == "Continuation" and action.status == "Ready" and (not breakout_valid or breakout_distance > max(float(profile["price_break"]), 0.02))
 
         if pullback_mode:
@@ -247,7 +265,7 @@ class ExecutionEngine:
         if (direction == 1 and current_price <= invalidation) or (direction == -1 and current_price >= invalidation):
             return None
 
-        if action.status == "Triggered" and not breakout_valid:
+        if action.status == "Triggered" and (not breakout_valid or not breakout_touched):
             return None
 
         if action.setup_type == "Trap":

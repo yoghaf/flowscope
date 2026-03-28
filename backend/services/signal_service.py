@@ -2294,6 +2294,15 @@ class SignalService:
             if execution.entry_max is None
             else (execution.entry_min + execution.entry_max) / 2
         )
+        entry_touched = (
+            bucket.high_price >= entry_price
+            if action.bias == "Bullish"
+            else bucket.low_price <= entry_price
+            if action.bias == "Bearish"
+            else False
+        )
+        if not entry_touched:
+            return
         reference_price = max(bucket.close_price, 1e-9)
         if not self._execution_levels_sane(
             reference_price=reference_price,
