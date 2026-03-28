@@ -160,7 +160,7 @@ class SignalService:
         )
         self.user_preferences: dict[str, AlertPreferences] = {}
         self.user_initialized: set[str] = set()
-        self.last_alert_at: dict[tuple[str, str], datetime] = {}
+        self.last_alert_at: dict[tuple[str, str, str], datetime] = {}
         self.last_trade_signal_at: dict[tuple[str, str, str], datetime] = {}
         self.setup_expectancy: dict[str, float] = {}
         self.condition_expectancy: dict[tuple[str, str, str], float] = {}
@@ -480,7 +480,7 @@ class SignalService:
         self,
         user_id: str,
         symbol: str,
-        timeframe: str,
+        timeframes: list[str],
         snapshot_id: str,
         signal_type: str | None,
         limit: int,
@@ -493,7 +493,9 @@ class SignalService:
         async with self._lock:
             alerts = list(self.user_alerts.get(user_id, deque()))
 
-        alerts = [alert for alert in alerts if alert.timeframe == timeframe]
+        timeframe_filter = {item for item in timeframes if item in TIMEFRAME_ORDER}
+        if timeframe_filter:
+            alerts = [alert for alert in alerts if alert.timeframe in timeframe_filter]
         if symbol_filter and symbol_filter != "ALL":
             alerts = [alert for alert in alerts if alert.symbol == symbol_filter]
         if snapshot_id != "latest":
@@ -1180,34 +1182,22 @@ class SignalService:
         if not updated_states and not any(combined_states.values()):
             return None
 
-        state = self.state.get(symbol)
-        if state is None:
-            return None
+        emitted_alert: AlertEntry | None = None
+        if persist_alerts:
+            for timeframe in TIMEFRAME_ORDER:
+                current_state = updated_states.get(timeframe)
+                previous_timeframe_state = self.states_by_timeframe.get(timeframe, {}).get(symbol)
+                if current_state is None:
+                    continue
+                alert = self._build_timeframe_alert(timeframe, previous_timeframe_state, current_state)
+                if alert is None:
+                    continue
+                self.alerts.appendleft(alert)
+                self._dispatch_alert(alert, state=current_state)
+                await self.database.save_signal(alert, current_state.breakdown)
+                emitted_alert = alert
 
-        emit = False
-        if previous is None:
-            emit = state.signal != "Neutral"
-        else:
-            score_changed = abs(previous.score - state.score) >= self.settings.signal_emit_threshold
-            signal_changed = previous.signal != state.signal
-            emit = signal_changed or (score_changed and state.signal != "Neutral")
-
-        if emit and persist_alerts:
-            snapshot = self._to_asset_snapshot(state, "1h")
-            alert = AlertEntry(
-                timestamp=state.timestamp,
-                symbol=state.symbol,
-                timeframe="1h",
-                snapshot_id=snapshot.snapshot_id,
-                signal=state.signal,
-                score=state.score,
-            )
-            self.alerts.appendleft(alert)
-            self._dispatch_alert(alert, state=state)
-            await self.database.save_signal(alert, state.breakdown)
-            return alert
-
-        return None
+        return emitted_alert
 
     def _sync_positioning_features(
         self,
@@ -2400,6 +2390,7 @@ class SignalService:
         if record:
             preferences = AlertPreferences(
                 user_id=record.user_id,
+                timeframes=[tf for tf in (record.timeframes or []) if tf in TIMEFRAME_ORDER],
                 signal_types=record.signal_types or list(DEFAULT_SIGNAL_TYPES),
                 watchlist=record.watchlist or [],
                 min_score=record.min_score,
@@ -2427,6 +2418,8 @@ class SignalService:
 
         if update.signal_types is not None:
             preferences.signal_types = list(update.signal_types)
+        if update.timeframes is not None:
+            preferences.timeframes = [tf for tf in update.timeframes if tf in TIMEFRAME_ORDER]
         if update.watchlist is not None:
             preferences.watchlist = self._normalize_watchlist(update.watchlist)
         if update.min_score is not None:
@@ -2494,14 +2487,14 @@ class SignalService:
             for alert in reversed(alerts):
                 if self._should_deliver_alert(user_id, alert, preferences):
                     self.user_alerts[user_id].appendleft(alert)
-                    self.last_alert_at[(user_id, alert.symbol)] = alert.timestamp
+                    self.last_alert_at[(user_id, alert.symbol, alert.timeframe)] = alert.timestamp
 
     def _dispatch_alert(self, alert: AlertEntry, state: AssetState | None = None) -> None:
         for user_id, preferences in self.user_preferences.items():
             if not self._should_deliver_alert(user_id, alert, preferences):
                 continue
             self.user_alerts[user_id].appendleft(alert)
-            self.last_alert_at[(user_id, alert.symbol)] = alert.timestamp
+            self.last_alert_at[(user_id, alert.symbol, alert.timeframe)] = alert.timestamp
             if (
                 preferences.telegram_enabled
                 and preferences.telegram_chat_id
@@ -2611,6 +2604,8 @@ class SignalService:
     ) -> bool:
         if not preferences.enabled:
             return False
+        if preferences.timeframes and alert.timeframe not in preferences.timeframes:
+            return False
         if preferences.signal_types and alert.signal not in preferences.signal_types:
             return False
         if preferences.watchlist and alert.symbol not in preferences.watchlist:
@@ -2618,7 +2613,7 @@ class SignalService:
         if alert.score < preferences.min_score:
             return False
         if preferences.debounce_minutes > 0:
-            last = self.last_alert_at.get((user_id, alert.symbol))
+            last = self.last_alert_at.get((user_id, alert.symbol, alert.timeframe))
             if last:
                 delta = (alert.timestamp - last).total_seconds()
                 if delta < preferences.debounce_minutes * 60:
@@ -2646,6 +2641,7 @@ class SignalService:
     def _default_preferences(user_id: str) -> AlertPreferences:
         return AlertPreferences(
             user_id=user_id,
+            timeframes=[],
             signal_types=list(DEFAULT_SIGNAL_TYPES),
             watchlist=[],
             min_score=0.0,
@@ -2655,6 +2651,52 @@ class SignalService:
             telegram_chat_id=None,
             telegram_configured=False,
             updated_at=None,
+        )
+
+    @staticmethod
+    def _preferences_payload(preferences: AlertPreferences) -> dict[str, object]:
+        return {
+            "user_id": preferences.user_id,
+            "timeframes": list(preferences.timeframes),
+            "signal_types": list(preferences.signal_types),
+            "watchlist": list(preferences.watchlist),
+            "min_score": preferences.min_score,
+            "debounce_minutes": preferences.debounce_minutes,
+            "enabled": preferences.enabled,
+            "telegram_enabled": preferences.telegram_enabled,
+            "telegram_chat_id": preferences.telegram_chat_id,
+            "updated_at": preferences.updated_at or datetime.now(UTC),
+        }
+
+    def _build_timeframe_alert(
+        self,
+        timeframe: str,
+        previous_state: AssetState | None,
+        current_state: AssetState,
+    ) -> AlertEntry | None:
+        if current_state.signal_status != "VALID_SIGNAL" or current_state.signal == "Neutral":
+            return None
+
+        emit = False
+        if previous_state is None or previous_state.signal_status == "NO_DATA":
+            emit = True
+        else:
+            score_changed = abs(previous_state.score - current_state.score) >= self.settings.signal_emit_threshold
+            signal_changed = previous_state.signal != current_state.signal
+            status_changed = previous_state.action_status != current_state.action_status and current_state.action_status in {"Ready", "Triggered"}
+            emit = signal_changed or status_changed or (score_changed and current_state.signal != "Neutral")
+
+        if not emit:
+            return None
+
+        snapshot = self._to_asset_snapshot(current_state, timeframe)
+        return AlertEntry(
+            timestamp=current_state.timestamp,
+            symbol=current_state.symbol,
+            timeframe=timeframe,
+            snapshot_id=snapshot.snapshot_id,
+            signal=current_state.signal,
+            score=current_state.score,
         )
 
     @staticmethod
@@ -3057,6 +3099,7 @@ class SignalService:
     def _preferences_payload(preferences: AlertPreferences) -> dict[str, object]:
         return {
             "user_id": preferences.user_id,
+            "timeframes": list(preferences.timeframes),
             "signal_types": preferences.signal_types,
             "watchlist": preferences.watchlist,
             "min_score": preferences.min_score,

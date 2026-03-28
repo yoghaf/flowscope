@@ -116,6 +116,7 @@ class AlertPreference(Base):
     __tablename__ = "alert_preferences"
 
     user_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    timeframes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     signal_types: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     watchlist: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     min_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)

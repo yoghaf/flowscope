@@ -346,6 +346,7 @@ export interface AlertsResponse {
 
 export interface AlertPreferences {
   user_id: string;
+  timeframes: Timeframe[];
   signal_types: SignalType[];
   watchlist: string[];
   min_score: number;
@@ -358,6 +359,7 @@ export interface AlertPreferences {
 }
 
 export interface AlertPreferencesUpdate {
+  timeframes?: Timeframe[];
   signal_types?: SignalType[];
   watchlist?: string[];
   min_score?: number;

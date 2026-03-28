@@ -147,14 +147,16 @@ export const api = {
   },
   getAlerts(query: {
     symbol: string;
-    timeframe: Timeframe;
+    timeframes?: Timeframe[];
     snapshotId: string;
     signalType?: string;
     limit?: number;
   }): Promise<AlertsResponse> {
+    const timeframeQuery = query.timeframes?.length === 1 ? query.timeframes[0] : "ALL";
     return fetchJson<AlertsResponse>("/alerts", {
       symbol: query.symbol,
-      timeframe: query.timeframe,
+      timeframe: timeframeQuery,
+      timeframes: query.timeframes?.length ? query.timeframes.join(",") : undefined,
       snapshot_id: query.snapshotId,
       signal_type: query?.signalType,
       limit: query?.limit,

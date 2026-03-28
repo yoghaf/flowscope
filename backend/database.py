@@ -37,6 +37,12 @@ class DatabaseManager:
                 await connection.execute(
                     text(
                         "ALTER TABLE alert_preferences "
+                        "ADD COLUMN IF NOT EXISTS timeframes JSON NOT NULL DEFAULT '[]'::json"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE alert_preferences "
                         "ADD COLUMN IF NOT EXISTS telegram_enabled BOOLEAN NOT NULL DEFAULT FALSE"
                     )
                 )
@@ -266,6 +272,7 @@ class DatabaseManager:
         upsert = statement.on_conflict_do_update(
             index_elements=["user_id"],
             set_={
+                "timeframes": excluded.timeframes,
                 "signal_types": excluded.signal_types,
                 "watchlist": excluded.watchlist,
                 "min_score": excluded.min_score,

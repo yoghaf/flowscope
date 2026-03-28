@@ -367,6 +367,7 @@ class AlertsResponse(BaseModel):
 
 class AlertPreferences(BaseModel):
     user_id: str
+    timeframes: list[Literal["15m", "1h", "4h", "24h"]] = Field(default_factory=list)
     signal_types: list[SignalType] = Field(default_factory=list)
     watchlist: list[str] = Field(default_factory=list)
     min_score: float = 0.0
@@ -379,6 +380,7 @@ class AlertPreferences(BaseModel):
 
 
 class AlertPreferencesUpdate(BaseModel):
+    timeframes: list[Literal["15m", "1h", "4h", "24h"]] | None = None
     signal_types: list[SignalType] | None = None
     watchlist: list[str] | None = None
     min_score: float | None = None
