@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Download, Filter } from "lucide-react";
+import { Bell, Check, ChevronDown, Download, Filter } from "lucide-react";
 
 import SignalBadge from "@/app/components/SignalBadge";
 import { api } from "@/lib/api";
@@ -11,8 +11,7 @@ import { formatDate, formatTime, scoreToPercent, shortSymbol } from "@/lib/forma
 import type { AlertPreferencesUpdate, SignalType, Timeframe } from "@/lib/types";
 import { getUserId } from "@/lib/user";
 
-const FILTER_OPTIONS: Array<{ value: SignalType | "All"; label: string }> = [
-  { value: "All", label: "All Signals" },
+const FILTER_OPTIONS: Array<{ value: SignalType; label: string }> = [
   { value: "Accumulation", label: "Accumulation" },
   { value: "Breakout Watch", label: "Breakout Watch" },
   { value: "Short Squeeze", label: "Short Squeeze" },
@@ -23,7 +22,9 @@ const FILTER_OPTIONS: Array<{ value: SignalType | "All"; label: string }> = [
 export default function AlertsPage() {
   const queryClient = useQueryClient();
   const userId = getUserId();
-  const [signalFilter, setSignalFilter] = useState<SignalType | "All">("All");
+  const signalMenuRef = useRef<HTMLDivElement | null>(null);
+  const [signalFilters, setSignalFilters] = useState<SignalType[]>([]);
+  const [signalMenuOpen, setSignalMenuOpen] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [watchlistInput, setWatchlistInput] = useState("");
   const [minScore, setMinScore] = useState(0);
@@ -38,14 +39,13 @@ export default function AlertsPage() {
   const [timeframe, setTimeframe] = useState<Timeframe>("1h");
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["alerts", userId, timeframe, signalFilter],
+    queryKey: ["alerts", userId, timeframe],
     queryFn: () =>
       api.getAlerts({
         symbol: "ALL",
         timeframe,
         snapshotId: "latest",
         limit: 200,
-        signalType: signalFilter === "All" ? undefined : signalFilter,
       }),
   });
 
@@ -67,12 +67,45 @@ export default function AlertsPage() {
     setTelegramChatId(preferences.telegram_chat_id ?? "");
   }, [preferences]);
 
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (signalMenuRef.current && !signalMenuRef.current.contains(event.target as Node)) {
+        setSignalMenuOpen(false);
+      }
+    }
+
+    if (signalMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [signalMenuOpen]);
+
   const filteredAlerts = useMemo(() => {
     if (!data) {
       return [];
     }
-    return data.items.filter((alert) => signalFilter === "All" || alert.signal === signalFilter);
-  }, [data, signalFilter]);
+    if (signalFilters.length === 0) {
+      return data.items;
+    }
+    const selected = new Set(signalFilters);
+    return data.items.filter((alert) => selected.has(alert.signal));
+  }, [data, signalFilters]);
+
+  const signalFilterLabel = useMemo(() => {
+    if (signalFilters.length === 0 || signalFilters.length === FILTER_OPTIONS.length) {
+      return "All Signals";
+    }
+    if (signalFilters.length === 1) {
+      return signalFilters[0];
+    }
+    if (signalFilters.length === 2) {
+      return signalFilters.join(", ");
+    }
+    return `${signalFilters.length} signals selected`;
+  }, [signalFilters]);
 
   const toggleSignalType = (signal: SignalType) => {
     setEnabledTypes((current) => {
@@ -81,6 +114,19 @@ export default function AlertsPage() {
       }
       return [...current, signal];
     });
+  };
+
+  const toggleSignalFilter = (signal: SignalType) => {
+    setSignalFilters((current) => {
+      if (current.includes(signal)) {
+        return current.filter((item) => item !== signal);
+      }
+      return [...current, signal];
+    });
+  };
+
+  const clearSignalFilters = () => {
+    setSignalFilters([]);
   };
 
   const handleSavePreferences = async () => {
@@ -192,18 +238,52 @@ export default function AlertsPage() {
 
             <div className="flex items-center gap-3">
               <label className="text-sm font-medium text-muted-foreground">Signal:</label>
-              <select
-                value={signalFilter}
-                onChange={(event) => setSignalFilter(event.target.value as SignalType | "All")}
-                className="rounded-xl border border-white/10 bg-[#0B0F14] px-4 py-2 font-medium text-foreground transition-all focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/50"
-                style={{ colorScheme: "dark" }}
-              >
-                {FILTER_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value} className="bg-[#0B0F14] text-foreground">
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              <div ref={signalMenuRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setSignalMenuOpen((current) => !current)}
+                  className="flex min-w-[190px] items-center justify-between rounded-xl border border-white/10 bg-[#0B0F14] px-4 py-2 font-medium text-foreground transition-all hover:border-primary/40 focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <span className="truncate pr-3">{signalFilterLabel}</span>
+                  <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${signalMenuOpen ? "rotate-180" : ""}`} />
+                </button>
+                {signalMenuOpen ? (
+                  <div className="absolute z-20 mt-2 w-[280px] rounded-2xl border border-white/10 bg-[#0B0F14] p-3 shadow-2xl shadow-black/40">
+                    <div className="mb-3 flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Signal Filter</span>
+                      <button
+                        type="button"
+                        onClick={clearSignalFilters}
+                        className="text-xs font-semibold text-primary transition hover:text-primary/80"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {FILTER_OPTIONS.map((option) => {
+                        const active = signalFilters.includes(option.value);
+                        return (
+                          <label
+                            key={option.value}
+                            className="flex cursor-pointer items-center justify-between rounded-xl border border-white/5 bg-white/5 px-3 py-2 text-sm text-foreground transition hover:border-primary/30 hover:bg-white/10"
+                          >
+                            <div className="flex items-center gap-3">
+                              <input
+                                type="checkbox"
+                                checked={active}
+                                onChange={() => toggleSignalFilter(option.value)}
+                                className="h-4 w-4 rounded border-white/20 bg-transparent text-primary focus:ring-primary/50"
+                              />
+                              <span>{option.label}</span>
+                            </div>
+                            {active ? <Check className="h-4 w-4 text-primary" /> : null}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
 
@@ -330,12 +410,12 @@ export default function AlertsPage() {
 
         <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2">
-            {FILTER_OPTIONS.filter((option) => option.value !== "All").map((option) => {
-              const active = enabledTypes.includes(option.value as SignalType);
+            {FILTER_OPTIONS.map((option) => {
+              const active = enabledTypes.includes(option.value);
               return (
                 <button
                   key={option.value}
-                  onClick={() => toggleSignalType(option.value as SignalType)}
+                  onClick={() => toggleSignalType(option.value)}
                   className={`rounded-full border px-3 py-1 text-xs font-semibold transition-all ${
                     active
                       ? "border-primary/40 bg-primary/10 text-primary"
