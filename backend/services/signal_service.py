@@ -568,29 +568,33 @@ class SignalService:
 
     async def _handle_stream_tick(self, snapshot: ExchangeSnapshot) -> None:
         alert: AlertEntry | None = None
-        async with self._lock:
-            current_history = self.history.get(snapshot.symbol)
-            if not current_history:
-                return
-            current = current_history[-1]
-            updated_futures_volume = max(snapshot.futures_volume, current.futures_volume)
-            point = HistoryPoint(
-                timestamp=snapshot.timestamp,
-                price=snapshot.price or current.price,
-                volume=current.spot_volume + updated_futures_volume,
-                open_interest=current.open_interest,
-                funding_rate=current.funding_rate,
-                long_short_ratio=current.long_short_ratio,
-                taker_buy_sell_ratio=current.taker_buy_sell_ratio,
-                spot_volume=current.spot_volume,
-                futures_volume=updated_futures_volume,
-                long_liquidations=current.long_liquidations,
-                short_liquidations=current.short_liquidations,
-                exchange_count=current.exchange_count,
-            )
-            self.history[snapshot.symbol].append(point)
-            self.aggregate_store.ingest(snapshot.symbol, point)
-            alert = await self._update_state(snapshot.symbol)
+        try:
+            async with self._lock:
+                current_history = self.history.get(snapshot.symbol)
+                if not current_history:
+                    return
+                current = current_history[-1]
+                updated_futures_volume = max(snapshot.futures_volume, current.futures_volume)
+                point = HistoryPoint(
+                    timestamp=snapshot.timestamp,
+                    price=snapshot.price or current.price,
+                    volume=current.spot_volume + updated_futures_volume,
+                    open_interest=current.open_interest,
+                    funding_rate=current.funding_rate,
+                    long_short_ratio=current.long_short_ratio,
+                    taker_buy_sell_ratio=current.taker_buy_sell_ratio,
+                    spot_volume=current.spot_volume,
+                    futures_volume=updated_futures_volume,
+                    long_liquidations=current.long_liquidations,
+                    short_liquidations=current.short_liquidations,
+                    exchange_count=current.exchange_count,
+                )
+                self.history[snapshot.symbol].append(point)
+                self.aggregate_store.ingest(snapshot.symbol, point)
+                alert = await self._update_state(snapshot.symbol)
+        except Exception:
+            logger.exception("Stream tick update failed symbol=%s", snapshot.symbol)
+            return
 
         await self.realtime_hub.broadcast(
             RealtimeEvent(
@@ -660,13 +664,16 @@ class SignalService:
         signal_events: list[AlertEntry] = []
         async with self._lock:
             for symbol, point in aggregated.items():
-                point = self._coalesce_snapshot_point(symbol, point)
-                self.history[symbol].append(point)
-                self.aggregate_store.ingest(symbol, point)
-                alert = await self._update_state(symbol)
-                changed_symbols.append(symbol)
-                if alert:
-                    signal_events.append(alert)
+                try:
+                    point = self._coalesce_snapshot_point(symbol, point)
+                    self.history[symbol].append(point)
+                    self.aggregate_store.ingest(symbol, point)
+                    alert = await self._update_state(symbol)
+                    changed_symbols.append(symbol)
+                    if alert:
+                        signal_events.append(alert)
+                except Exception:
+                    logger.exception("Snapshot update failed symbol=%s", symbol)
             for symbol in missing_symbols:
                 self._mark_symbol_no_data(symbol, reason="missing_snapshot_cycle_data", now=datetime.now(UTC))
                 changed_symbols.append(symbol)
