@@ -183,6 +183,7 @@ export default function PerformancePage() {
   const [capitalPerTrade, setCapitalPerTrade] = useState("100");
   const [isDownloading, setIsDownloading] = useState(false);
   const [tableFilters, setTableFilters] = useState<TableFilters>(INITIAL_FILTERS);
+  const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
 
   const parsedCapital = useMemo(() => {
     const value = Number(capitalPerTrade);
@@ -553,7 +554,9 @@ export default function PerformancePage() {
             <table className="min-w-[2700px] w-full border-collapse">
               <thead className="bg-primary/10">
                 <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground">
-                  <th className="px-4 py-3">Symbol</th>
+                  <th className="sticky left-0 z-20 min-w-[140px] bg-primary/10 px-4 py-3 shadow-[inset_-1px_0_0_rgba(255,255,255,0.06)]">
+                    Symbol
+                  </th>
                   <th className="px-4 py-3">TF</th>
                   <th className="px-4 py-3">Setup</th>
                   <th className="px-4 py-3">State</th>
@@ -592,9 +595,40 @@ export default function PerformancePage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredRows.map((row: PerformanceTradeRow) => (
-                    <tr key={`${row.trade_id}-${row.created_at}`} className="border-t border-white/5 text-sm text-foreground">
-                      <td className="px-4 py-3 font-semibold">{row.symbol}</td>
+                  filteredRows.map((row: PerformanceTradeRow) => {
+                    const rowKey = `${row.trade_id}-${row.created_at}`;
+                    const isSelected = selectedRowKey === rowKey;
+
+                    return (
+                    <tr
+                      key={rowKey}
+                      tabIndex={0}
+                      aria-selected={isSelected}
+                      onClick={() => setSelectedRowKey((current) => (current === rowKey ? null : rowKey))}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelectedRowKey((current) => (current === rowKey ? null : rowKey));
+                        }
+                      }}
+                      className={`group border-t border-white/5 text-sm text-foreground transition-colors focus:outline-none ${
+                        isSelected ? "bg-primary/[0.08]" : "hover:bg-white/[0.03]"
+                      }`}
+                    >
+                      <td
+                        className={`sticky left-0 z-10 min-w-[140px] px-4 py-3 font-semibold shadow-[inset_-1px_0_0_rgba(255,255,255,0.06)] transition-colors ${
+                          isSelected ? "bg-primary/[0.16]" : "bg-card/95 group-hover:bg-white/[0.06]"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span>{row.symbol}</span>
+                          {isSelected ? (
+                            <span className="rounded-full border border-primary/40 bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                              Active
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
                       <td className="px-4 py-3">{row.timeframe}</td>
                       <td className="px-4 py-3">{row.setup_type}</td>
                       <td className="px-4 py-3">{row.state}</td>
@@ -624,7 +658,7 @@ export default function PerformancePage() {
                       <td className="px-4 py-3">{formatNumber(row.realized_r_multiple, 2)}</td>
                       <td className="px-4 py-3">{formatPercent(row.pnl_pct, 2)}</td>
                     </tr>
-                  ))
+                  )})
                 )}
               </tbody>
             </table>
