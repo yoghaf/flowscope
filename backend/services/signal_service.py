@@ -190,9 +190,9 @@ class SignalService:
 
         if self.settings.demo_mode:
             await self._seed_demo_data()
-            self.tasks.append(asyncio.create_task(self._demo_loop()))
-            self.tasks.append(asyncio.create_task(self._ping_loop()))
-            self.tasks.append(asyncio.create_task(self._trade_evaluator_loop()))
+            self._schedule_task(self._demo_loop(), "demo_loop")
+            self._schedule_task(self._ping_loop(), "ping_loop")
+            self._schedule_task(self._trade_evaluator_loop(), "trade_evaluator_loop")
         else:
             # Start Binance WS + rotary background (0 weight for price/funding)
             binance = self.collectors[0]
@@ -212,11 +212,11 @@ class SignalService:
                     (item.setup_type, item.regime, item.volatility): item.expectancy
                     for item in self.performance_snapshot.conditions
                 }
-            self.tasks.append(asyncio.create_task(self._snapshot_loop()))
-            self.tasks.append(asyncio.create_task(self._ping_loop()))
+            self._schedule_task(self._snapshot_loop(), "snapshot_loop")
+            self._schedule_task(self._ping_loop(), "ping_loop")
             if self.settings.realtime_price_stream_enabled:
-                self.tasks.append(asyncio.create_task(self._start_binance_stream()))
-            self.tasks.append(asyncio.create_task(self._trade_evaluator_loop()))
+                self._schedule_task(self._start_binance_stream(), "binance_stream_loop")
+            self._schedule_task(self._trade_evaluator_loop(), "trade_evaluator_loop")
 
     async def stop(self) -> None:
         self._running = False
@@ -520,13 +520,23 @@ class SignalService:
 
     async def _snapshot_loop(self) -> None:
         while self._running:
-            await self._snapshot_cycle()
+            try:
+                await self._snapshot_cycle()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Snapshot loop failed; retrying after cooldown.")
             await asyncio.sleep(self.settings.snapshot_interval_seconds)
 
     async def _ping_loop(self) -> None:
         while self._running:
-            await asyncio.sleep(self.settings.websocket_ping_interval)
-            await self.realtime_hub.ping()
+            try:
+                await asyncio.sleep(self.settings.websocket_ping_interval)
+                await self.realtime_hub.ping()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Realtime ping loop failed; continuing.")
 
     async def _trade_evaluator_loop(self) -> None:
         while self._running:
@@ -546,8 +556,15 @@ class SignalService:
             await asyncio.sleep(self.settings.trade_evaluator_interval_seconds)
 
     async def _start_binance_stream(self) -> None:
-        binance = self.collectors[0]
-        await binance.stream_prices(self.symbols, self._handle_stream_tick)
+        while self._running:
+            try:
+                binance = self.collectors[0]
+                await binance.stream_prices(self.symbols, self._handle_stream_tick)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Binance stream loop failed; reconnecting.")
+                await asyncio.sleep(5)
 
     async def _handle_stream_tick(self, snapshot: ExchangeSnapshot) -> None:
         alert: AlertEntry | None = None
@@ -2654,6 +2671,26 @@ class SignalService:
         task = asyncio.create_task(coro)
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)
+        task.add_done_callback(self._log_background_task_exception)
+
+    def _schedule_task(self, coro: Any, name: str) -> None:
+        task = asyncio.create_task(coro, name=name)
+        self.tasks.append(task)
+        task.add_done_callback(self._log_task_exception)
+
+    @staticmethod
+    def _log_task_exception(task: asyncio.Task[Any]) -> None:
+        with contextlib.suppress(asyncio.CancelledError):
+            exc = task.exception()
+            if exc is not None:
+                logger.exception("Service task crashed task=%s", task.get_name(), exc_info=exc)
+
+    @staticmethod
+    def _log_background_task_exception(task: asyncio.Task[Any]) -> None:
+        with contextlib.suppress(asyncio.CancelledError):
+            exc = task.exception()
+            if exc is not None:
+                logger.exception("Background task crashed task=%s", task.get_name(), exc_info=exc)
 
     async def _send_telegram_alert(
         self,
