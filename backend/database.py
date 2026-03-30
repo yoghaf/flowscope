@@ -61,6 +61,18 @@ class DatabaseManager:
                 await connection.execute(
                     text(
                         "ALTER TABLE trade_signals "
+                        "ADD COLUMN IF NOT EXISTS fill_count INTEGER NOT NULL DEFAULT 1"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE trade_signals "
+                        "ADD COLUMN IF NOT EXISTS last_scale_in_at TIMESTAMPTZ"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE trade_signals "
                         "ADD COLUMN IF NOT EXISTS entry_notification_sent_at TIMESTAMPTZ"
                     )
                 )
@@ -269,6 +281,27 @@ class DatabaseManager:
         async with self.session_factory() as session:
             result = await session.execute(statement)
             return result.first() is not None
+
+    async def get_open_trade_signal(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+    ) -> TradeSignal | None:
+        if not self.enabled:
+            return None
+
+        statement = (
+            select(TradeSignal)
+            .where(TradeSignal.symbol == symbol)
+            .where(TradeSignal.timeframe == timeframe)
+            .where(TradeSignal.result == "open")
+            .order_by(TradeSignal.created_at.desc(), TradeSignal.id.desc())
+            .limit(1)
+        )
+        async with self.session_factory() as session:
+            result = await session.execute(statement)
+            return result.scalar_one_or_none()
 
     async def has_trade_signal_event(
         self,

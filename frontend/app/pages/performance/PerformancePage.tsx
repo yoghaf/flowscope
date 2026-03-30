@@ -131,6 +131,18 @@ function formatEntryTouched(row: PerformanceTradeRow) {
   );
 }
 
+function formatLastScaleIn(row: PerformanceTradeRow) {
+  if (row.last_scale_in_at) {
+    return formatTimestampCell(row.last_scale_in_at);
+  }
+  return (
+    <div className="flex min-w-[120px] flex-col leading-tight">
+      <span>--</span>
+      <span className="text-xs text-muted-foreground">Single fill</span>
+    </div>
+  );
+}
+
 function normalizeFilterValue(value: string | number | null | undefined) {
   if (value === null || value === undefined) {
     return "";
@@ -551,7 +563,7 @@ export default function PerformancePage() {
           {isTableLoading ? (
             <div className="p-6 text-sm text-muted-foreground">Loading trade table...</div>
           ) : (
-            <table className="min-w-[2700px] w-full border-collapse">
+            <table className="min-w-[2860px] w-full border-collapse">
               <thead className="bg-primary/10">
                 <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground">
                   <th className="sticky left-0 z-20 min-w-[140px] bg-primary/10 px-4 py-3 shadow-[inset_-1px_0_0_rgba(255,255,255,0.06)]">
@@ -566,6 +578,8 @@ export default function PerformancePage() {
                   <th className="px-4 py-3">Signal Time</th>
                   <th className="px-4 py-3">Recorded</th>
                   <th className="px-4 py-3">Entry Touched</th>
+                  <th className="px-4 py-3">Fills</th>
+                  <th className="px-4 py-3">Last Add</th>
                   <th className="px-4 py-3">Closed / Updated</th>
                   <th className="px-4 py-3">Close Reason</th>
                   <th className="px-4 py-3">Entry</th>
@@ -590,7 +604,7 @@ export default function PerformancePage() {
               <tbody>
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={29} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    <td colSpan={31} className="px-4 py-8 text-center text-sm text-muted-foreground">
                       Tidak ada trade yang cocok dengan filter aktif.
                     </td>
                   </tr>
@@ -638,6 +652,8 @@ export default function PerformancePage() {
                       <td className="px-4 py-3">{formatTimestampCell(row.signal_timestamp)}</td>
                       <td className="px-4 py-3">{formatTimestampCell(row.created_at)}</td>
                       <td className="px-4 py-3">{formatEntryTouched(row)}</td>
+                      <td className="px-4 py-3">{row.fill_count}</td>
+                      <td className="px-4 py-3">{formatLastScaleIn(row)}</td>
                       <td className="px-4 py-3">{formatClosedTimestamp(row)}</td>
                       <td className="px-4 py-3">{row.close_reason ?? (row.result === "open" ? "Still open" : "--")}</td>
                       <td className="px-4 py-3">{formatNumber(row.entry_price, 4)}</td>

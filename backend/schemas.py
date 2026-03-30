@@ -501,6 +501,8 @@ class PerformanceTradeRow(BaseModel):
     signal_timestamp: str
     created_at: str
     entry_touched_at: str | None = None
+    fill_count: int = 1
+    last_scale_in_at: str | None = None
     closed_at: str | None = None
     close_reason: str | None = None
     updated_at: str

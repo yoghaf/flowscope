@@ -10,13 +10,18 @@ from backend.services.timeframe_aggregator import TimeframeBucket
 
 
 class FakeDatabase:
-    def __init__(self, *, has_duplicate: bool) -> None:
+    def __init__(self, *, has_duplicate: bool, open_trade: object | None = None) -> None:
         self.enabled = True
         self.has_duplicate = has_duplicate
+        self.open_trade = open_trade
         self.saved_payloads: list[dict[str, object]] = []
+        self.updated_payloads: list[tuple[int, dict[str, object]]] = []
 
     async def has_open_trade_signal(self, **_: object) -> bool:
         return False
+
+    async def get_open_trade_signal(self, **_: object) -> object | None:
+        return self.open_trade
 
     async def has_trade_signal_event(self, **_: object) -> bool:
         return self.has_duplicate
@@ -24,6 +29,9 @@ class FakeDatabase:
     async def save_trade_signal(self, payload: dict[str, object]) -> int | None:
         self.saved_payloads.append(payload)
         return 1
+
+    async def update_trade_signal(self, trade_id: int, payload: dict[str, object]) -> None:
+        self.updated_payloads.append((trade_id, payload))
 
 
 def make_bucket() -> TimeframeBucket:
@@ -102,5 +110,124 @@ def test_trade_signal_is_not_reopened_for_same_bucket_timestamp() -> None:
         )
 
         assert service.database.saved_payloads == []
+
+    asyncio.run(run())
+
+
+def test_same_symbol_open_trade_merges_into_net_position() -> None:
+    async def run() -> None:
+        existing_trade = SimpleNamespace(
+            id=7,
+            symbol="ARIAUSDT",
+            timeframe="4h",
+            bias="Bullish",
+            result="open",
+            tp1_hit=False,
+            entry_price=0.3200,
+            invalidation_price=0.3000,
+            confidence=0.6,
+            fill_count=1,
+        )
+
+        service = SignalService.__new__(SignalService)
+        service.database = FakeDatabase(has_duplicate=False, open_trade=existing_trade)
+        service.settings = Settings(demo_mode=False)
+        service.last_trade_signal_at = {}
+        service.setup_expectancy = {}
+        service._market_regime = lambda *_args, **_kwargs: "Trending"
+        service._volatility_regime = lambda *_args, **_kwargs: "High"
+        service._execution_levels_sane = lambda **_kwargs: True
+        service._dispatch_trade_entry_notification = lambda **_kwargs: None
+
+        bucket = make_bucket()
+        state = SimpleNamespace(state="Expansion", confidence=0.8)
+        action = SimpleNamespace(status="Triggered", setup_type="Continuation", bias="Bullish")
+        execution = SimpleNamespace(
+            entry_min=0.3514,
+            entry_max=None,
+            invalidation=0.2645,
+            target=0.4384,
+            target_1=0.4384,
+            target_2=0.5253,
+            initial_stop=0.2645,
+            risk_level="Medium",
+            quality_score="B",
+        )
+
+        await service._maybe_record_trade_signal(
+            symbol="ARIAUSDT",
+            timeframe="4h",
+            bucket=bucket,
+            flow_metrics=None,
+            state=state,
+            action=action,
+            execution=execution,
+            asset_state=SimpleNamespace(signal="Breakout Watch"),
+        )
+
+        assert service.database.saved_payloads == []
+        assert len(service.database.updated_payloads) == 1
+        trade_id, payload = service.database.updated_payloads[0]
+        assert trade_id == 7
+        assert payload["fill_count"] == 2
+        assert round(payload["entry_price"], 4) == 0.3357
+        assert payload["last_scale_in_at"] == bucket.last_timestamp
+
+    asyncio.run(run())
+
+
+def test_same_symbol_open_trade_does_not_average_down() -> None:
+    async def run() -> None:
+        existing_trade = SimpleNamespace(
+            id=8,
+            symbol="ARIAUSDT",
+            timeframe="4h",
+            bias="Bullish",
+            result="open",
+            tp1_hit=False,
+            entry_price=0.3600,
+            invalidation_price=0.3000,
+            confidence=0.6,
+            fill_count=1,
+        )
+
+        service = SignalService.__new__(SignalService)
+        service.database = FakeDatabase(has_duplicate=False, open_trade=existing_trade)
+        service.settings = Settings(demo_mode=False)
+        service.last_trade_signal_at = {}
+        service.setup_expectancy = {}
+        service._market_regime = lambda *_args, **_kwargs: "Trending"
+        service._volatility_regime = lambda *_args, **_kwargs: "High"
+        service._execution_levels_sane = lambda **_kwargs: True
+        service._dispatch_trade_entry_notification = lambda **_kwargs: None
+
+        bucket = make_bucket()
+        state = SimpleNamespace(state="Expansion", confidence=0.8)
+        action = SimpleNamespace(status="Triggered", setup_type="Continuation", bias="Bullish")
+        execution = SimpleNamespace(
+            entry_min=0.3514,
+            entry_max=None,
+            invalidation=0.2645,
+            target=0.4384,
+            target_1=0.4384,
+            target_2=0.5253,
+            initial_stop=0.2645,
+            risk_level="Medium",
+            quality_score="B",
+        )
+
+        await service._maybe_record_trade_signal(
+            symbol="ARIAUSDT",
+            timeframe="4h",
+            bucket=bucket,
+            flow_metrics=None,
+            state=state,
+            action=action,
+            execution=execution,
+            asset_state=SimpleNamespace(signal="Breakout Watch"),
+        )
+
+        assert service.database.saved_payloads == []
+        assert service.database.updated_payloads == []
 
     asyncio.run(run())

@@ -2321,14 +2321,6 @@ class SignalService:
         last = self.last_trade_signal_at.get(key)
         if last and bucket.last_timestamp - last < dedupe_window:
             return
-        if await self.database.has_open_trade_signal(
-            symbol=symbol,
-            timeframe=timeframe,
-            state=state.state,
-            setup_type=action.setup_type,
-            bias=action.bias,
-        ):
-            return
         if await self.database.has_trade_signal_event(
             symbol=symbol,
             timeframe=timeframe,
@@ -2371,6 +2363,42 @@ class SignalService:
             )
             return
 
+        existing_trade = await self.database.get_open_trade_signal(
+            symbol=symbol,
+            timeframe=timeframe,
+        )
+        if existing_trade is not None:
+            if existing_trade.bias != action.bias:
+                logger.info(
+                    "Skipping reverse trade signal symbol=%s timeframe=%s active_bias=%s new_bias=%s",
+                    symbol,
+                    timeframe,
+                    existing_trade.bias,
+                    action.bias,
+                )
+                return
+            if not self._can_scale_in_trade(existing_trade=existing_trade, fill_price=bucket.close_price):
+                logger.info(
+                    "Skipping additional entry symbol=%s timeframe=%s bias=%s reason=scale_in_not_armed fills=%d",
+                    symbol,
+                    timeframe,
+                    action.bias,
+                    max(getattr(existing_trade, "fill_count", 1), 1),
+                )
+                return
+            await self._merge_open_trade_signal(
+                trade=existing_trade,
+                bucket=bucket,
+                flow_metrics=flow_metrics,
+                state=state,
+                action=action,
+                execution=execution,
+                entry_price=entry_price,
+                asset_state=asset_state,
+            )
+            self.last_trade_signal_at[key] = bucket.last_timestamp
+            return
+
         regime = self._market_regime(flow_metrics, timeframe)
         volatility = self._volatility_regime(flow_metrics, timeframe)
         payload = {
@@ -2390,6 +2418,8 @@ class SignalService:
             "target_price_2": execution.target_2,
             "trailing_stop_price": execution.initial_stop,
             "tp1_hit": False,
+            "fill_count": 1,
+            "last_scale_in_at": None,
             "entry_touched_at": bucket.last_timestamp,
             "entry_notification_sent_at": None,
             "closed_at": None,
@@ -2448,6 +2478,98 @@ class SignalService:
             if ratio > 25.0:
                 return False
         return True
+
+    @staticmethod
+    def _trade_unrealized_r_multiple(
+        trade: TradeSignal,
+        *,
+        fill_price: float,
+    ) -> float | None:
+        if trade.entry_price is None or trade.invalidation_price is None:
+            return None
+        risk_per_unit = abs(trade.entry_price - trade.invalidation_price)
+        if risk_per_unit <= VALUE_EPSILON:
+            return None
+        direction = 1 if trade.bias == "Bullish" else -1 if trade.bias == "Bearish" else 0
+        if direction == 0:
+            return None
+        return (fill_price - trade.entry_price) * direction / risk_per_unit
+
+    def _can_scale_in_trade(
+        self,
+        *,
+        existing_trade: TradeSignal,
+        fill_price: float,
+    ) -> bool:
+        if existing_trade.result != "open":
+            return False
+        if existing_trade.tp1_hit:
+            return False
+        unrealized_r = self._trade_unrealized_r_multiple(existing_trade, fill_price=fill_price)
+        return unrealized_r is not None and unrealized_r >= 0.5
+
+    async def _merge_open_trade_signal(
+        self,
+        *,
+        trade: TradeSignal,
+        bucket: TimeframeBucket,
+        flow_metrics: FlowMetrics,
+        state: StateAssessment,
+        action: ActionAssessment,
+        execution: ExecutionPlan,
+        entry_price: float,
+        asset_state: AssetState,
+    ) -> None:
+        previous_fills = max(getattr(trade, "fill_count", 1), 1)
+        merged_fills = previous_fills + 1
+        previous_entry = trade.entry_price or entry_price
+        merged_entry = ((previous_entry * previous_fills) + entry_price) / merged_fills
+        merged_confidence = ((trade.confidence * previous_fills) + state.confidence) / merged_fills
+        direction = 1 if trade.bias == "Bullish" else -1 if trade.bias == "Bearish" else 0
+        pnl_pct = (
+            ((bucket.close_price - merged_entry) / merged_entry) * direction * 100
+            if direction != 0 and merged_entry > VALUE_EPSILON
+            else 0.0
+        )
+        payload = {
+            "state": state.state,
+            "setup_type": action.setup_type,
+            "status": action.status,
+            "market_regime": self._market_regime(flow_metrics, trade.timeframe),
+            "volatility_regime": self._volatility_regime(flow_metrics, trade.timeframe),
+            "entry_price": merged_entry,
+            "invalidation_price": execution.invalidation,
+            "target_price": execution.target,
+            "target_price_1": execution.target_1,
+            "target_price_2": execution.target_2,
+            "trailing_stop_price": execution.initial_stop,
+            "risk_level": execution.risk_level,
+            "quality_score": execution.quality_score,
+            "confidence": merged_confidence,
+            "fill_count": merged_fills,
+            "last_scale_in_at": bucket.last_timestamp,
+            "pnl_pct": pnl_pct,
+            "max_profit_pct": max(pnl_pct, 0.0),
+            "max_drawdown_pct": min(pnl_pct, 0.0),
+            "entry_notification_sent_at": None,
+            "updated_at": datetime.now(UTC),
+        }
+        await self.database.update_trade_signal(trade.id, payload)
+        logger.info(
+            "Merged scale-in symbol=%s timeframe=%s bias=%s fills=%d avg_entry=%.8f",
+            trade.symbol,
+            trade.timeframe,
+            trade.bias,
+            merged_fills,
+            merged_entry,
+        )
+        self._dispatch_trade_entry_notification(
+            trade_id=trade.id,
+            symbol=trade.symbol,
+            timeframe=trade.timeframe,
+            bucket=bucket,
+            state=asset_state,
+        )
 
     async def get_alert_preferences(self, user_id: str) -> AlertPreferences:
         user_id = self._normalize_user_id(user_id)

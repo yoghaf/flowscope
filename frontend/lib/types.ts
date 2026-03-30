@@ -434,6 +434,8 @@ export interface PerformanceTradeRow {
   signal_timestamp: string;
   created_at: string;
   entry_touched_at?: string | null;
+  fill_count: number;
+  last_scale_in_at?: string | null;
   closed_at?: string | null;
   close_reason?: string | null;
   updated_at: string;

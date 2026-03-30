@@ -77,6 +77,8 @@ class PerformanceEngine:
 
         rows: list[dict[str, object]] = []
         for trade in filtered:
+            fill_count = max(getattr(trade, "fill_count", 1) or 1, 1)
+            effective_capital = capital_per_trade * fill_count
             entry = trade.entry_price
             invalidation = trade.invalidation_price
             target_1 = trade.target_price_1 or trade.target_price
@@ -88,15 +90,15 @@ class PerformanceEngine:
             rr_tp1 = self._safe_div(reward_tp1, risk_per_unit) if reward_tp1 is not None and risk_per_unit is not None else None
             rr_tp2 = self._safe_div(reward_tp2, risk_per_unit) if reward_tp2 is not None and risk_per_unit is not None else None
 
-            quantity = (capital_per_trade / entry) if entry and entry > 0 else None
+            quantity = (effective_capital / entry) if entry and entry > 0 else None
             risk_amount_usd = quantity * risk_per_unit if quantity is not None and risk_per_unit is not None else None
             tp1_reward_usd = quantity * reward_tp1 if quantity is not None and reward_tp1 is not None else None
             tp2_reward_usd = quantity * reward_tp2 if quantity is not None and reward_tp2 is not None else None
-            risk_pct_of_capital = self._safe_div(risk_amount_usd * 100, capital_per_trade) if risk_amount_usd is not None else None
+            risk_pct_of_capital = self._safe_div(risk_amount_usd * 100, effective_capital) if risk_amount_usd is not None else None
 
-            realized_pnl_usd = capital_per_trade * (trade.pnl_pct / 100)
-            max_profit_usd = capital_per_trade * (trade.max_profit_pct / 100)
-            max_drawdown_usd = capital_per_trade * (trade.max_drawdown_pct / 100)
+            realized_pnl_usd = effective_capital * (trade.pnl_pct / 100)
+            max_profit_usd = effective_capital * (trade.max_profit_pct / 100)
+            max_drawdown_usd = effective_capital * (trade.max_drawdown_pct / 100)
             realized_r_multiple = self._safe_div(realized_pnl_usd, risk_amount_usd) if risk_amount_usd is not None else None
 
             rows.append(
@@ -117,6 +119,8 @@ class PerformanceEngine:
                     "signal_timestamp": trade.timestamp.isoformat(),
                     "created_at": trade.created_at.isoformat(),
                     "entry_touched_at": trade.entry_touched_at.isoformat() if trade.entry_touched_at else None,
+                    "fill_count": fill_count,
+                    "last_scale_in_at": trade.last_scale_in_at.isoformat() if trade.last_scale_in_at else None,
                     "closed_at": trade.closed_at.isoformat() if trade.closed_at else None,
                     "close_reason": trade.close_reason,
                     "updated_at": trade.updated_at.isoformat(),
@@ -129,7 +133,7 @@ class PerformanceEngine:
                     "reward_tp2_per_unit": self._round(reward_tp2, 6),
                     "planned_rr_tp1": self._round(rr_tp1, 4),
                     "planned_rr_tp2": self._round(rr_tp2, 4),
-                    "capital_per_trade": self._round(capital_per_trade, 2),
+                    "capital_per_trade": self._round(effective_capital, 2),
                     "estimated_quantity": self._round(quantity, 8),
                     "risk_amount_usd": self._round(risk_amount_usd, 2),
                     "tp1_reward_usd": self._round(tp1_reward_usd, 2),
@@ -181,6 +185,8 @@ class PerformanceEngine:
                 "signal_timestamp",
                 "created_at",
                 "entry_touched_at",
+                "fill_count",
+                "last_scale_in_at",
                 "closed_at",
                 "close_reason",
                 "updated_at",
@@ -281,6 +287,8 @@ class PerformanceEngine:
             "signal_timestamp",
             "created_at",
             "entry_touched_at",
+            "fill_count",
+            "last_scale_in_at",
             "closed_at",
             "close_reason",
             "updated_at",
@@ -323,6 +331,8 @@ class PerformanceEngine:
             "signal_timestamp": "Signal Time",
             "created_at": "Recorded",
             "entry_touched_at": "Entry Touched",
+            "fill_count": "Fills",
+            "last_scale_in_at": "Last Add",
             "closed_at": "Closed At",
             "close_reason": "Close Reason",
             "updated_at": "Updated At",
