@@ -22,9 +22,10 @@ class FakeAggregateStore:
 
 
 class FakeDatabase:
-    def __init__(self, trade: SimpleNamespace) -> None:
+    def __init__(self, trade: SimpleNamespace, buckets: list[TimeframeBucket] | None = None) -> None:
         self.enabled = True
         self.trade = trade
+        self.buckets = buckets or []
         self.updates: list[tuple[int, dict[str, object]]] = []
 
     async def load_open_trade_signals(self) -> list[SimpleNamespace]:
@@ -32,6 +33,18 @@ class FakeDatabase:
 
     async def update_trade_signal(self, trade_id: int, payload: dict[str, object]) -> None:
         self.updates.append((trade_id, payload))
+
+    async def load_market_buckets(
+        self,
+        symbols: list[str],
+        since: datetime,
+        timeframes: list[str],
+    ) -> list[TimeframeBucket]:
+        return [
+            bucket
+            for bucket in self.buckets
+            if bucket.symbol in symbols and bucket.timeframe in timeframes and bucket.bucket_start >= since
+        ]
 
 
 class FakeSignalService:
@@ -112,7 +125,7 @@ def test_trade_evaluator_times_out_never_touched_entry() -> None:
             entry_touched_at=None,
         )
         bucket = make_bucket(now)
-        database = FakeDatabase(trade)
+        database = FakeDatabase(trade, buckets=[bucket])
         signal_service = FakeSignalService([bucket], price=0.34)
         settings = Settings(entry_touch_timeout_buckets=2)
 
@@ -140,7 +153,7 @@ def test_trade_evaluator_closes_trade_when_historical_bucket_hits_invalidation()
             status="Triggered",
             result="open",
             timestamp=datetime(2026, 3, 28, 14, 24, 9, tzinfo=UTC),
-            updated_at=datetime(2026, 3, 29, 20, 0, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 3, 30, 5, 0, 0, tzinfo=UTC),
             entry_price=220.4868,
             invalidation_price=210.7100,
             target_price_1=230.2635,
@@ -173,7 +186,7 @@ def test_trade_evaluator_closes_trade_when_historical_bucket_hits_invalidation()
                 close_price=223.3,
             ),
         ]
-        database = FakeDatabase(trade)
+        database = FakeDatabase(trade, buckets=buckets)
         signal_service = FakeSignalService(buckets, price=223.3)
         settings = Settings(entry_touch_timeout_buckets=2)
 

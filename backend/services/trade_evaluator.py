@@ -28,21 +28,8 @@ class TradeEvaluator:
         now = datetime.now(UTC)
         catchup_queued = 0
         for trade in open_trades:
-            aggregate_store = getattr(self.signal_service, "aggregate_store", None)
-            latest_bucket = (
-                aggregate_store.latest_bucket(trade.symbol, trade.timeframe, closed_only=False)
-                if aggregate_store is not None
-                else None
-            )
-            bucket_history = []
-            checkpoint = getattr(trade, "updated_at", None) or trade.entry_touched_at or trade.timestamp
-            if aggregate_store is not None and hasattr(aggregate_store, "history_for"):
-                bucket_history = [
-                    bucket
-                    for bucket in aggregate_store.history_for(trade.symbol, trade.timeframe, closed_only=False)
-                    if bucket.last_timestamp > checkpoint
-                ]
-            evaluation_buckets = bucket_history or ([latest_bucket] if latest_bucket is not None else [])
+            evaluation_anchor = getattr(trade, "last_scale_in_at", None) or trade.entry_touched_at or trade.timestamp
+            evaluation_buckets = await self._load_evaluation_buckets(trade=trade, anchor=evaluation_anchor)
 
             price = evaluation_buckets[-1].close_price if evaluation_buckets else await self.signal_service.get_latest_price(trade.symbol, trade.timeframe)
             if price is None or trade.entry_price is None:
@@ -163,3 +150,23 @@ class TradeEvaluator:
                     catchup_queued += 1
 
         logger.info("Trade evaluator scanned open_trades=%d catchup_queued=%d", len(open_trades), catchup_queued)
+
+    async def _load_evaluation_buckets(self, *, trade: object, anchor: datetime) -> list[object]:
+        buckets_by_start: dict[datetime, object] = {}
+
+        if hasattr(self.database, "load_market_buckets"):
+            db_buckets = await self.database.load_market_buckets([trade.symbol], anchor, [trade.timeframe])
+            for bucket in db_buckets:
+                buckets_by_start[bucket.bucket_start] = bucket
+
+        aggregate_store = getattr(self.signal_service, "aggregate_store", None)
+        if aggregate_store is not None:
+            if hasattr(aggregate_store, "history_for"):
+                for bucket in aggregate_store.history_for(trade.symbol, trade.timeframe, closed_only=False):
+                    if bucket.last_timestamp >= anchor:
+                        buckets_by_start[bucket.bucket_start] = bucket
+            latest_bucket = aggregate_store.latest_bucket(trade.symbol, trade.timeframe, closed_only=False)
+            if latest_bucket is not None and latest_bucket.last_timestamp >= anchor:
+                buckets_by_start[latest_bucket.bucket_start] = latest_bucket
+
+        return [buckets_by_start[key] for key in sorted(buckets_by_start)]
