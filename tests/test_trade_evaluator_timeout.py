@@ -200,3 +200,56 @@ def test_trade_evaluator_closes_trade_when_historical_bucket_hits_invalidation()
         assert payload["closed_at"] == stop_hit_bucket_time
 
     asyncio.run(run())
+
+
+def test_trade_evaluator_checks_stop_after_entry_even_without_retouching_entry() -> None:
+    async def run() -> None:
+        stop_hit_bucket_time = datetime(2026, 3, 30, 0, 0, 0, tzinfo=UTC)
+        trade = SimpleNamespace(
+            id=3,
+            symbol="ZECUSDT",
+            timeframe="15m",
+            bias="Bullish",
+            status="Triggered",
+            result="open",
+            timestamp=datetime(2026, 3, 28, 7, 24, 9, tzinfo=UTC),
+            updated_at=datetime(2026, 3, 30, 5, 0, 0, tzinfo=UTC),
+            entry_price=220.4868,
+            invalidation_price=210.7100,
+            target_price_1=230.2635,
+            target_price_2=240.0403,
+            tp1_hit=False,
+            trailing_stop_price=210.7100,
+            pnl_pct=0.0,
+            max_profit_pct=0.0,
+            max_drawdown_pct=0.0,
+            entry_touched_at=datetime(2026, 3, 28, 7, 30, 31, tzinfo=UTC),
+            closed_at=None,
+            close_reason=None,
+            entry_notification_sent_at=None,
+            last_scale_in_at=None,
+        )
+        buckets = [
+            make_bucket(
+                stop_hit_bucket_time,
+                timeframe="15m",
+                open_price=217.0,
+                high_price=219.8,
+                low_price=209.6,
+                close_price=212.1,
+            )
+        ]
+        database = FakeDatabase(trade, buckets=buckets)
+        signal_service = FakeSignalService(buckets, price=212.1)
+        settings = Settings(entry_touch_timeout_buckets=2)
+
+        evaluator = TradeEvaluator(settings, database, signal_service)
+        await evaluator.evaluate()
+
+        assert len(database.updates) == 1
+        _, payload = database.updates[0]
+        assert payload["result"] == "loss"
+        assert payload["close_reason"] == "Invalidation"
+        assert payload["closed_at"] == stop_hit_bucket_time
+
+    asyncio.run(run())

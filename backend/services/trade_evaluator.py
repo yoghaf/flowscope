@@ -56,14 +56,15 @@ class TradeEvaluator:
                 high_price = bucket.high_price
                 low_price = bucket.low_price
                 price = bucket.close_price
-                triggered = high_price >= trade.entry_price if direction > 0 else low_price <= trade.entry_price
+                entry_crossed_this_bucket = high_price >= trade.entry_price if direction > 0 else low_price <= trade.entry_price
+                trade_is_active = entry_touched_at is not None or entry_crossed_this_bucket
 
-                if triggered and status != "Triggered":
+                if entry_crossed_this_bucket and status != "Triggered":
                     status = "Triggered"
-                if triggered and entry_touched_at is None:
+                if entry_crossed_this_bucket and entry_touched_at is None:
                     entry_touched_at = bucket.last_timestamp
 
-                if not triggered:
+                if not trade_is_active:
                     if entry_touched_at is None and bucket.last_timestamp - trade.timestamp >= timeout_window:
                         result = "timeout"
                         closed_at = bucket.last_timestamp
