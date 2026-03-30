@@ -12,10 +12,13 @@ from backend.services.trade_evaluator import TradeEvaluator
 
 @dataclass
 class FakeAggregateStore:
-    bucket: TimeframeBucket
+    buckets: list[TimeframeBucket]
 
     def latest_bucket(self, symbol: str, timeframe: str, closed_only: bool = False) -> TimeframeBucket:
-        return self.bucket
+        return self.buckets[-1]
+
+    def history_for(self, symbol: str, timeframe: str, closed_only: bool = False) -> list[TimeframeBucket]:
+        return list(self.buckets)
 
 
 class FakeDatabase:
@@ -32,26 +35,35 @@ class FakeDatabase:
 
 
 class FakeSignalService:
-    def __init__(self, bucket: TimeframeBucket, price: float) -> None:
-        self.aggregate_store = FakeAggregateStore(bucket)
+    def __init__(self, buckets: list[TimeframeBucket], price: float) -> None:
+        self.aggregate_store = FakeAggregateStore(buckets)
         self._price = price
 
     async def get_latest_price(self, symbol: str, timeframe: str) -> float:
         return self._price
 
 
-def make_bucket(now: datetime) -> TimeframeBucket:
-    bucket_start = now - timedelta(minutes=15)
+def make_bucket(
+    now: datetime,
+    *,
+    timeframe: str = "15m",
+    open_price: float = 0.34,
+    high_price: float = 0.34576,
+    low_price: float = 0.32897,
+    close_price: float = 0.34,
+) -> TimeframeBucket:
+    delta = timedelta(minutes=15) if timeframe == "15m" else timedelta(hours=4)
+    bucket_start = now - delta
     return TimeframeBucket(
         symbol="ARIAUSDT",
-        timeframe="15m",
+        timeframe=timeframe,
         bucket_start=bucket_start,
         bucket_end=now,
         last_timestamp=now,
-        open_price=0.34,
-        high_price=0.34576,
-        low_price=0.32897,
-        close_price=0.34,
+        open_price=open_price,
+        high_price=high_price,
+        low_price=low_price,
+        close_price=close_price,
         open_interest_open=1000.0,
         open_interest_high=1000.0,
         open_interest_low=990.0,
@@ -101,7 +113,7 @@ def test_trade_evaluator_times_out_never_touched_entry() -> None:
         )
         bucket = make_bucket(now)
         database = FakeDatabase(trade)
-        signal_service = FakeSignalService(bucket, price=0.34)
+        signal_service = FakeSignalService([bucket], price=0.34)
         settings = Settings(entry_touch_timeout_buckets=2)
 
         evaluator = TradeEvaluator(settings, database, signal_service)
@@ -112,5 +124,66 @@ def test_trade_evaluator_times_out_never_touched_entry() -> None:
         assert payload["result"] == "timeout"
         assert payload["close_reason"] == "Entry Never Touched"
         assert payload["closed_at"] == bucket.last_timestamp
+
+    asyncio.run(run())
+
+
+def test_trade_evaluator_closes_trade_when_historical_bucket_hits_invalidation() -> None:
+    async def run() -> None:
+        stop_hit_bucket_time = datetime(2026, 3, 30, 0, 0, 0, tzinfo=UTC)
+        rebound_bucket_time = datetime(2026, 3, 30, 4, 0, 0, tzinfo=UTC)
+        trade = SimpleNamespace(
+            id=2,
+            symbol="ZECUSDT",
+            timeframe="4h",
+            bias="Bullish",
+            status="Triggered",
+            result="open",
+            timestamp=datetime(2026, 3, 28, 14, 24, 9, tzinfo=UTC),
+            updated_at=datetime(2026, 3, 29, 20, 0, 0, tzinfo=UTC),
+            entry_price=220.4868,
+            invalidation_price=210.7100,
+            target_price_1=230.2635,
+            target_price_2=240.0403,
+            tp1_hit=False,
+            trailing_stop_price=210.7100,
+            pnl_pct=0.0,
+            max_profit_pct=0.0,
+            max_drawdown_pct=0.0,
+            entry_touched_at=datetime(2026, 3, 28, 14, 30, 31, tzinfo=UTC),
+            closed_at=None,
+            close_reason=None,
+            entry_notification_sent_at=None,
+        )
+        buckets = [
+            make_bucket(
+                stop_hit_bucket_time,
+                timeframe="4h",
+                open_price=218.0,
+                high_price=221.0,
+                low_price=205.2,
+                close_price=214.5,
+            ),
+            make_bucket(
+                rebound_bucket_time,
+                timeframe="4h",
+                open_price=214.5,
+                high_price=223.5,
+                low_price=214.0,
+                close_price=223.3,
+            ),
+        ]
+        database = FakeDatabase(trade)
+        signal_service = FakeSignalService(buckets, price=223.3)
+        settings = Settings(entry_touch_timeout_buckets=2)
+
+        evaluator = TradeEvaluator(settings, database, signal_service)
+        await evaluator.evaluate()
+
+        assert len(database.updates) == 1
+        _, payload = database.updates[0]
+        assert payload["result"] == "loss"
+        assert payload["close_reason"] == "Invalidation"
+        assert payload["closed_at"] == stop_hit_bucket_time
 
     asyncio.run(run())
