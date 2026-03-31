@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import time
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -145,6 +146,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--symbols", default="ALL", help="Comma-separated symbols or ALL")
     parser.add_argument("--capital-per-trade", type=float, default=100.0, help="Synthetic capital per trade for report output")
     parser.add_argument("--limit-per-symbol", type=int, default=0, help="Optional last-N buckets per timeframe for each symbol")
+    parser.add_argument("--workers", type=int, default=8, help="Concurrent symbol workers (default 8)")
     parser.add_argument(
         "--csv-out",
         default=str(REPO_ROOT / "replay-performance-report.csv"),
@@ -204,9 +206,10 @@ async def replay_symbol(
     )
     seen_filter_events: set[tuple[str, datetime, str, bool, tuple[str, ...]]] = set()
 
+    # Use closed bucket boundaries instead of every sample timestamp for speed
     timeline = sorted(
         {
-            bucket.last_timestamp
+            bucket.bucket_end
             for timeframe_buckets in buckets.values()
             for bucket in timeframe_buckets
         }
@@ -430,6 +433,33 @@ def summarize_trades(trades: list[TradeSignal]) -> ReplaySummary:
     )
 
 
+async def _replay_one(
+    semaphore: asyncio.Semaphore,
+    settings: object,
+    symbol: str,
+    buckets: dict[str, list[TimeframeBucket]],
+    progress: dict[str, int],
+    start_time: float,
+) -> tuple[str, list[TradeSignal], ReplayDiagnostics]:
+    """Replay a single symbol under the concurrency semaphore."""
+    async with semaphore:
+        trades, diagnostics = await replay_symbol(
+            settings=settings,
+            symbol=symbol,
+            buckets=buckets,
+        )
+        progress["done"] += 1
+        elapsed = time.time() - start_time
+        total_buckets = sum(len(v) for v in buckets.values())
+        print(
+            f"  [{progress['done']:3d}/{progress['total']:3d}] "
+            f"{symbol:16s}  {len(trades):2d} trade(s)  "
+            f"{total_buckets:4d} buckets  "
+            f"({elapsed:.0f}s elapsed)"
+        )
+        return symbol, trades, diagnostics
+
+
 async def main() -> int:
     args = parse_args()
     settings = get_settings()
@@ -440,6 +470,8 @@ async def main() -> int:
     if args.symbols.strip().upper() != "ALL":
         symbol_filter = {item.strip().upper() for item in args.symbols.split(",") if item.strip()}
 
+    print("Loading bucket history from database...")
+    load_start = time.time()
     grouped = await load_bucket_history(
         source_db,
         symbol_filter,
@@ -450,19 +482,32 @@ async def main() -> int:
         await source_db.close()
         return 1
 
+    total_buckets = sum(len(b) for sym in grouped.values() for b in sym.values())
+    print(f"Loaded {len(grouped)} symbols, {total_buckets:,} buckets in {time.time() - load_start:.1f}s")
+    print(f"Replaying with {args.workers} concurrent workers...")
+    print()
+
+    # ── Concurrent symbol replay ──
+    semaphore = asyncio.Semaphore(args.workers)
+    progress: dict[str, int] = {"done": 0, "total": len(grouped)}
+    replay_start = time.time()
+
+    tasks = [
+        _replay_one(semaphore, settings, symbol, grouped[symbol], progress, replay_start)
+        for symbol in sorted(grouped)
+    ]
+    results = await asyncio.gather(*tasks)
+
+    # ── Aggregate results ──
     aggregate_buckets: dict[str, dict[str, list[TimeframeBucket]]] = {}
     all_trades: list[TradeSignal] = []
     aggregate_stage_counts: Counter[str] = Counter()
     aggregate_reason_counts: Counter[str] = Counter()
     aggregate_pass_counts: Counter[str] = Counter()
     next_trade_id = 1
-    for symbol in sorted(grouped):
+
+    for symbol, trades, diagnostics in results:
         aggregate_buckets[symbol] = grouped[symbol]
-        trades, diagnostics = await replay_symbol(
-            settings=settings,
-            symbol=symbol,
-            buckets=grouped[symbol],
-        )
         aggregate_stage_counts.update(diagnostics.stage_counts)
         aggregate_reason_counts.update(diagnostics.reason_counts)
         aggregate_pass_counts.update(diagnostics.pass_counts)
@@ -470,7 +515,9 @@ async def main() -> int:
             trade.id = next_trade_id
             next_trade_id += 1
         all_trades.extend(trades)
-        print(f"{symbol}: replayed {len(trades)} trade(s)")
+
+    replay_elapsed = time.time() - replay_start
+    print(f"\nReplay finished in {replay_elapsed:.1f}s ({len(grouped)} symbols, {total_buckets:,} buckets)")
 
     report_db = ReplayDatabase(aggregate_buckets)
     report_db._trades = all_trades
@@ -490,6 +537,8 @@ async def main() -> int:
     payload = {
         "generated_at": datetime.now(UTC).isoformat(),
         "symbols_replayed": len(grouped),
+        "replay_elapsed_seconds": round(replay_elapsed, 1),
+        "workers": args.workers,
         "summary": {
             "trade_count": summary.trade_count,
             "open_count": summary.open_count,
@@ -513,23 +562,27 @@ async def main() -> int:
     json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     print("")
-    print("Replay complete")
-    print(f"- symbols: {len(grouped)}")
-    print(f"- trades: {summary.trade_count}")
-    print(f"- wins: {summary.win_count}")
-    print(f"- losses: {summary.loss_count}")
-    print(f"- breakevens: {summary.breakeven_count}")
-    print(f"- timeouts: {summary.timeout_count}")
-    print(f"- open: {summary.open_count}")
-    print(f"- rejected_by_stage: {dict(aggregate_stage_counts.most_common(10))}")
-    print(f"- top_reject_reasons: {dict(aggregate_reason_counts.most_common(10))}")
+    print("=" * 60)
+    print("  REPLAY COMPLETE")
+    print("=" * 60)
+    print(f"  Time:      {replay_elapsed:.1f}s")
+    print(f"  Symbols:   {len(grouped)}")
+    print(f"  Trades:    {summary.trade_count}")
+    print(f"  Wins:      {summary.win_count}")
+    print(f"  Losses:    {summary.loss_count}")
+    print(f"  Breakeven: {summary.breakeven_count}")
+    print(f"  Timeouts:  {summary.timeout_count}")
+    print(f"  Open:      {summary.open_count}")
+    print(f"  Rejected:  {dict(aggregate_stage_counts.most_common(10))}")
+    print(f"  Reasons:   {dict(aggregate_reason_counts.most_common(10))}")
     if performance is not None:
-        print(f"- winrate: {performance.winrate * 100:.2f}%")
-        print(f"- expectancy: {performance.expectancy:.4f}")
-        print(f"- best_setup: {performance.best_setup}")
-        print(f"- worst_setup: {performance.worst_setup}")
-    print(f"- csv: {csv_path}")
-    print(f"- json: {json_path}")
+        print(f"  Winrate:   {performance.winrate * 100:.2f}%")
+        print(f"  Expectancy:{performance.expectancy:.4f}")
+        print(f"  Best:      {performance.best_setup}")
+        print(f"  Worst:     {performance.worst_setup}")
+    print(f"  CSV:       {csv_path}")
+    print(f"  JSON:      {json_path}")
+    print("=" * 60)
 
     await source_db.close()
     return 0
