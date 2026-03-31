@@ -1192,6 +1192,10 @@ class SignalService:
                 )
                 self.last_timeframe_update[(symbol, timeframe)] = now
                 continue
+            action = self._promote_continuation_pullback_trigger(
+                action=action,
+                execution=execution,
+            )
             action, followthrough_pending = self._apply_followthrough_gate(
                 symbol=symbol,
                 timeframe=timeframe,
@@ -3892,6 +3896,21 @@ class SignalService:
             confidence_label=action.confidence_label,
             opportunity_score=action.opportunity_score,
         )
+
+    @classmethod
+    def _promote_continuation_pullback_trigger(
+        cls,
+        *,
+        action: ActionAssessment,
+        execution: ExecutionPlan | None,
+    ) -> ActionAssessment:
+        if action.setup_type != "Continuation" or action.status != "Ready":
+            return action
+        if action.bias == "Neutral" or execution is None:
+            return action
+        if execution.entry_type != "Continuation Pullback":
+            return action
+        return cls._action_with_status(action, "Triggered")
 
     @staticmethod
     def _trade_confidence_from_asset_state(asset_state: AssetState | Any, fallback: float) -> float:

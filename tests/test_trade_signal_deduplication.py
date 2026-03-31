@@ -404,6 +404,25 @@ def test_hard_entry_filters_do_not_force_breakout_anomaly_rules_on_continuation(
     assert "oi_delta_z_below_threshold" not in reasons
 
 
+def test_ready_continuation_pullback_is_promoted_to_triggered() -> None:
+    service = SignalService.__new__(SignalService)
+
+    promoted = service._promote_continuation_pullback_trigger(
+        action=SimpleNamespace(
+            setup_type="Continuation",
+            status="Ready",
+            bias="Bullish",
+            confidence_label="High",
+            opportunity_score=0.78,
+        ),
+        execution=SimpleNamespace(entry_type="Continuation Pullback"),
+    )
+
+    assert promoted.status == "Triggered"
+    assert promoted.setup_type == "Continuation"
+    assert promoted.bias == "Bullish"
+
+
 def test_breakout_requires_trending_regime_even_if_other_checks_pass() -> None:
     service = SignalService.__new__(SignalService)
     service.settings = Settings(demo_mode=False)
