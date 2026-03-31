@@ -40,6 +40,13 @@ class ReplaySummary:
     timeout_count: int
 
 
+@dataclass(slots=True)
+class ReplayDiagnostics:
+    stage_counts: Counter[str]
+    reason_counts: Counter[str]
+    pass_counts: Counter[str]
+
+
 class ReplayDatabase:
     def __init__(self, buckets: dict[str, dict[str, list[TimeframeBucket]]]) -> None:
         self.enabled = True
@@ -182,10 +189,16 @@ async def replay_symbol(
     settings: object,
     symbol: str,
     buckets: dict[str, list[TimeframeBucket]],
-) -> list[TradeSignal]:
+) -> tuple[list[TradeSignal], ReplayDiagnostics]:
     replay_db = ReplayDatabase({symbol: buckets})
     service = SignalService(settings, replay_db, RealtimeHub())
     service.symbols = [symbol]
+    diagnostics = ReplayDiagnostics(
+        stage_counts=Counter(),
+        reason_counts=Counter(),
+        pass_counts=Counter(),
+    )
+    seen_filter_events: set[tuple[str, datetime, str, bool, tuple[str, ...]]] = set()
 
     timeline = sorted(
         {
@@ -208,9 +221,29 @@ async def replay_symbol(
 
         await service._update_state(symbol, persist_alerts=False)
         await service.trade_evaluator.evaluate()
+        for timeframe in DEFAULT_TIMEFRAMES:
+            current_state = service.states_by_timeframe.get(timeframe, {}).get(symbol)
+            if current_state is None or not current_state.market_interpretation:
+                continue
+            entry_filters = current_state.market_interpretation.get("entry_filters")
+            if not isinstance(entry_filters, dict):
+                continue
+            stage = str(entry_filters.get("stage") or "unknown")
+            passed = bool(entry_filters.get("passed"))
+            reasons = tuple(str(reason) for reason in (entry_filters.get("reasons") or []))
+            event_key = (timeframe, current_state.timestamp, stage, passed, reasons)
+            if event_key in seen_filter_events:
+                continue
+            seen_filter_events.add(event_key)
+            if passed:
+                diagnostics.pass_counts[stage] += 1
+            else:
+                diagnostics.stage_counts[stage] += 1
+                for reason in reasons:
+                    diagnostics.reason_counts[reason] += 1
 
     await service.trade_evaluator.evaluate()
-    return await replay_db.list_trade_signals()
+    return await replay_db.list_trade_signals(), diagnostics
 
 
 def summarize_trades(trades: list[TradeSignal]) -> ReplaySummary:
@@ -248,14 +281,20 @@ async def main() -> int:
 
     aggregate_buckets: dict[str, dict[str, list[TimeframeBucket]]] = {}
     all_trades: list[TradeSignal] = []
+    aggregate_stage_counts: Counter[str] = Counter()
+    aggregate_reason_counts: Counter[str] = Counter()
+    aggregate_pass_counts: Counter[str] = Counter()
     next_trade_id = 1
     for symbol in sorted(grouped):
         aggregate_buckets[symbol] = grouped[symbol]
-        trades = await replay_symbol(
+        trades, diagnostics = await replay_symbol(
             settings=settings,
             symbol=symbol,
             buckets=grouped[symbol],
         )
+        aggregate_stage_counts.update(diagnostics.stage_counts)
+        aggregate_reason_counts.update(diagnostics.reason_counts)
+        aggregate_pass_counts.update(diagnostics.pass_counts)
         for trade in trades:
             trade.id = next_trade_id
             next_trade_id += 1
@@ -288,6 +327,11 @@ async def main() -> int:
             "breakeven_count": summary.breakeven_count,
             "timeout_count": summary.timeout_count,
         },
+        "diagnostics": {
+            "rejected_by_stage": dict(aggregate_stage_counts.most_common()),
+            "rejected_by_reason": dict(aggregate_reason_counts.most_common()),
+            "passed_by_stage": dict(aggregate_pass_counts.most_common()),
+        },
         "performance": performance.model_dump(mode="json") if performance is not None else None,
         "csv_path": str(csv_path),
         "capital_per_trade": args.capital_per_trade,
@@ -306,6 +350,8 @@ async def main() -> int:
     print(f"- breakevens: {summary.breakeven_count}")
     print(f"- timeouts: {summary.timeout_count}")
     print(f"- open: {summary.open_count}")
+    print(f"- rejected_by_stage: {dict(aggregate_stage_counts.most_common(10))}")
+    print(f"- top_reject_reasons: {dict(aggregate_reason_counts.most_common(10))}")
     if performance is not None:
         print(f"- winrate: {performance.winrate * 100:.2f}%")
         print(f"- expectancy: {performance.expectancy:.4f}")
