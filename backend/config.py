@@ -130,9 +130,9 @@ class Settings(BaseSettings):
     trade_evaluator_interval_seconds: int = 180
     entry_touch_timeout_buckets: int = 2
     entry_notification_catchup_minutes: int = 60
-    entry_filter_min_clarity_confidence: float = 0.80
-    entry_filter_min_volume_z: float = 1.20
-    entry_filter_min_abs_oi_delta_z: float = 1.00
+    entry_filter_min_clarity_confidence: float = 0.70
+    entry_filter_min_volume_z: float = 0.90
+    entry_filter_min_abs_oi_delta_z: float = 0.70
     entry_filter_max_oi_percentile: float = 0.85
     breakout_close_confirmation_buffer: float = 0.001
     breakout_max_late_entry_distance: float = 0.004

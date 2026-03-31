@@ -359,7 +359,7 @@ def test_followthrough_requires_next_bucket_confirmation() -> None:
     assert pending is False
 
 
-def test_hard_entry_filters_reject_non_trending_low_quality_setup() -> None:
+def test_hard_entry_filters_reject_ranging_or_low_volatility_setup() -> None:
     service = SignalService.__new__(SignalService)
     service.settings = Settings(demo_mode=False)
 
@@ -375,11 +375,32 @@ def test_hard_entry_filters_reject_non_trending_low_quality_setup() -> None:
         clarity_confidence=0.79,
     )
 
-    assert "market_regime_not_trending" in reasons
+    assert "market_regime_ranging" in reasons
     assert "volatility_regime_low" in reasons
-    assert "clarity_below_threshold" in reasons
-    assert "volume_z_below_threshold" in reasons
-    assert "oi_delta_z_below_threshold" in reasons
+    assert "clarity_below_threshold" not in reasons
+    assert "volume_z_below_threshold" not in reasons
+    assert "oi_delta_z_below_threshold" not in reasons
+
+
+def test_breakout_requires_trending_regime_even_if_other_checks_pass() -> None:
+    service = SignalService.__new__(SignalService)
+    service.settings = Settings(demo_mode=False)
+
+    bucket = make_bucket()
+    reasons = service._breakout_filter_reasons(
+        action=SimpleNamespace(setup_type="Breakout", bias="Bullish"),
+        bucket=bucket,
+        flow_metrics=FlowMetrics(
+            price_change_15m=0.01,
+            atr_15m=0.01,
+            compression_score_15m=0.2,
+            oi_percentile_15m=0.6,
+        ),
+        timeframe="15m",
+        execution=SimpleNamespace(breakout_valid=True, entry_min=0.3490),
+    )
+
+    assert "breakout_requires_trending_regime" in reasons
 
 
 def test_continuation_strict_mode_rejects_missing_taker_alignment() -> None:

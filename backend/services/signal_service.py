@@ -3798,8 +3798,8 @@ class SignalService:
         volume_z = getattr(flow_metrics, f"volume_z_{timeframe}", None)
         oi_delta_z = getattr(flow_metrics, f"oi_delta_z_{timeframe}", None)
 
-        if regime != "Trending":
-            reasons.append("market_regime_not_trending")
+        if regime == "Ranging":
+            reasons.append("market_regime_ranging")
         if volatility == "Low":
             reasons.append("volatility_regime_low")
         if clarity_confidence < self.settings.entry_filter_min_clarity_confidence:
@@ -3857,6 +3857,7 @@ class SignalService:
             return []
 
         direction = 1 if action.bias == "Bullish" else -1
+        regime = self._market_regime(flow_metrics, timeframe)
         breakout_entry = execution.entry_min
         close_price = bucket.close_price
         oi_percentile = SignalService._metric_or_zero(getattr(flow_metrics, f"oi_percentile_{timeframe}", 0.0))
@@ -3864,6 +3865,8 @@ class SignalService:
         buffer = self.settings.breakout_close_confirmation_buffer
 
         reasons: list[str] = []
+        if action.setup_type == "Breakout" and regime != "Trending":
+            reasons.append("breakout_requires_trending_regime")
         if direction > 0 and close_price < breakout_entry * (1.0 + buffer):
             reasons.append("breakout_close_not_confirmed")
         if direction < 0 and close_price > breakout_entry * (1.0 - buffer):
