@@ -261,8 +261,8 @@ class ExecutionEngine:
         if risk <= 0:
             return None
 
-        tp1 = entry + (direction * risk * 1.5)
-        tp2 = entry + (direction * risk * 3.0)
+        tp1 = entry + (direction * risk * 1.0)
+        tp2 = entry + (direction * risk * 2.0)
 
         return ExecutionPlan(
             entry_type="Continuation Pullback" if pullback_mode else self._entry_type_label(action.setup_type, breakout_valid),

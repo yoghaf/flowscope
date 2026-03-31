@@ -88,10 +88,10 @@ class TradeEvaluator:
                 if trade.target_price_1 is not None and not tp1_hit:
                     if direction > 0 and high_price >= trade.target_price_1:
                         tp1_hit = True
-                        trailing_stop_price = trade.entry_price
+                        trailing_stop_price = trade.entry_price + (direction * risk_pct * trade.entry_price / 100 * 0.2) if risk_pct else trade.entry_price
                     if direction < 0 and low_price <= trade.target_price_1:
                         tp1_hit = True
-                        trailing_stop_price = trade.entry_price
+                        trailing_stop_price = trade.entry_price + (direction * risk_pct * trade.entry_price / 100 * 0.2) if risk_pct else trade.entry_price
 
                 exit_price = None
                 hit_target_2 = False
