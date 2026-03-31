@@ -274,7 +274,7 @@ def test_trade_evaluator_checks_stop_after_entry_even_without_retouching_entry()
 def test_trade_evaluator_fail_fast_exits_small_loss_when_flow_drops() -> None:
     async def run() -> None:
         entry_touch_time = datetime(2026, 3, 30, 0, 0, 0, tzinfo=UTC)
-        review_bucket_time = datetime(2026, 3, 30, 0, 30, 0, tzinfo=UTC)
+        review_bucket_time = datetime(2026, 3, 30, 0, 45, 0, tzinfo=UTC)
         trade = SimpleNamespace(
             id=4,
             symbol="ARIAUSDT",

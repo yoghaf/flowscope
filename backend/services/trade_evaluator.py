@@ -131,7 +131,7 @@ class TradeEvaluator:
                 if exit_price is None and entry_touched_at is not None:
                     elapsed_since_entry = bucket.last_timestamp - entry_touched_at
                     fail_fast_window = timeframe_delta * max(self.settings.fail_fast_max_candles, 1)
-                    if timeframe_delta <= elapsed_since_entry <= fail_fast_window:
+                    if elapsed_since_entry >= fail_fast_window:
                         mfe_r = (max_profit_pct / risk_pct) if risk_pct and risk_pct > BREAKEVEN_EPSILON else None
                         price_failed_to_follow = mfe_r is not None and mfe_r < self.settings.fail_fast_min_mfe_r
                         current_flow_alignment = self._current_flow_alignment(symbol=trade.symbol, timeframe=trade.timeframe)
