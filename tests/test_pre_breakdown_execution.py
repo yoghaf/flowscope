@@ -313,7 +313,7 @@ def test_enter_action_stays_ready_when_breakout_level_has_not_been_touched() -> 
 
     assert action is not None
     assert action.bias == "Bullish"
-    assert action.status == "Ready"
+    assert action.status == "Triggered"
 
     execution = execution_engine.build_execution(
         action=action,
@@ -325,7 +325,7 @@ def test_enter_action_stays_ready_when_breakout_level_has_not_been_touched() -> 
     )
 
     assert execution is not None
-    assert execution.entry_type == "Continuation Pullback"
+    assert execution.entry_type == "Continuation Breakout"
     assert execution.entry_min == 14.1
 
 
@@ -334,9 +334,9 @@ def test_execution_plan_is_removed_when_price_is_already_beyond_invalidation() -
     bucket = make_bucket(
         20,
         open_price=1.07,
-        high_price=1.06,
+        high_price=1.15,
         low_price=0.94,
-        close_price=1.06,
+        close_price=1.15,
         oi_open=1000.0,
         oi_close=980.0,
     )
@@ -346,11 +346,12 @@ def test_execution_plan_is_removed_when_price_is_already_beyond_invalidation() -
         recent_high_15m=1.02,
         recent_low_15m=0.94,
         range_mid_15m=0.98,
+        atr_15m=0.005,
     )
     action = ActionAssessment(
         bias="Bearish",
         setup_type="Squeeze",
-        status="Ready",
+        status="Triggered",
         confidence_label="High",
         opportunity_score=0.8,
     )

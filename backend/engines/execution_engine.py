@@ -45,10 +45,6 @@ class ExecutionEngine:
         recent_high: float,
         recent_low: float,
     ) -> float:
-        if direction > 0:
-            return max(bucket.high_price, recent_high)
-        if direction < 0:
-            return min(bucket.low_price, recent_low if recent_low > 0 else bucket.low_price)
         return bucket.close_price
 
     @staticmethod
@@ -240,27 +236,17 @@ class ExecutionEngine:
         breakout_distance = abs((breakout_entry - current_price)) / max(current_price, 1e-9)
         pullback_mode = action.setup_type == "Continuation" and action.status == "Ready" and (not breakout_valid or breakout_distance > max(float(profile["price_break"]), 0.02))
 
-        if pullback_mode:
-            entry = current_price
-            if direction == 1:
-                invalidation = min(bucket.low_price, current_price - atr_abs)
-                if invalidation >= entry:
-                    invalidation = entry - atr_abs
-            else:
-                invalidation = max(bucket.high_price, current_price + atr_abs)
-                if invalidation <= entry:
-                    invalidation = entry + atr_abs
+        entry = breakout_entry if not pullback_mode else current_price
+        atr_buffer = atr_abs * 1.5
+
+        if direction == 1:
+            invalidation = entry - atr_buffer
+            if pullback_mode:
+                invalidation = min(invalidation, bucket.low_price)
         else:
-            if direction == 1:
-                entry = max(bucket.high_price, recent_high)
-                invalidation = min(bucket.low_price, recent_low if recent_low > 0 else bucket.low_price)
-                if invalidation >= entry:
-                    invalidation = min(bucket.low_price, range_mid, entry - atr_abs)
-            else:
-                entry = min(bucket.low_price, recent_low if recent_low > 0 else bucket.low_price)
-                invalidation = max(bucket.high_price, recent_high)
-                if invalidation <= entry:
-                    invalidation = max(bucket.high_price, range_mid, entry + atr_abs)
+            invalidation = entry + atr_buffer
+            if pullback_mode:
+                invalidation = max(invalidation, bucket.high_price)
 
         if (direction == 1 and current_price <= invalidation) or (direction == -1 and current_price >= invalidation):
             return None
@@ -275,8 +261,8 @@ class ExecutionEngine:
         if risk <= 0:
             return None
 
-        tp1 = entry + (direction * risk)
-        tp2 = entry + (direction * risk * 2.0)
+        tp1 = entry + (direction * risk * 1.5)
+        tp2 = entry + (direction * risk * 3.0)
 
         return ExecutionPlan(
             entry_type="Continuation Pullback" if pullback_mode else self._entry_type_label(action.setup_type, breakout_valid),

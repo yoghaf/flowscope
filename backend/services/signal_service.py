@@ -3846,8 +3846,14 @@ class SignalService:
             reasons.append("continuation_flow_alignment_below_threshold")
         if market_interpretation.structure_strength < self.settings.continuation_min_structure_strength:
             reasons.append("continuation_structure_strength_below_threshold")
-        if not higher_tf_aligns:
+        
+        is_long = action.bias == "Bullish"
+        htf_trend = market_interpretation.higher_timeframe_trend
+        if is_long and htf_trend == "Bearish" and clarity_confidence < 0.65:
             reasons.append("continuation_higher_timeframe_not_aligned")
+        elif not is_long and htf_trend == "Bullish" and clarity_confidence < 0.65:
+            reasons.append("continuation_higher_timeframe_not_aligned")
+            
         if not taker_available:
             reasons.append("continuation_taker_unavailable")
         elif direction * float(taker_delta) <= 0:
@@ -4003,12 +4009,13 @@ class SignalService:
             return "Ranging"
         return "Balanced"
 
-    @staticmethod
-    def _volatility_regime(metrics: FlowMetrics, timeframe: str) -> str:
+    def _volatility_regime(self, metrics: FlowMetrics, timeframe: str) -> str:
         atr = SignalService._metric_or_zero(getattr(metrics, f"atr_{timeframe}", 0.0))
-        if atr >= 0.02:
+        price = SignalService._metric_or_zero(getattr(metrics, f"range_mid_{timeframe}", getattr(metrics, f"recent_high_{timeframe}", 1.0)))
+        atr_percent = atr / price if price > 0 else 0.0
+        if atr_percent >= self.settings.high_vol_threshold:
             return "High"
-        if atr <= 0.005:
+        if atr_percent <= 0.003:
             return "Low"
         return "Medium"
 

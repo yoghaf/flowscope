@@ -317,12 +317,20 @@ def _evaluate_trade_bucket(
     trade.max_drawdown_pct = min(trade.max_drawdown_pct, trade.pnl_pct)
 
     if trade.target_price_1 is not None and not trade.tp1_hit:
-        if direction > 0 and high_price >= trade.target_price_1:
+        if (direction > 0 and high_price >= trade.target_price_1) or (direction < 0 and low_price <= trade.target_price_1):
             trade.tp1_hit = True
-            trade.trailing_stop_price = trade.entry_price
-        if direction < 0 and low_price <= trade.target_price_1:
-            trade.tp1_hit = True
-            trade.trailing_stop_price = trade.entry_price
+            
+            # Trail stop to entry + 0.5R instead of strict breakeven
+            if trade.invalidation_price is not None:
+                risk = abs(trade.entry_price - trade.invalidation_price)
+                new_stop = trade.entry_price + (direction * risk * 0.5)
+                # Ensure we don't bring the stop closer than the original invalidation
+                if (direction > 0 and new_stop > trade.invalidation_price) or (direction < 0 and new_stop < trade.invalidation_price):
+                    trade.trailing_stop_price = new_stop
+                else:
+                    trade.trailing_stop_price = trade.entry_price
+            else:
+                trade.trailing_stop_price = trade.entry_price
 
     exit_price = None
     hit_target_2 = False

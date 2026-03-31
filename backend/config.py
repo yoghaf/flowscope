@@ -138,7 +138,7 @@ class Settings(BaseSettings):
     breakout_max_late_entry_distance: float = 0.004
     continuation_min_flow_alignment: float = 0.55
     continuation_min_structure_strength: float = 0.50
-    fail_fast_max_candles: int = 2
+    fail_fast_max_candles: int = 3
     fail_fast_min_mfe_r: float = 0.15
     fail_fast_flow_drop: float = 0.20
     auto_filter_negative_expectancy: bool = False
