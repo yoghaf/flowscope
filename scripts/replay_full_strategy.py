@@ -319,7 +319,9 @@ def _evaluate_trade_bucket(
     if trade.target_price_1 is not None and not trade.tp1_hit:
         if (direction > 0 and high_price >= trade.target_price_1) or (direction < 0 and low_price <= trade.target_price_1):
             trade.tp1_hit = True
-            # After TP1, trail stop to breakeven (entry price) so reversals = 0R not -1R
+            # Record TP1 PnL for the 50% partial close
+            trade.tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
+            # Trail remaining 50% to breakeven
             trade.trailing_stop_price = trade.entry_price
 
     exit_price = None
@@ -339,16 +341,16 @@ def _evaluate_trade_bucket(
         trade.result = "win"
         trade.close_reason = "Target 2"
 
-    # Trailing stop at breakeven after TP1
+    # Trailing stop at breakeven after TP1 — partial win (50% already banked at TP1)
     if exit_price is None and trade.tp1_hit and trade.trailing_stop_price is not None:
         if direction > 0 and low_price <= trade.trailing_stop_price:
             exit_price = trade.trailing_stop_price
-            trade.result = "breakeven"
-            trade.close_reason = "Breakeven Stop"
+            trade.result = "win"
+            trade.close_reason = "Partial TP1"
         if direction < 0 and high_price >= trade.trailing_stop_price:
             exit_price = trade.trailing_stop_price
-            trade.result = "breakeven"
-            trade.close_reason = "Breakeven Stop"
+            trade.result = "win"
+            trade.close_reason = "Partial TP1"
 
     risk_pct = (
         abs(trade.entry_price - trade.invalidation_price) / trade.entry_price * 100
@@ -373,7 +375,12 @@ def _evaluate_trade_bucket(
                 trade.close_reason = "Fail-Fast Exit"
 
     if exit_price is not None:
-        trade.pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
+        close_pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
+        # Blend 50% TP1 + 50% close for split-position model
+        if trade.tp1_hit and hasattr(trade, 'tp1_pnl_pct'):
+            trade.pnl_pct = 0.5 * trade.tp1_pnl_pct + 0.5 * close_pnl_pct
+        else:
+            trade.pnl_pct = close_pnl_pct
         trade.closed_at = bucket.last_timestamp
 
 

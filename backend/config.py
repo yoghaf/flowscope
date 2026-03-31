@@ -130,7 +130,7 @@ class Settings(BaseSettings):
     trade_evaluator_interval_seconds: int = 180
     entry_touch_timeout_buckets: int = 2
     entry_notification_catchup_minutes: int = 60
-    entry_filter_min_clarity_confidence: float = 0.72
+    entry_filter_min_clarity_confidence: float = 0.78
     entry_filter_min_volume_z: float = 1.10
     entry_filter_min_abs_oi_delta_z: float = 0.90
     entry_filter_max_oi_percentile: float = 0.85
@@ -138,8 +138,8 @@ class Settings(BaseSettings):
     breakout_max_late_entry_distance: float = 0.004
     continuation_min_flow_alignment: float = 0.65
     continuation_min_structure_strength: float = 0.60
-    fail_fast_max_candles: int = 3
-    fail_fast_min_mfe_r: float = 0.15
+    fail_fast_max_candles: int = 2
+    fail_fast_min_mfe_r: float = 0.30
     fail_fast_flow_drop: float = 0.20
     auto_filter_negative_expectancy: bool = False
     expectancy_boost_factor: float = 0.15

@@ -48,6 +48,7 @@ class TradeEvaluator:
             max_drawdown_pct = trade.max_drawdown_pct
             closed_at = getattr(trade, "closed_at", None)
             close_reason = getattr(trade, "close_reason", None)
+            tp1_pnl_pct: float | None = None
             entry_flow_alignment = getattr(trade, "entry_flow_alignment", None)
 
             payload: dict[str, object] = {"updated_at": now}
@@ -88,10 +89,12 @@ class TradeEvaluator:
                 if trade.target_price_1 is not None and not tp1_hit:
                     if direction > 0 and high_price >= trade.target_price_1:
                         tp1_hit = True
-                        trailing_stop_price = trade.entry_price + (direction * risk_pct * trade.entry_price / 100 * 0.2) if risk_pct else trade.entry_price
+                        tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
+                        trailing_stop_price = trade.entry_price
                     if direction < 0 and low_price <= trade.target_price_1:
                         tp1_hit = True
-                        trailing_stop_price = trade.entry_price + (direction * risk_pct * trade.entry_price / 100 * 0.2) if risk_pct else trade.entry_price
+                        tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
+                        trailing_stop_price = trade.entry_price
 
                 exit_price = None
                 hit_target_2 = False
@@ -110,23 +113,16 @@ class TradeEvaluator:
                     result = "win"
                     close_reason = "Target 2"
 
+                # Trailing stop at breakeven after TP1 — partial win (50% already banked)
                 if exit_price is None and tp1_hit and trailing_stop_price is not None:
                     if direction > 0 and low_price <= trailing_stop_price:
                         exit_price = trailing_stop_price
-                        result = (
-                            "breakeven"
-                            if abs(trailing_stop_price - trade.entry_price) <= max(abs(trade.entry_price), 1.0) * BREAKEVEN_EPSILON
-                            else "win"
-                        )
-                        close_reason = "Breakeven Stop" if result == "breakeven" else "Trailing Stop"
+                        result = "win"
+                        close_reason = "Partial TP1"
                     if direction < 0 and high_price >= trailing_stop_price:
                         exit_price = trailing_stop_price
-                        result = (
-                            "breakeven"
-                            if abs(trailing_stop_price - trade.entry_price) <= max(abs(trade.entry_price), 1.0) * BREAKEVEN_EPSILON
-                            else "win"
-                        )
-                        close_reason = "Breakeven Stop" if result == "breakeven" else "Trailing Stop"
+                        result = "win"
+                        close_reason = "Partial TP1"
 
                 if exit_price is None and entry_touched_at is not None:
                     elapsed_since_entry = bucket.last_timestamp - entry_touched_at
@@ -146,7 +142,12 @@ class TradeEvaluator:
                             close_reason = "Fail-Fast Exit"
 
                 if exit_price is not None:
-                    pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
+                    close_pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
+                    # Blend 50% TP1 + 50% close for split-position model
+                    if tp1_hit and tp1_pnl_pct is not None:
+                        pnl_pct = 0.5 * tp1_pnl_pct + 0.5 * close_pnl_pct
+                    else:
+                        pnl_pct = close_pnl_pct
                     closed_at = bucket.last_timestamp
                     break
 
