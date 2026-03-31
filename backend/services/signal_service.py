@@ -3849,9 +3849,10 @@ class SignalService:
         
         is_long = action.bias == "Bullish"
         htf_trend = market_interpretation.higher_timeframe_trend
-        if is_long and htf_trend == "Bearish" and clarity_confidence < 0.65:
+        clarity = market_interpretation.clarity_confidence
+        if is_long and htf_trend == "Bearish" and clarity < 0.65:
             reasons.append("continuation_higher_timeframe_not_aligned")
-        elif not is_long and htf_trend == "Bullish" and clarity_confidence < 0.65:
+        elif not is_long and htf_trend == "Bullish" and clarity < 0.65:
             reasons.append("continuation_higher_timeframe_not_aligned")
             
         if not taker_available:

@@ -454,6 +454,7 @@ def test_continuation_strict_mode_rejects_missing_taker_alignment() -> None:
             control="Buyer Dominant",
             flow_alignment=0.70,
             structure_strength=0.70,
+            clarity_confidence=0.8,
             higher_timeframe_trend="Bullish",
         ),
         flow_metrics=FlowMetrics(taker_buy_sell_ratio_delta_15m=0.0),
