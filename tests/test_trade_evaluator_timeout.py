@@ -48,9 +48,25 @@ class FakeDatabase:
 
 
 class FakeSignalService:
-    def __init__(self, buckets: list[TimeframeBucket], price: float) -> None:
+    def __init__(
+        self,
+        buckets: list[TimeframeBucket],
+        price: float,
+        *,
+        flow_alignment: float | None = None,
+        symbol: str = "ARIAUSDT",
+        timeframe: str = "15m",
+    ) -> None:
         self.aggregate_store = FakeAggregateStore(buckets)
         self._price = price
+        state = (
+            SimpleNamespace(market_interpretation={"flow_alignment": flow_alignment})
+            if flow_alignment is not None
+            else None
+        )
+        self.states_by_timeframe = {
+            timeframe: {symbol: state} if state is not None else {},
+        }
 
     async def get_latest_price(self, symbol: str, timeframe: str) -> float:
         return self._price
@@ -251,5 +267,66 @@ def test_trade_evaluator_checks_stop_after_entry_even_without_retouching_entry()
         assert payload["result"] == "loss"
         assert payload["close_reason"] == "Invalidation"
         assert payload["closed_at"] == stop_hit_bucket_time
+
+    asyncio.run(run())
+
+
+def test_trade_evaluator_fail_fast_exits_small_loss_when_flow_drops() -> None:
+    async def run() -> None:
+        entry_touch_time = datetime(2026, 3, 30, 0, 0, 0, tzinfo=UTC)
+        review_bucket_time = datetime(2026, 3, 30, 0, 30, 0, tzinfo=UTC)
+        trade = SimpleNamespace(
+            id=4,
+            symbol="ARIAUSDT",
+            timeframe="15m",
+            bias="Bullish",
+            status="Triggered",
+            result="open",
+            timestamp=entry_touch_time - timedelta(minutes=15),
+            updated_at=entry_touch_time,
+            entry_price=0.3514,
+            invalidation_price=0.2645,
+            target_price_1=0.4384,
+            target_price_2=0.5253,
+            tp1_hit=False,
+            trailing_stop_price=0.2645,
+            pnl_pct=0.0,
+            max_profit_pct=0.2,
+            max_drawdown_pct=-0.1,
+            entry_touched_at=entry_touch_time,
+            entry_flow_alignment=0.75,
+            closed_at=None,
+            close_reason=None,
+            entry_notification_sent_at=None,
+            last_scale_in_at=None,
+        )
+        buckets = [
+            make_bucket(
+                review_bucket_time,
+                timeframe="15m",
+                open_price=0.3512,
+                high_price=0.3520,
+                low_price=0.3440,
+                close_price=0.3450,
+            )
+        ]
+        database = FakeDatabase(trade, buckets=buckets)
+        signal_service = FakeSignalService(
+            buckets,
+            price=0.3450,
+            flow_alignment=0.48,
+            symbol="ARIAUSDT",
+            timeframe="15m",
+        )
+        settings = Settings(entry_touch_timeout_buckets=2)
+
+        evaluator = TradeEvaluator(settings, database, signal_service)
+        await evaluator.evaluate()
+
+        assert len(database.updates) == 1
+        _, payload = database.updates[0]
+        assert payload["result"] == "loss"
+        assert payload["close_reason"] == "Fail-Fast Exit"
+        assert payload["closed_at"] == review_bucket_time
 
     asyncio.run(run())

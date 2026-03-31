@@ -155,6 +155,7 @@ class TradeSignal(Base):
     fill_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     last_scale_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     entry_touched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    entry_flow_alignment: Mapped[float | None] = mapped_column(Float, nullable=True)
     entry_notification_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     close_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)

@@ -171,6 +171,7 @@ class SignalService:
         self._lock = asyncio.Lock()
         self._running = False
         self.ready_since: dict[tuple[str, str, str], datetime] = {}
+        self.pending_followthrough: dict[tuple[str, str], dict[str, Any]] = {}
         self.snapshot_cache: dict[str, AssetSnapshot] = {}
         self.snapshot_history: dict[tuple[str, str], deque[str]] = defaultdict(
             lambda: deque(maxlen=settings.history_retention_points)
@@ -976,6 +977,47 @@ class SignalService:
             )
             positioning.debug_trace["market_interpretation"] = market_interpretation.to_dict()
             positioning = self._with_reliability(positioning, market_interpretation.clarity_confidence)
+            hard_entry_filter_reasons = self._entry_hard_filter_reasons(
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                clarity_confidence=market_interpretation.clarity_confidence,
+            )
+            if hard_entry_filter_reasons:
+                self._clear_ready_states(symbol, timeframe)
+                interpretation_payload = market_interpretation.to_dict()
+                interpretation_payload["entry_filters"] = {
+                    "passed": False,
+                    "stage": "hard_entry",
+                    "reasons": hard_entry_filter_reasons,
+                }
+                updated_states[timeframe] = self._mark_state_with_status(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    bucket=bucket,
+                    flow_metrics=flow_metrics,
+                    now=now,
+                    reason="hard_entry_filters",
+                    signal_status="NO_SIGNAL",
+                    data_status="VALID",
+                    market_state=state_assessment.state,
+                    state_confidence=state_assessment.confidence,
+                    state_probabilities=state_assessment.probabilities,
+                    score=self._signal_score(
+                        positioning=positioning,
+                        state_assessment=state_assessment,
+                        sharpness=sharpness,
+                    ),
+                    position_intent=positioning.intent,
+                    oi_intensity=positioning.oi_intensity,
+                    position_quality=positioning.position_quality,
+                    decision_type=positioning.decision,
+                    reliability_score=positioning.reliability_score,
+                    priority_multiplier=positioning.priority_multiplier,
+                    market_interpretation=interpretation_payload,
+                    previous_state=previous_state,
+                )
+                self.last_timeframe_update[(symbol, timeframe)] = now
+                continue
             if market_interpretation.action == "NO TRADE":
                 self._clear_ready_states(symbol, timeframe)
                 updated_states[timeframe] = self._mark_state_with_status(
@@ -1091,6 +1133,68 @@ class SignalService:
                 profile=profile,
                 confidence=positioning.reliability_score,
             )
+            post_action_filter_reasons: list[str] = []
+            post_action_filter_reasons.extend(
+                self._continuation_filter_reasons(
+                    action=action,
+                    market_interpretation=market_interpretation,
+                    flow_metrics=flow_metrics,
+                    timeframe=timeframe,
+                )
+            )
+            if execution is not None:
+                post_action_filter_reasons.extend(
+                    self._breakout_filter_reasons(
+                        action=action,
+                        bucket=bucket,
+                        flow_metrics=flow_metrics,
+                        timeframe=timeframe,
+                        execution=execution,
+                    )
+                )
+            if post_action_filter_reasons:
+                self._clear_ready_states(symbol, timeframe)
+                interpretation_payload = market_interpretation.to_dict()
+                interpretation_payload["entry_filters"] = {
+                    "passed": False,
+                    "stage": "post_action",
+                    "reasons": post_action_filter_reasons,
+                }
+                updated_states[timeframe] = self._mark_state_with_status(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    bucket=bucket,
+                    flow_metrics=flow_metrics,
+                    now=now,
+                    reason="post_action_entry_filters",
+                    signal_status="NO_SIGNAL",
+                    data_status="VALID",
+                    market_state=state_assessment.state,
+                    state_confidence=state_assessment.confidence,
+                    state_probabilities=state_assessment.probabilities,
+                    score=self._signal_score(
+                        positioning=positioning,
+                        state_assessment=state_assessment,
+                        sharpness=sharpness,
+                    ),
+                    position_intent=positioning.intent,
+                    oi_intensity=positioning.oi_intensity,
+                    position_quality=positioning.position_quality,
+                    decision_type=positioning.decision,
+                    reliability_score=positioning.reliability_score,
+                    priority_multiplier=positioning.priority_multiplier,
+                    market_interpretation=interpretation_payload,
+                    previous_state=previous_state,
+                )
+                self.last_timeframe_update[(symbol, timeframe)] = now
+                continue
+            action, followthrough_pending = self._apply_followthrough_gate(
+                symbol=symbol,
+                timeframe=timeframe,
+                bucket=bucket,
+                action=action,
+                execution=execution,
+            )
 
             signal = self._signal_type_from_output(positioning, state_assessment)
             score = self._signal_score(
@@ -1158,7 +1262,14 @@ class SignalService:
                 phase_score=phase_result.phase_score,
                 phase_confidence=phase_result.phase_confidence,
                 debug_trace=positioning.debug_trace,
-                market_interpretation=market_interpretation.to_dict(),
+                market_interpretation={
+                    **market_interpretation.to_dict(),
+                    "entry_filters": {
+                        "passed": True,
+                        "stage": "follow_through" if followthrough_pending else "pass",
+                        "reasons": ["awaiting_follow_through"] if followthrough_pending else [],
+                    },
+                },
             )
             self.last_timeframe_update[(symbol, timeframe)] = now
 
@@ -2401,6 +2512,8 @@ class SignalService:
 
         regime = self._market_regime(flow_metrics, timeframe)
         volatility = self._volatility_regime(flow_metrics, timeframe)
+        clarity_confidence = self._trade_confidence_from_asset_state(asset_state, state.confidence)
+        entry_flow_alignment = self._entry_flow_alignment_from_asset_state(asset_state)
         payload = {
             "symbol": symbol,
             "timeframe": timeframe,
@@ -2421,12 +2534,13 @@ class SignalService:
             "fill_count": 1,
             "last_scale_in_at": None,
             "entry_touched_at": bucket.last_timestamp,
+            "entry_flow_alignment": entry_flow_alignment,
             "entry_notification_sent_at": None,
             "closed_at": None,
             "close_reason": None,
             "risk_level": execution.risk_level,
             "quality_score": execution.quality_score,
-            "confidence": state.confidence,
+            "confidence": clarity_confidence,
             "result": "open",
             "pnl_pct": 0.0,
             "max_drawdown_pct": 0.0,
@@ -2524,7 +2638,16 @@ class SignalService:
         merged_fills = previous_fills + 1
         previous_entry = trade.entry_price or entry_price
         merged_entry = ((previous_entry * previous_fills) + entry_price) / merged_fills
-        merged_confidence = ((trade.confidence * previous_fills) + state.confidence) / merged_fills
+        clarity_confidence = self._trade_confidence_from_asset_state(asset_state, state.confidence)
+        merged_confidence = ((trade.confidence * previous_fills) + clarity_confidence) / merged_fills
+        prior_flow_alignment = getattr(trade, "entry_flow_alignment", None)
+        current_flow_alignment = self._entry_flow_alignment_from_asset_state(asset_state)
+        if prior_flow_alignment is None:
+            merged_flow_alignment = current_flow_alignment
+        elif current_flow_alignment is None:
+            merged_flow_alignment = prior_flow_alignment
+        else:
+            merged_flow_alignment = ((prior_flow_alignment * previous_fills) + current_flow_alignment) / merged_fills
         direction = 1 if trade.bias == "Bullish" else -1 if trade.bias == "Bearish" else 0
         pnl_pct = (
             ((bucket.close_price - merged_entry) / merged_entry) * direction * 100
@@ -2548,6 +2671,7 @@ class SignalService:
             "confidence": merged_confidence,
             "fill_count": merged_fills,
             "last_scale_in_at": bucket.last_timestamp,
+            "entry_flow_alignment": merged_flow_alignment,
             "pnl_pct": pnl_pct,
             "max_profit_pct": max(pnl_pct, 0.0),
             "max_drawdown_pct": min(pnl_pct, 0.0),
@@ -3656,6 +3780,190 @@ class SignalService:
             base = max(base, 0.3)
         return round(max(0.0, min(base, 1.0)), 4)
 
+    def _clear_pending_followthrough(self, symbol: str, timeframe: str) -> None:
+        pending_followthrough = getattr(self, "pending_followthrough", None)
+        if isinstance(pending_followthrough, dict):
+            pending_followthrough.pop((symbol, timeframe), None)
+
+    def _entry_hard_filter_reasons(
+        self,
+        *,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        clarity_confidence: float,
+    ) -> list[str]:
+        reasons: list[str] = []
+        regime = self._market_regime(flow_metrics, timeframe)
+        volatility = self._volatility_regime(flow_metrics, timeframe)
+        volume_z = getattr(flow_metrics, f"volume_z_{timeframe}", None)
+        oi_delta_z = getattr(flow_metrics, f"oi_delta_z_{timeframe}", None)
+
+        if regime != "Trending":
+            reasons.append("market_regime_not_trending")
+        if volatility == "Low":
+            reasons.append("volatility_regime_low")
+        if clarity_confidence < self.settings.entry_filter_min_clarity_confidence:
+            reasons.append("clarity_below_threshold")
+        if volume_z is None or volume_z < self.settings.entry_filter_min_volume_z:
+            reasons.append("volume_z_below_threshold")
+        if oi_delta_z is None or abs(oi_delta_z) < self.settings.entry_filter_min_abs_oi_delta_z:
+            reasons.append("oi_delta_z_below_threshold")
+        return reasons
+
+    def _continuation_filter_reasons(
+        self,
+        *,
+        action: ActionAssessment,
+        market_interpretation: MarketInterpretationAssessment,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+    ) -> list[str]:
+        if action.setup_type != "Continuation" or action.bias == "Neutral":
+            return []
+
+        direction = 1 if action.bias == "Bullish" else -1
+        taker_delta = getattr(flow_metrics, f"taker_buy_sell_ratio_delta_{timeframe}", None)
+        taker_available = taker_delta is not None and abs(taker_delta) > VALUE_EPSILON
+        higher_tf_aligns = (
+            (direction > 0 and market_interpretation.higher_timeframe_trend == "Bullish")
+            or (direction < 0 and market_interpretation.higher_timeframe_trend == "Bearish")
+        )
+
+        reasons: list[str] = []
+        if market_interpretation.control not in {"Buyer Dominant", "Seller Dominant"}:
+            reasons.append("continuation_control_not_directional")
+        if market_interpretation.flow_alignment < self.settings.continuation_min_flow_alignment:
+            reasons.append("continuation_flow_alignment_below_threshold")
+        if market_interpretation.structure_strength < self.settings.continuation_min_structure_strength:
+            reasons.append("continuation_structure_strength_below_threshold")
+        if not higher_tf_aligns:
+            reasons.append("continuation_higher_timeframe_not_aligned")
+        if not taker_available:
+            reasons.append("continuation_taker_unavailable")
+        elif direction * float(taker_delta) <= 0:
+            reasons.append("continuation_taker_not_aligned")
+        return reasons
+
+    def _breakout_filter_reasons(
+        self,
+        *,
+        action: ActionAssessment,
+        bucket: TimeframeBucket,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        execution: ExecutionPlan,
+    ) -> list[str]:
+        if action.bias == "Neutral" or not execution.breakout_valid or execution.entry_min is None:
+            return []
+
+        direction = 1 if action.bias == "Bullish" else -1
+        breakout_entry = execution.entry_min
+        close_price = bucket.close_price
+        oi_percentile = SignalService._metric_or_zero(getattr(flow_metrics, f"oi_percentile_{timeframe}", 0.0))
+        late_distance = abs(close_price - breakout_entry) / max(abs(breakout_entry), 1e-9)
+        buffer = self.settings.breakout_close_confirmation_buffer
+
+        reasons: list[str] = []
+        if direction > 0 and close_price < breakout_entry * (1.0 + buffer):
+            reasons.append("breakout_close_not_confirmed")
+        if direction < 0 and close_price > breakout_entry * (1.0 - buffer):
+            reasons.append("breakout_close_not_confirmed")
+        if oi_percentile > self.settings.entry_filter_max_oi_percentile:
+            reasons.append("breakout_oi_crowded")
+        if late_distance > self.settings.breakout_max_late_entry_distance:
+            reasons.append("breakout_late_entry")
+        return reasons
+
+    @staticmethod
+    def _action_with_status(action: ActionAssessment, status: str) -> ActionAssessment:
+        return ActionAssessment(
+            bias=action.bias,
+            setup_type=action.setup_type,
+            status=status,
+            confidence_label=action.confidence_label,
+            opportunity_score=action.opportunity_score,
+        )
+
+    @staticmethod
+    def _trade_confidence_from_asset_state(asset_state: AssetState | Any, fallback: float) -> float:
+        market_interpretation = getattr(asset_state, "market_interpretation", None)
+        action_opportunity_score = getattr(asset_state, "action_opportunity_score", None)
+        confidence = (
+            market_interpretation.get("clarity_confidence", action_opportunity_score if action_opportunity_score is not None else fallback)
+            if isinstance(market_interpretation, dict)
+            else action_opportunity_score if action_opportunity_score is not None else fallback
+        )
+        return float(max(0.0, min(confidence, 1.0)))
+
+    @staticmethod
+    def _entry_flow_alignment_from_asset_state(asset_state: AssetState | Any) -> float | None:
+        market_interpretation = getattr(asset_state, "market_interpretation", None)
+        if not isinstance(market_interpretation, dict):
+            return None
+        value = market_interpretation.get("flow_alignment")
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _apply_followthrough_gate(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        bucket: TimeframeBucket,
+        action: ActionAssessment,
+        execution: ExecutionPlan | None,
+    ) -> tuple[ActionAssessment, bool]:
+        if action.status != "Triggered" or execution is None or not execution.breakout_valid or execution.entry_min is None:
+            return action, False
+
+        if not hasattr(self, "pending_followthrough") or not isinstance(self.pending_followthrough, dict):
+            self.pending_followthrough = {}
+
+        key = (symbol, timeframe)
+        direction = 1 if action.bias == "Bullish" else -1 if action.bias == "Bearish" else 0
+        if direction == 0:
+            self._clear_pending_followthrough(symbol, timeframe)
+            return action, False
+
+        pending = self.pending_followthrough.get(key)
+        current_candidate = {
+            "bucket_start": bucket.bucket_start,
+            "timestamp": bucket.last_timestamp,
+            "close_price": bucket.close_price,
+            "breakout_entry": execution.entry_min,
+            "bias": action.bias,
+            "setup_type": action.setup_type,
+        }
+
+        if pending is None or pending["bucket_start"] == bucket.bucket_start:
+            self.pending_followthrough[key] = current_candidate
+            return self._action_with_status(action, "Ready"), True
+
+        if pending["bias"] != action.bias or pending["setup_type"] != action.setup_type:
+            self.pending_followthrough[key] = current_candidate
+            return self._action_with_status(action, "Ready"), True
+
+        close_buffer = self.settings.breakout_close_confirmation_buffer
+        if direction > 0:
+            continues = (
+                bucket.close_price > float(pending["close_price"])
+                and bucket.close_price >= float(pending["breakout_entry"]) * (1.0 + close_buffer)
+            )
+        else:
+            continues = (
+                bucket.close_price < float(pending["close_price"])
+                and bucket.close_price <= float(pending["breakout_entry"]) * (1.0 - close_buffer)
+            )
+
+        self.pending_followthrough.pop(key, None)
+        if continues:
+            return action, False
+
+        self.pending_followthrough[key] = current_candidate
+        return self._action_with_status(action, "Ready"), True
+
     @staticmethod
     def _market_regime(metrics: FlowMetrics, timeframe: str) -> str:
         atr = SignalService._metric_or_zero(getattr(metrics, f"atr_{timeframe}", 0.0))
@@ -3695,6 +4003,8 @@ class SignalService:
         ]
         for key in keys:
             self.ready_since.pop(key, None)
+        if keep_state is None:
+            self._clear_pending_followthrough(symbol, timeframe)
 
     def _apply_signal_decay(
         self,

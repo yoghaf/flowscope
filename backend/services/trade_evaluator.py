@@ -48,9 +48,18 @@ class TradeEvaluator:
             max_drawdown_pct = trade.max_drawdown_pct
             closed_at = getattr(trade, "closed_at", None)
             close_reason = getattr(trade, "close_reason", None)
+            entry_flow_alignment = getattr(trade, "entry_flow_alignment", None)
 
             payload: dict[str, object] = {"updated_at": now}
-            timeout_window = TIMEFRAME_DELTAS.get(trade.timeframe, TIMEFRAME_DELTAS["1h"]) * max(self.settings.entry_touch_timeout_buckets, 1)
+            timeframe_delta = TIMEFRAME_DELTAS.get(trade.timeframe, TIMEFRAME_DELTAS["1h"])
+            timeout_window = timeframe_delta * max(self.settings.entry_touch_timeout_buckets, 1)
+            risk_pct = (
+                abs(trade.entry_price - trade.invalidation_price) / trade.entry_price * 100
+                if trade.entry_price is not None
+                and trade.invalidation_price is not None
+                and trade.entry_price > BREAKEVEN_EPSILON
+                else None
+            )
 
             for bucket in evaluation_buckets:
                 high_price = bucket.high_price
@@ -119,6 +128,23 @@ class TradeEvaluator:
                         )
                         close_reason = "Breakeven Stop" if result == "breakeven" else "Trailing Stop"
 
+                if exit_price is None and entry_touched_at is not None:
+                    elapsed_since_entry = bucket.last_timestamp - entry_touched_at
+                    fail_fast_window = timeframe_delta * max(self.settings.fail_fast_max_candles, 1)
+                    if timeframe_delta <= elapsed_since_entry <= fail_fast_window:
+                        mfe_r = (max_profit_pct / risk_pct) if risk_pct and risk_pct > BREAKEVEN_EPSILON else None
+                        price_failed_to_follow = mfe_r is not None and mfe_r < self.settings.fail_fast_min_mfe_r
+                        current_flow_alignment = self._current_flow_alignment(symbol=trade.symbol, timeframe=trade.timeframe)
+                        flow_dropped = (
+                            entry_flow_alignment is not None
+                            and current_flow_alignment is not None
+                            and current_flow_alignment <= entry_flow_alignment - self.settings.fail_fast_flow_drop
+                        )
+                        if (price_failed_to_follow or flow_dropped) and pnl_pct < 0:
+                            exit_price = price
+                            result = "loss"
+                            close_reason = "Fail-Fast Exit"
+
                 if exit_price is not None:
                     pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
                     closed_at = bucket.last_timestamp
@@ -151,6 +177,19 @@ class TradeEvaluator:
                     catchup_queued += 1
 
         logger.info("Trade evaluator scanned open_trades=%d catchup_queued=%d", len(open_trades), catchup_queued)
+
+    def _current_flow_alignment(self, *, symbol: str, timeframe: str) -> float | None:
+        states_by_timeframe = getattr(self.signal_service, "states_by_timeframe", None)
+        if not isinstance(states_by_timeframe, dict):
+            return None
+        state = states_by_timeframe.get(timeframe, {}).get(symbol)
+        if state is None or not getattr(state, "market_interpretation", None):
+            return None
+        value = state.market_interpretation.get("flow_alignment")
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
 
     async def _load_evaluation_buckets(self, *, trade: object, anchor: datetime) -> list[object]:
         buckets_by_start: dict[datetime, object] = {}
