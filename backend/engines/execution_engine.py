@@ -241,12 +241,8 @@ class ExecutionEngine:
 
         if direction == 1:
             invalidation = entry - atr_buffer
-            if pullback_mode:
-                invalidation = min(invalidation, bucket.low_price)
         else:
             invalidation = entry + atr_buffer
-            if pullback_mode:
-                invalidation = max(invalidation, bucket.high_price)
 
         if (direction == 1 and current_price <= invalidation) or (direction == -1 and current_price >= invalidation):
             return None
