@@ -319,18 +319,8 @@ def _evaluate_trade_bucket(
     if trade.target_price_1 is not None and not trade.tp1_hit:
         if (direction > 0 and high_price >= trade.target_price_1) or (direction < 0 and low_price <= trade.target_price_1):
             trade.tp1_hit = True
-            
-            # Trail stop to entry + 0.2R instead of strict breakeven
-            if trade.invalidation_price is not None:
-                risk = abs(trade.entry_price - trade.invalidation_price)
-                new_stop = trade.entry_price + (direction * risk * 0.2)
-                # Ensure we don't bring the stop closer than the original invalidation
-                if (direction > 0 and new_stop > trade.invalidation_price) or (direction < 0 and new_stop < trade.invalidation_price):
-                    trade.trailing_stop_price = new_stop
-                else:
-                    trade.trailing_stop_price = trade.entry_price
-            else:
-                trade.trailing_stop_price = trade.entry_price
+            # TP1 tracked for bookkeeping only — no trailing stop activation.
+            # Trades close at TP2 (win) or invalidation (loss) to maximise R:R.
 
     exit_price = None
     hit_target_2 = False
@@ -348,24 +338,6 @@ def _evaluate_trade_bucket(
         exit_price = trade.target_price_2
         trade.result = "win"
         trade.close_reason = "Target 2"
-
-    if exit_price is None and trade.tp1_hit and trade.trailing_stop_price is not None:
-        if direction > 0 and low_price <= trade.trailing_stop_price:
-            exit_price = trade.trailing_stop_price
-            trade.result = (
-                "breakeven"
-                if abs(trade.trailing_stop_price - trade.entry_price) <= max(abs(trade.entry_price), 1.0) * BREAKEVEN_EPSILON
-                else "win"
-            )
-            trade.close_reason = "Breakeven Stop" if trade.result == "breakeven" else "Trailing Stop"
-        if direction < 0 and high_price >= trade.trailing_stop_price:
-            exit_price = trade.trailing_stop_price
-            trade.result = (
-                "breakeven"
-                if abs(trade.trailing_stop_price - trade.entry_price) <= max(abs(trade.entry_price), 1.0) * BREAKEVEN_EPSILON
-                else "win"
-            )
-            trade.close_reason = "Breakeven Stop" if trade.result == "breakeven" else "Trailing Stop"
 
     risk_pct = (
         abs(trade.entry_price - trade.invalidation_price) / trade.entry_price * 100
