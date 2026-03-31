@@ -367,13 +367,13 @@ def test_hard_entry_filters_reject_ranging_or_low_volatility_setup() -> None:
         action=SimpleNamespace(setup_type="Breakout", bias="Bullish", status="Triggered"),
         flow_metrics=FlowMetrics(
             price_change_15m=0.004,
-            atr_15m=0.006,
+            atr_15m=0.003,
             compression_score_15m=0.7,
             volume_z_15m=1.0,
             oi_delta_z_15m=0.8,
         ),
         timeframe="15m",
-        clarity_confidence=0.64,
+        clarity_confidence=0.55,
     )
 
     assert "market_regime_ranging" in reasons
@@ -423,7 +423,7 @@ def test_ready_continuation_pullback_is_promoted_to_triggered() -> None:
     assert promoted.bias == "Bullish"
 
 
-def test_breakout_requires_trending_regime_even_if_other_checks_pass() -> None:
+def test_breakout_requires_ranging_regime_blocks() -> None:
     service = SignalService.__new__(SignalService)
     service.settings = Settings(demo_mode=False)
 
@@ -433,8 +433,8 @@ def test_breakout_requires_trending_regime_even_if_other_checks_pass() -> None:
         bucket=bucket,
         flow_metrics=FlowMetrics(
             price_change_15m=0.01,
-            atr_15m=0.01,
-            compression_score_15m=0.2,
+            atr_15m=0.004,
+            compression_score_15m=0.7,
             oi_percentile_15m=0.6,
         ),
         timeframe="15m",

@@ -695,13 +695,12 @@ class MarketInterpreterEngine:
             clarity_confidence *= 0.7
         if trap_risk > 0.6:
             clarity_confidence *= 0.5
-            clarity_confidence = min(clarity_confidence, 0.59)
         if state_label in {"Compression", "Unclear"} or control == "Neutral":
-            clarity_confidence = min(clarity_confidence, 0.65)
+            clarity_confidence *= 0.85
         if distribution_risk["risk_label"] == "MEDIUM":
-            clarity_confidence = min(clarity_confidence * 0.85, 0.68)
+            clarity_confidence *= 0.85
         if distribution_risk["active"]:
-            clarity_confidence = min(clarity_confidence * 0.55, 0.49)
+            clarity_confidence *= 0.55
         clarity_confidence = round(self._clamp(clarity_confidence), 4)
 
         if distribution_risk["active"]:
@@ -710,7 +709,7 @@ class MarketInterpreterEngine:
         elif clarity_confidence < 0.35:
             action: ActionDirective = "NO TRADE"
             action_rationale = "Directional clarity is too low to justify a trade."
-        elif breakout_valid and not counter_trend and trap_risk < 0.6 and conflict_score < 0.45 and clarity_confidence >= 0.72:
+        elif breakout_valid and not counter_trend and trap_risk < 0.6 and conflict_score < 0.45 and clarity_confidence >= 0.68:
             action = "ENTER"
             action_rationale = "Structure, control, and flow are aligned and breakout validation is active."
         else:

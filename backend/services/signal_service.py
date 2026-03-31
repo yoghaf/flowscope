@@ -3807,7 +3807,7 @@ class SignalService:
         volume_z = getattr(flow_metrics, f"volume_z_{timeframe}", None)
         oi_delta_z = getattr(flow_metrics, f"oi_delta_z_{timeframe}", None)
 
-        if regime == "Ranging":
+        if regime == "Ranging" and volatility == "Low":
             reasons.append("market_regime_ranging")
         if volatility == "Low":
             reasons.append("volatility_regime_low")
@@ -3875,7 +3875,7 @@ class SignalService:
         buffer = self.settings.breakout_close_confirmation_buffer
 
         reasons: list[str] = []
-        if action.setup_type == "Breakout" and regime != "Trending":
+        if action.setup_type == "Breakout" and regime == "Ranging":
             reasons.append("breakout_requires_trending_regime")
         if direction > 0 and close_price < breakout_entry * (1.0 + buffer):
             reasons.append("breakout_close_not_confirmed")
@@ -3999,7 +3999,7 @@ class SignalService:
         compression = SignalService._metric_or_zero(getattr(metrics, f"compression_score_{timeframe}", 0.0))
         if abs(price_change) >= 0.025 or atr >= 0.018:
             return "Trending"
-        if compression >= 0.6 or atr <= 0.008:
+        if compression >= 0.65 or atr <= 0.005:
             return "Ranging"
         return "Balanced"
 
@@ -4008,7 +4008,7 @@ class SignalService:
         atr = SignalService._metric_or_zero(getattr(metrics, f"atr_{timeframe}", 0.0))
         if atr >= 0.02:
             return "High"
-        if atr <= 0.008:
+        if atr <= 0.005:
             return "Low"
         return "Medium"
 
