@@ -977,47 +977,6 @@ class SignalService:
             )
             positioning.debug_trace["market_interpretation"] = market_interpretation.to_dict()
             positioning = self._with_reliability(positioning, market_interpretation.clarity_confidence)
-            hard_entry_filter_reasons = self._entry_hard_filter_reasons(
-                flow_metrics=flow_metrics,
-                timeframe=timeframe,
-                clarity_confidence=market_interpretation.clarity_confidence,
-            )
-            if hard_entry_filter_reasons:
-                self._clear_ready_states(symbol, timeframe)
-                interpretation_payload = market_interpretation.to_dict()
-                interpretation_payload["entry_filters"] = {
-                    "passed": False,
-                    "stage": "hard_entry",
-                    "reasons": hard_entry_filter_reasons,
-                }
-                updated_states[timeframe] = self._mark_state_with_status(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    bucket=bucket,
-                    flow_metrics=flow_metrics,
-                    now=now,
-                    reason="hard_entry_filters",
-                    signal_status="NO_SIGNAL",
-                    data_status="VALID",
-                    market_state=state_assessment.state,
-                    state_confidence=state_assessment.confidence,
-                    state_probabilities=state_assessment.probabilities,
-                    score=self._signal_score(
-                        positioning=positioning,
-                        state_assessment=state_assessment,
-                        sharpness=sharpness,
-                    ),
-                    position_intent=positioning.intent,
-                    oi_intensity=positioning.oi_intensity,
-                    position_quality=positioning.position_quality,
-                    decision_type=positioning.decision,
-                    reliability_score=positioning.reliability_score,
-                    priority_multiplier=positioning.priority_multiplier,
-                    market_interpretation=interpretation_payload,
-                    previous_state=previous_state,
-                )
-                self.last_timeframe_update[(symbol, timeframe)] = now
-                continue
             if market_interpretation.action == "NO TRADE":
                 self._clear_ready_states(symbol, timeframe)
                 updated_states[timeframe] = self._mark_state_with_status(
@@ -1124,6 +1083,51 @@ class SignalService:
                     )
                     self.last_timeframe_update[(symbol, timeframe)] = now
                     continue
+
+            hard_entry_filter_reasons: list[str] = []
+            if action.status in {"Ready", "Triggered"}:
+                hard_entry_filter_reasons = self._entry_hard_filter_reasons(
+                    action=action,
+                    flow_metrics=flow_metrics,
+                    timeframe=timeframe,
+                    clarity_confidence=market_interpretation.clarity_confidence,
+                )
+            if hard_entry_filter_reasons:
+                self._clear_ready_states(symbol, timeframe)
+                interpretation_payload = market_interpretation.to_dict()
+                interpretation_payload["entry_filters"] = {
+                    "passed": False,
+                    "stage": "hard_entry",
+                    "reasons": hard_entry_filter_reasons,
+                }
+                updated_states[timeframe] = self._mark_state_with_status(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    bucket=bucket,
+                    flow_metrics=flow_metrics,
+                    now=now,
+                    reason="hard_entry_filters",
+                    signal_status="NO_SIGNAL",
+                    data_status="VALID",
+                    market_state=state_assessment.state,
+                    state_confidence=state_assessment.confidence,
+                    state_probabilities=state_assessment.probabilities,
+                    score=self._signal_score(
+                        positioning=positioning,
+                        state_assessment=state_assessment,
+                        sharpness=sharpness,
+                    ),
+                    position_intent=positioning.intent,
+                    oi_intensity=positioning.oi_intensity,
+                    position_quality=positioning.position_quality,
+                    decision_type=positioning.decision,
+                    reliability_score=positioning.reliability_score,
+                    priority_multiplier=positioning.priority_multiplier,
+                    market_interpretation=interpretation_payload,
+                    previous_state=previous_state,
+                )
+                self.last_timeframe_update[(symbol, timeframe)] = now
+                continue
 
             execution: ExecutionPlan | None = self.execution_engine.build_execution(
                 action=action,
@@ -3788,6 +3792,7 @@ class SignalService:
     def _entry_hard_filter_reasons(
         self,
         *,
+        action: ActionAssessment,
         flow_metrics: FlowMetrics,
         timeframe: str,
         clarity_confidence: float,
@@ -3804,10 +3809,11 @@ class SignalService:
             reasons.append("volatility_regime_low")
         if clarity_confidence < self.settings.entry_filter_min_clarity_confidence:
             reasons.append("clarity_below_threshold")
-        if volume_z is None or volume_z < self.settings.entry_filter_min_volume_z:
-            reasons.append("volume_z_below_threshold")
-        if oi_delta_z is None or abs(oi_delta_z) < self.settings.entry_filter_min_abs_oi_delta_z:
-            reasons.append("oi_delta_z_below_threshold")
+        if action.setup_type == "Breakout":
+            if volume_z is None or volume_z < self.settings.entry_filter_min_volume_z:
+                reasons.append("volume_z_below_threshold")
+            if oi_delta_z is None or abs(oi_delta_z) < self.settings.entry_filter_min_abs_oi_delta_z:
+                reasons.append("oi_delta_z_below_threshold")
         return reasons
 
     def _continuation_filter_reasons(

@@ -364,6 +364,7 @@ def test_hard_entry_filters_reject_ranging_or_low_volatility_setup() -> None:
     service.settings = Settings(demo_mode=False)
 
     reasons = service._entry_hard_filter_reasons(
+        action=SimpleNamespace(setup_type="Breakout", bias="Bullish", status="Triggered"),
         flow_metrics=FlowMetrics(
             price_change_15m=0.004,
             atr_15m=0.006,
@@ -372,12 +373,33 @@ def test_hard_entry_filters_reject_ranging_or_low_volatility_setup() -> None:
             oi_delta_z_15m=0.8,
         ),
         timeframe="15m",
-        clarity_confidence=0.79,
+        clarity_confidence=0.64,
     )
 
     assert "market_regime_ranging" in reasons
     assert "volatility_regime_low" in reasons
-    assert "clarity_below_threshold" not in reasons
+    assert "clarity_below_threshold" in reasons
+    assert "volume_z_below_threshold" not in reasons
+    assert "oi_delta_z_below_threshold" not in reasons
+
+
+def test_hard_entry_filters_do_not_force_breakout_anomaly_rules_on_continuation() -> None:
+    service = SignalService.__new__(SignalService)
+    service.settings = Settings(demo_mode=False)
+
+    reasons = service._entry_hard_filter_reasons(
+        action=SimpleNamespace(setup_type="Continuation", bias="Bullish", status="Ready"),
+        flow_metrics=FlowMetrics(
+            price_change_15m=0.01,
+            atr_15m=0.01,
+            compression_score_15m=0.2,
+            volume_z_15m=0.2,
+            oi_delta_z_15m=0.1,
+        ),
+        timeframe="15m",
+        clarity_confidence=0.70,
+    )
+
     assert "volume_z_below_threshold" not in reasons
     assert "oi_delta_z_below_threshold" not in reasons
 
