@@ -237,7 +237,7 @@ class ExecutionEngine:
         pullback_mode = action.setup_type == "Continuation" and action.status == "Ready" and (not breakout_valid or breakout_distance > max(float(profile["price_break"]), 0.02))
 
         entry = breakout_entry if not pullback_mode else current_price
-        atr_buffer = atr_abs * 1.5
+        atr_buffer = atr_abs * 1.0
 
         if direction == 1:
             invalidation = entry - atr_buffer

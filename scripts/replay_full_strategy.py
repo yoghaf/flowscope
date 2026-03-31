@@ -319,8 +319,8 @@ def _evaluate_trade_bucket(
     if trade.target_price_1 is not None and not trade.tp1_hit:
         if (direction > 0 and high_price >= trade.target_price_1) or (direction < 0 and low_price <= trade.target_price_1):
             trade.tp1_hit = True
-            # TP1 tracked for bookkeeping only — no trailing stop activation.
-            # Trades close at TP2 (win) or invalidation (loss) to maximise R:R.
+            # After TP1, trail stop to breakeven (entry price) so reversals = 0R not -1R
+            trade.trailing_stop_price = trade.entry_price
 
     exit_price = None
     hit_target_2 = False
@@ -338,6 +338,17 @@ def _evaluate_trade_bucket(
         exit_price = trade.target_price_2
         trade.result = "win"
         trade.close_reason = "Target 2"
+
+    # Trailing stop at breakeven after TP1
+    if exit_price is None and trade.tp1_hit and trade.trailing_stop_price is not None:
+        if direction > 0 and low_price <= trade.trailing_stop_price:
+            exit_price = trade.trailing_stop_price
+            trade.result = "breakeven"
+            trade.close_reason = "Breakeven Stop"
+        if direction < 0 and high_price >= trade.trailing_stop_price:
+            exit_price = trade.trailing_stop_price
+            trade.result = "breakeven"
+            trade.close_reason = "Breakeven Stop"
 
     risk_pct = (
         abs(trade.entry_price - trade.invalidation_price) / trade.entry_price * 100
