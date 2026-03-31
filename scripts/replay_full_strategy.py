@@ -23,10 +23,11 @@ from backend.database import DatabaseManager
 from backend.services.performance_engine import PerformanceEngine
 from backend.services.realtime import RealtimeHub
 from backend.services.signal_service import SignalService
-from backend.services.timeframe_aggregator import TIMEFRAME_ORDER, TimeframeBucket
+from backend.services.timeframe_aggregator import TIMEFRAME_DELTAS, TIMEFRAME_ORDER, TimeframeBucket
 
 
 DEFAULT_TIMEFRAMES = ("15m", "1h", "4h", "24h")
+BREAKEVEN_EPSILON = 1e-9
 
 
 @dataclass(slots=True)
@@ -77,6 +78,9 @@ class ReplayDatabase:
 
     async def load_open_trade_signals(self) -> list[TradeSignal]:
         return [trade for trade in self._trades if trade.result == "open"]
+
+    async def load_open_trade_signals_for_symbol(self, symbol: str) -> list[TradeSignal]:
+        return [trade for trade in self._trades if trade.result == "open" and trade.symbol == symbol]
 
     async def get_open_trade_signal(self, *, symbol: str, timeframe: str) -> TradeSignal | None:
         open_trades = [
@@ -210,6 +214,7 @@ async def replay_symbol(
     indices = {timeframe: 0 for timeframe in DEFAULT_TIMEFRAMES}
 
     for anchor_timestamp in timeline:
+        advanced_buckets: dict[str, list[TimeframeBucket]] = defaultdict(list)
         for timeframe in DEFAULT_TIMEFRAMES:
             timeframe_buckets = buckets.get(timeframe, [])
             while indices[timeframe] < len(timeframe_buckets):
@@ -217,10 +222,17 @@ async def replay_symbol(
                 if bucket.last_timestamp > anchor_timestamp:
                     break
                 service.aggregate_store.buckets[timeframe][symbol].append(bucket)
+                advanced_buckets[timeframe].append(bucket)
                 indices[timeframe] += 1
 
         await service._update_state(symbol, persist_alerts=False)
-        await service.trade_evaluator.evaluate()
+        await _evaluate_incremental_trades(
+            replay_db=replay_db,
+            service=service,
+            settings=settings,
+            symbol=symbol,
+            advanced_buckets=advanced_buckets,
+        )
         for timeframe in DEFAULT_TIMEFRAMES:
             current_state = service.states_by_timeframe.get(timeframe, {}).get(symbol)
             if current_state is None or not current_state.market_interpretation:
@@ -242,8 +254,167 @@ async def replay_symbol(
                 for reason in reasons:
                     diagnostics.reason_counts[reason] += 1
 
-    await service.trade_evaluator.evaluate()
     return await replay_db.list_trade_signals(), diagnostics
+
+
+def _current_flow_alignment(service: SignalService, *, symbol: str, timeframe: str) -> float | None:
+    state = service.states_by_timeframe.get(timeframe, {}).get(symbol)
+    if state is None or not state.market_interpretation:
+        return None
+    value = state.market_interpretation.get("flow_alignment")
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _evaluate_trade_bucket(
+    *,
+    trade: TradeSignal,
+    bucket: TimeframeBucket,
+    service: SignalService,
+    settings: Any,
+) -> None:
+    if trade.entry_price is None:
+        return
+
+    direction = 1 if trade.bias == "Bullish" else -1 if trade.bias == "Bearish" else 0
+    if direction == 0:
+        return
+
+    timeframe_delta = TIMEFRAME_DELTAS.get(trade.timeframe, TIMEFRAME_DELTAS["1h"])
+    timeout_window = timeframe_delta * max(settings.entry_touch_timeout_buckets, 1)
+    active_anchor = getattr(trade, "last_scale_in_at", None) or trade.entry_touched_at
+
+    high_price = bucket.high_price
+    low_price = bucket.low_price
+    price = bucket.close_price
+    entry_crossed_this_bucket = high_price >= trade.entry_price if direction > 0 else low_price <= trade.entry_price
+    trade_is_active = trade.entry_touched_at is not None or entry_crossed_this_bucket
+
+    if entry_crossed_this_bucket and trade.status != "Triggered":
+        trade.status = "Triggered"
+    if entry_crossed_this_bucket and trade.entry_touched_at is None:
+        trade.entry_touched_at = bucket.last_timestamp
+        trade_is_active = True
+        active_anchor = trade.entry_touched_at
+
+    if not trade_is_active:
+        if trade.entry_touched_at is None and bucket.last_timestamp - trade.timestamp >= timeout_window:
+            trade.result = "timeout"
+            trade.closed_at = bucket.last_timestamp
+            trade.close_reason = "Entry Never Touched"
+        return
+
+    if active_anchor is not None and bucket.last_timestamp <= active_anchor:
+        return
+
+    trade.pnl_pct = ((price - trade.entry_price) / trade.entry_price) * direction * 100
+    trade.max_profit_pct = max(trade.max_profit_pct, trade.pnl_pct)
+    trade.max_drawdown_pct = min(trade.max_drawdown_pct, trade.pnl_pct)
+
+    if trade.target_price_1 is not None and not trade.tp1_hit:
+        if direction > 0 and high_price >= trade.target_price_1:
+            trade.tp1_hit = True
+            trade.trailing_stop_price = trade.entry_price
+        if direction < 0 and low_price <= trade.target_price_1:
+            trade.tp1_hit = True
+            trade.trailing_stop_price = trade.entry_price
+
+    exit_price = None
+    hit_target_2 = False
+    hit_invalidation = False
+    if trade.target_price_2 is not None:
+        hit_target_2 = high_price >= trade.target_price_2 if direction > 0 else low_price <= trade.target_price_2
+    if trade.invalidation_price is not None:
+        hit_invalidation = low_price <= trade.invalidation_price if direction > 0 else high_price >= trade.invalidation_price
+
+    if hit_invalidation:
+        exit_price = trade.invalidation_price
+        trade.result = "loss"
+        trade.close_reason = "Invalidation"
+    elif hit_target_2:
+        exit_price = trade.target_price_2
+        trade.result = "win"
+        trade.close_reason = "Target 2"
+
+    if exit_price is None and trade.tp1_hit and trade.trailing_stop_price is not None:
+        if direction > 0 and low_price <= trade.trailing_stop_price:
+            exit_price = trade.trailing_stop_price
+            trade.result = (
+                "breakeven"
+                if abs(trade.trailing_stop_price - trade.entry_price) <= max(abs(trade.entry_price), 1.0) * BREAKEVEN_EPSILON
+                else "win"
+            )
+            trade.close_reason = "Breakeven Stop" if trade.result == "breakeven" else "Trailing Stop"
+        if direction < 0 and high_price >= trade.trailing_stop_price:
+            exit_price = trade.trailing_stop_price
+            trade.result = (
+                "breakeven"
+                if abs(trade.trailing_stop_price - trade.entry_price) <= max(abs(trade.entry_price), 1.0) * BREAKEVEN_EPSILON
+                else "win"
+            )
+            trade.close_reason = "Breakeven Stop" if trade.result == "breakeven" else "Trailing Stop"
+
+    risk_pct = (
+        abs(trade.entry_price - trade.invalidation_price) / trade.entry_price * 100
+        if trade.invalidation_price is not None and trade.entry_price > BREAKEVEN_EPSILON
+        else None
+    )
+    if exit_price is None and trade.entry_touched_at is not None:
+        elapsed_since_entry = bucket.last_timestamp - trade.entry_touched_at
+        fail_fast_window = timeframe_delta * max(settings.fail_fast_max_candles, 1)
+        if timeframe_delta <= elapsed_since_entry <= fail_fast_window:
+            mfe_r = (trade.max_profit_pct / risk_pct) if risk_pct and risk_pct > BREAKEVEN_EPSILON else None
+            price_failed_to_follow = mfe_r is not None and mfe_r < settings.fail_fast_min_mfe_r
+            current_flow_alignment = _current_flow_alignment(service, symbol=trade.symbol, timeframe=trade.timeframe)
+            flow_dropped = (
+                trade.entry_flow_alignment is not None
+                and current_flow_alignment is not None
+                and current_flow_alignment <= trade.entry_flow_alignment - settings.fail_fast_flow_drop
+            )
+            if (price_failed_to_follow or flow_dropped) and trade.pnl_pct < 0:
+                exit_price = price
+                trade.result = "loss"
+                trade.close_reason = "Fail-Fast Exit"
+
+    if exit_price is not None:
+        trade.pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
+        trade.closed_at = bucket.last_timestamp
+
+
+async def _evaluate_incremental_trades(
+    *,
+    replay_db: ReplayDatabase,
+    service: SignalService,
+    settings: Any,
+    symbol: str,
+    advanced_buckets: dict[str, list[TimeframeBucket]],
+) -> None:
+    open_trades = await replay_db.load_open_trade_signals_for_symbol(symbol)
+    if not open_trades:
+        return
+
+    trades_by_timeframe: dict[str, list[TradeSignal]] = defaultdict(list)
+    for trade in open_trades:
+        trades_by_timeframe[trade.timeframe].append(trade)
+
+    for timeframe, bucket_list in advanced_buckets.items():
+        if not bucket_list:
+            continue
+        candidate_trades = trades_by_timeframe.get(timeframe, [])
+        if not candidate_trades:
+            continue
+        for bucket in bucket_list:
+            for trade in list(candidate_trades):
+                if trade.result != "open":
+                    continue
+                _evaluate_trade_bucket(
+                    trade=trade,
+                    bucket=bucket,
+                    service=service,
+                    settings=settings,
+                )
 
 
 def summarize_trades(trades: list[TradeSignal]) -> ReplaySummary:
