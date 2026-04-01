@@ -370,7 +370,7 @@ def test_hard_entry_filters_reject_ranging_or_low_volatility_setup() -> None:
             atr_15m=0.003,
             compression_score_15m=0.7,
             volume_z_15m=1.3,
-            oi_delta_z_15m=1.0,
+            oi_delta_z_15m=1.2,
         ),
         timeframe="15m",
         clarity_confidence=0.55,
