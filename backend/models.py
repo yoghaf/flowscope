@@ -166,6 +166,7 @@ class TradeSignal(Base):
     pnl_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     max_drawdown_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     max_profit_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    entry_features: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -2553,6 +2553,7 @@ class SignalService:
             "pnl_pct": 0.0,
             "max_drawdown_pct": 0.0,
             "max_profit_pct": 0.0,
+            "entry_features": flow_metrics.model_dump(),
         }
         trade_id = await self.database.save_trade_signal(payload)
         if trade_id:

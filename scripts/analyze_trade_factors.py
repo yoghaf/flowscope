@@ -259,6 +259,33 @@ def main() -> int:
     analyze_top_bottom_symbols(trades)
     analyze_duration(trades)
 
+    # Dynamic feature breakdowns
+    if trades:
+        import statistics
+        feature_cols = sorted([k for k in trades[0].keys() if k.startswith("feat_")])
+        for col in feature_cols:
+            vals = [safe_float(t.get(col)) for t in trades]
+            vals = [v for v in vals if v is not None]
+            if not vals:
+                continue
+            unique_vals = set(vals)
+            label = col[5:].replace("_", " ").upper()
+            if len(unique_vals) <= 5:
+                # Treat as categorical
+                analyze_by_category(trades, col, label)
+            else:
+                try:
+                    q = statistics.quantiles(vals, n=4)
+                    buckets = [
+                        (-float('inf'), q[0]),
+                        (q[0], q[1]),
+                        (q[1], q[2]),
+                        (q[2], float('inf'))
+                    ]
+                    analyze_by_numeric_bucket(trades, col, label + " (Quartiles)", buckets)
+                except statistics.StatisticsError:
+                    pass
+
     return 0
 
 
