@@ -141,6 +141,15 @@ class TradeEvaluator:
                             result = "loss"
                             close_reason = "Fail-Fast Exit"
 
+                # Stale trade exit: close at market after 6 candles without TP1
+                if exit_price is None and not tp1_hit and entry_touched_at is not None:
+                    stale_window = timeframe_delta * 6
+                    elapsed_since_entry = bucket.last_timestamp - entry_touched_at
+                    if elapsed_since_entry >= stale_window and pnl_pct < 0:
+                        exit_price = price
+                        result = "loss"
+                        close_reason = "Stale Exit"
+
                 if exit_price is not None:
                     close_pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
                     # Blend 50% TP1 + 50% close for split-position model

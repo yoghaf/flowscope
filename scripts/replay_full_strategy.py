@@ -374,6 +374,15 @@ def _evaluate_trade_bucket(
                 trade.result = "loss"
                 trade.close_reason = "Fail-Fast Exit"
 
+    # Stale trade exit: close at market after 6 candles without TP1
+    if exit_price is None and not trade.tp1_hit and trade.entry_touched_at is not None:
+        stale_window = timeframe_delta * 6
+        elapsed_since_entry = bucket.last_timestamp - trade.entry_touched_at
+        if elapsed_since_entry >= stale_window and trade.pnl_pct < 0:
+            exit_price = price
+            trade.result = "loss"
+            trade.close_reason = "Stale Exit"
+
     if exit_price is not None:
         close_pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
         # Blend 50% TP1 + 50% close for split-position model

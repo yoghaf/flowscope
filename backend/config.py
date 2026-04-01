@@ -131,7 +131,7 @@ class Settings(BaseSettings):
     entry_touch_timeout_buckets: int = 2
     entry_notification_catchup_minutes: int = 60
     entry_filter_min_clarity_confidence: float = 0.78
-    entry_filter_min_volume_z: float = 1.10
+    entry_filter_min_volume_z: float = 1.25
     entry_filter_min_abs_oi_delta_z: float = 0.90
     entry_filter_max_oi_percentile: float = 0.85
     breakout_close_confirmation_buffer: float = 0.001
