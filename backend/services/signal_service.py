@@ -3814,6 +3814,21 @@ class SignalService:
             reasons.append("volatility_regime_low")
         if clarity_confidence < self.settings.entry_filter_min_clarity_confidence:
             reasons.append("clarity_below_threshold")
+        if not self.settings.entry_filter_allow_shorts and action.bias == "Bearish":
+            reasons.append("short_direction_disabled")
+        if flow_metrics.history_length_1h < self.settings.entry_filter_min_history_1h:
+            reasons.append("history_young_coin")
+        if flow_metrics.atr_24h < self.settings.entry_filter_min_atr_24h:
+            reasons.append("htf_volatility_dead")
+        if getattr(flow_metrics, "volume_change_4h", 0.0) < self.settings.entry_filter_min_volume_change_4h:
+            reasons.append("htf_volume_dried_up")
+        if flow_metrics.volume_z_15m is not None and flow_metrics.volume_z_15m > self.settings.entry_filter_max_volume_z_15m:
+            reasons.append("exhaustion_volume_climax")
+        if flow_metrics.oi_delta_z_15m is not None and flow_metrics.oi_delta_z_15m > self.settings.entry_filter_max_oi_delta_z_15m:
+            reasons.append("exhaustion_oi_climax")
+        if flow_metrics.liq_pressure_1h > self.settings.entry_filter_max_liq_pressure_1h:
+            reasons.append("exhaustion_liq_climax")
+
         if action.setup_type == "Breakout":
             if volume_z is None or volume_z < self.settings.entry_filter_min_volume_z:
                 reasons.append("volume_z_below_threshold")

@@ -134,6 +134,13 @@ class Settings(BaseSettings):
     entry_filter_min_volume_z: float = 1.25
     entry_filter_min_abs_oi_delta_z: float = 1.10
     entry_filter_max_oi_percentile: float = 0.85
+    entry_filter_min_history_1h: int = 48
+    entry_filter_max_volume_z_15m: float = 6.00
+    entry_filter_max_oi_delta_z_15m: float = 2.40
+    entry_filter_min_atr_24h: float = 0.05
+    entry_filter_min_volume_change_4h: float = -0.60
+    entry_filter_allow_shorts: bool = False
+    entry_filter_max_liq_pressure_1h: float = 0.23
     breakout_close_confirmation_buffer: float = 0.001
     breakout_max_late_entry_distance: float = 0.004
     continuation_min_flow_alignment: float = 0.70
