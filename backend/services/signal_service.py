@@ -3910,15 +3910,6 @@ class SignalService:
             reasons.append("high_compression_15m")
         if getattr(flow_metrics, "wick_ratio_24h", 1.0) < self.settings.entry_filter_min_wick_ratio_24h:
             reasons.append("tiny_wick_24h")
-        price_chg_4h = getattr(flow_metrics, "price_change_4h", 0.0)
-        if price_chg_4h is not None and abs(price_chg_4h) > self.settings.entry_filter_max_price_change_4h:
-            reasons.append("exhaustion_price_pump_4h")
-        funding_4h = getattr(flow_metrics, "funding_level_4h", 0.0)
-        if funding_4h is not None and abs(funding_4h) > self.settings.entry_filter_max_funding_level_4h:
-            reasons.append("extreme_funding_4h")
-        ls_delta_1h = getattr(flow_metrics, "long_short_ratio_delta_1h", 0.0)
-        if ls_delta_1h is not None and abs(ls_delta_1h) > self.settings.entry_filter_max_ls_ratio_delta_1h:
-            reasons.append("extreme_ls_shift_1h")
         if action.setup_type == "Breakout":
             if volume_z is None or volume_z < self.settings.entry_filter_min_volume_z:
                 reasons.append("volume_z_below_threshold")
