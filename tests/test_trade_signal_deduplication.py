@@ -275,6 +275,11 @@ def test_trade_signal_persists_clarity_confidence_and_entry_flow_alignment() -> 
             market_regime="Trending",
             volatility_regime="High",
             setup_type="Continuation",
+            scenario_label="efficient_build",
+            scenario_score=0.88,
+            scenario_disposition="allow",
+            scenario_rationale="Aligned build with healthy propulsion.",
+            scenario_reasons=["structured_build", "aligned_pressure"],
             action_opportunity_score=0.91,
             market_interpretation={
                 "clarity_confidence": 0.91,
@@ -327,6 +332,11 @@ def test_trade_signal_persists_clarity_confidence_and_entry_flow_alignment() -> 
         assert payload["entry_features"]["decision_setup_type"] == "Continuation"
         assert payload["entry_features"]["decision_signal"] == "Breakout Watch"
         assert payload["entry_features"]["action_opportunity_score"] == 0.91
+        assert payload["entry_features"]["scenario_label"] == "efficient_build"
+        assert payload["entry_features"]["scenario_score"] == 0.88
+        assert payload["entry_features"]["scenario_disposition"] == "allow"
+        assert payload["entry_features"]["scenario_rationale"] == "Aligned build with healthy propulsion."
+        assert payload["entry_features"]["scenario_reasons"] == "structured_build, aligned_pressure"
         assert payload["entry_features"]["decision_bias"] == "Bullish"
         assert payload["entry_features"]["decision_setup_gate"] == "Continuation"
         assert payload["entry_features"]["decision_status"] == "Triggered"

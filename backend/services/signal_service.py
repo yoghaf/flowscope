@@ -6,7 +6,7 @@ import logging
 import math
 import random
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -14,6 +14,7 @@ from backend.config import Settings, TIMEFRAME_PROFILES
 from backend.data_collector.base import ExchangeSnapshot
 from backend.data_collector.binance_collector import BinanceCollector
 from backend.database import DatabaseManager
+from backend.engines.context_bridge import ContextBridgeEngine
 from backend.engines.execution_engine import ActionAssessment, ExecutionEngine, ExecutionPlan
 from backend.engines.flow_engine import HistoryPoint
 from backend.engines.market_interpreter import MarketInterpretationAssessment, MarketInterpreterEngine
@@ -31,6 +32,7 @@ from backend.schemas import (
     DataStatus,
     DashboardMetrics,
     DashboardResponse,
+    ContextScenarioSnapshot,
     DebugTrace,
     ExecutionSnapshot,
     FlowMetrics,
@@ -117,6 +119,11 @@ class AssetState:
     phase: str = "Neutral"
     phase_score: float = 0.0
     phase_confidence: float = 0.0
+    scenario_label: str = "mixed_context"
+    scenario_score: float = 0.0
+    scenario_disposition: str = "observe"
+    scenario_rationale: str = "Context remains mixed; keep observing."
+    scenario_reasons: list[str] = field(default_factory=list)
     debug_trace: dict[str, Any] | None = None
     market_interpretation: dict[str, Any] | None = None
 
@@ -139,6 +146,7 @@ class SignalService:
         self.state_engine = StateEngine()
         self.execution_engine = ExecutionEngine()
         self.market_interpreter = MarketInterpreterEngine()
+        self.context_bridge = ContextBridgeEngine()
         self.positioning_engine = PositioningEngine()
         self.sharpness_filter = SharpnessFilter()
         self.phase_engine = PhaseEngine()
@@ -1211,6 +1219,14 @@ class SignalService:
                 sharpness=sharpness,
             )
             breakdown = self._score_breakdown(flow_metrics, timeframe, profile)
+            scenario = self.context_bridge.assess(
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                state=state_assessment,
+                action=action,
+                market_interpretation=market_interpretation,
+                phase=phase_result,
+            )
             self.aggregate_store.apply_signal(
                 symbol,
                 timeframe,
@@ -1269,9 +1285,15 @@ class SignalService:
                 phase=phase_result.phase,
                 phase_score=phase_result.phase_score,
                 phase_confidence=phase_result.phase_confidence,
+                scenario_label=scenario.label,
+                scenario_score=scenario.score,
+                scenario_disposition=scenario.disposition,
+                scenario_rationale=scenario.rationale,
+                scenario_reasons=list(scenario.reasons),
                 debug_trace=positioning.debug_trace,
                 market_interpretation={
                     **market_interpretation.to_dict(),
+                    "scenario": scenario.to_dict(),
                     "entry_filters": {
                         "passed": True,
                         "stage": "follow_through" if followthrough_pending else "pass",
@@ -1675,6 +1697,13 @@ class SignalService:
             phase=asset.phase,
             phase_score=asset.phase_score,
             phase_confidence=asset.phase_confidence,
+            scenario=ContextScenarioSnapshot(
+                label=asset.scenario_label,
+                score=asset.scenario_score,
+                disposition=asset.scenario_disposition,
+                rationale=asset.scenario_rationale,
+                reasons=list(asset.scenario_reasons),
+            ),
             market_interpretation=(
                 MarketInterpretationSnapshot(**asset.market_interpretation)
                 if asset.market_interpretation is not None
@@ -1768,6 +1797,15 @@ class SignalService:
             phase=snapshot.phase,
             phase_score=snapshot.phase_score,
             phase_confidence=snapshot.phase_confidence,
+            scenario_label=snapshot.scenario.label if snapshot.scenario is not None else "mixed_context",
+            scenario_score=snapshot.scenario.score if snapshot.scenario is not None else 0.0,
+            scenario_disposition=snapshot.scenario.disposition if snapshot.scenario is not None else "observe",
+            scenario_rationale=(
+                snapshot.scenario.rationale
+                if snapshot.scenario is not None
+                else "Context remains mixed; keep observing."
+            ),
+            scenario_reasons=list(snapshot.scenario.reasons) if snapshot.scenario is not None else [],
             debug_trace=snapshot.debug_trace.model_dump() if snapshot.debug_trace is not None else None,
             market_interpretation=(
                 snapshot.market_interpretation.model_dump()
@@ -4164,6 +4202,26 @@ class SignalService:
         action_opportunity_score = getattr(asset_state, "action_opportunity_score", None)
         if isinstance(action_opportunity_score, (int, float)):
             features["action_opportunity_score"] = float(action_opportunity_score)
+
+        scenario_label = getattr(asset_state, "scenario_label", None)
+        if isinstance(scenario_label, str):
+            features["scenario_label"] = scenario_label
+
+        scenario_score = getattr(asset_state, "scenario_score", None)
+        if isinstance(scenario_score, (int, float)):
+            features["scenario_score"] = float(scenario_score)
+
+        scenario_disposition = getattr(asset_state, "scenario_disposition", None)
+        if isinstance(scenario_disposition, str):
+            features["scenario_disposition"] = scenario_disposition
+
+        scenario_rationale = getattr(asset_state, "scenario_rationale", None)
+        if isinstance(scenario_rationale, str):
+            features["scenario_rationale"] = scenario_rationale
+
+        scenario_reasons = getattr(asset_state, "scenario_reasons", None)
+        if isinstance(scenario_reasons, list) and scenario_reasons:
+            features["scenario_reasons"] = ", ".join(str(reason) for reason in scenario_reasons)
 
         features["decision_bias"] = action.bias
         features["decision_setup_gate"] = action.setup_type

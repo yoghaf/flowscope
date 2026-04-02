@@ -250,6 +250,14 @@ class MarketInterpretationSnapshot(BaseModel):
     self_critique: str = "Higher-timeframe and execution context remain incomplete."
 
 
+class ContextScenarioSnapshot(BaseModel):
+    label: str = "mixed_context"
+    score: float = 0.0
+    disposition: str = "observe"
+    rationale: str = "Context remains mixed; keep observing."
+    reasons: list[str] = Field(default_factory=list)
+
+
 class AssetSnapshot(BaseModel):
     symbol: str
     name: str
@@ -291,6 +299,7 @@ class AssetSnapshot(BaseModel):
     phase: str = "Neutral"
     phase_score: float = 0.0
     phase_confidence: float = 0.0
+    scenario: ContextScenarioSnapshot | None = None
     market_interpretation: MarketInterpretationSnapshot | None = None
     execution: ExecutionSnapshot | None = None
     debug_trace: DebugTrace | None = None
