@@ -3846,6 +3846,24 @@ class SignalService:
         if isinstance(pending_followthrough, dict):
             pending_followthrough.pop((symbol, timeframe), None)
 
+    def _global_btc_trend(self) -> str:
+        """Determines global market trend by inspecting BTCUSDT HTF state."""
+        try:
+            for tf in ["4h", "1h", "15m"]:
+                states = self.states_by_timeframe.get(tf, {})
+                btc_state = states.get("BTCUSDT")
+                if btc_state and not self._is_placeholder_state(btc_state):
+                    market_interp = getattr(btc_state, "market_interpretation", {})
+                    htf_trend = market_interp.get("higher_timeframe_trend", "Neutral") if isinstance(market_interp, dict) else "Neutral"
+                    if htf_trend in ["Bullish", "Bearish"]:
+                        return htf_trend
+                    bias = getattr(btc_state, "action_bias", "Neutral")
+                    if bias in ["Bullish", "Bearish"]:
+                        return bias
+            return "Neutral"
+        except Exception:
+            return "Neutral"
+
     def _entry_hard_filter_reasons(
         self,
         *,
@@ -3866,8 +3884,12 @@ class SignalService:
             reasons.append("volatility_regime_low")
         if clarity_confidence < self.settings.entry_filter_min_clarity_confidence:
             reasons.append("clarity_below_threshold")
-        if not self.settings.entry_filter_allow_shorts and action.bias == "Bearish":
-            reasons.append("short_direction_disabled")
+            
+        if action.bias == "Bearish":
+            if not self.settings.entry_filter_allow_shorts:
+                # Dynamic context: only allow logic-defying short blocks if BTC is not Bearish
+                if self._global_btc_trend() != "Bearish":
+                    reasons.append("short_direction_disabled")
         if flow_metrics.history_length_1h < self.settings.entry_filter_min_history_1h:
             reasons.append("history_young_coin")
         if flow_metrics.atr_24h < self.settings.entry_filter_min_atr_24h:
