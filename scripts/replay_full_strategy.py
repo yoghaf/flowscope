@@ -49,15 +49,97 @@ class ReplayDiagnostics:
     pass_counts: Counter[str]
 
 
+@dataclass(slots=True)
+class ReplaySoftGateConfig:
+    enabled: bool = False
+
+
+def _safe_float(value: object) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _context_soft_gate_reasons(
+    payload: dict[str, object],
+    *,
+    config: ReplaySoftGateConfig,
+) -> list[str]:
+    if not config.enabled:
+        return []
+
+    bias = str(payload.get("bias") or "")
+    setup_type = str(payload.get("setup_type") or "")
+    state = str(payload.get("state") or "")
+    if bias != "Bullish" or setup_type != "Continuation":
+        return []
+
+    features = payload.get("entry_features")
+    if not isinstance(features, dict):
+        return []
+
+    reasons: list[str] = []
+    taker_delta_4h = _safe_float(features.get("taker_buy_sell_ratio_delta_4h"))
+    taker_level_4h = _safe_float(features.get("taker_buy_sell_ratio_level_4h"))
+    oi_percentile_1h = _safe_float(features.get("oi_percentile_1h"))
+    oi_percentile_4h = _safe_float(features.get("oi_percentile_4h"))
+    volume_change_4h = _safe_float(features.get("volume_change_4h"))
+    price_change_4h = _safe_float(features.get("price_change_4h"))
+
+    if (
+        taker_delta_4h is not None
+        and taker_level_4h is not None
+        and taker_delta_4h < -0.07
+        and taker_level_4h < -0.03
+    ):
+        reasons.append("soft_gate_bearish_4h_taker_context")
+
+    if (
+        oi_percentile_1h is not None
+        and oi_percentile_4h is not None
+        and oi_percentile_1h < 0.46
+        and oi_percentile_4h < 0.47
+    ):
+        reasons.append("soft_gate_low_htf_oi_percentile")
+
+    if (
+        state == "Expansion"
+        and volume_change_4h is not None
+        and price_change_4h is not None
+        and volume_change_4h > 3.17
+        and price_change_4h > 0.18
+    ):
+        reasons.append("soft_gate_late_expansion_climax")
+
+    return reasons
+
+
 class ReplayDatabase:
-    def __init__(self, buckets: dict[str, dict[str, list[TimeframeBucket]]]) -> None:
+    def __init__(
+        self,
+        buckets: dict[str, dict[str, list[TimeframeBucket]]],
+        *,
+        soft_gate: ReplaySoftGateConfig | None = None,
+        diagnostics: ReplayDiagnostics | None = None,
+    ) -> None:
         self.enabled = True
         self._buckets = buckets
         self._trades: list[TradeSignal] = []
         self._trade_index: dict[int, TradeSignal] = {}
         self._next_trade_id = 1
+        self._soft_gate = soft_gate or ReplaySoftGateConfig(enabled=False)
+        self._diagnostics = diagnostics
 
     async def save_trade_signal(self, payload: dict[str, object]) -> int | None:
+        gate_reasons = _context_soft_gate_reasons(payload, config=self._soft_gate)
+        if gate_reasons:
+            if self._diagnostics is not None:
+                self._diagnostics.stage_counts["replay_soft_gate"] += 1
+                for reason in gate_reasons:
+                    self._diagnostics.reason_counts[reason] += 1
+            return None
+
         trade_id = self._next_trade_id
         self._next_trade_id += 1
         timestamp = payload.get("timestamp")
@@ -173,6 +255,11 @@ def parse_args() -> argparse.Namespace:
         default=str(REPO_ROOT / "replay-performance-summary.json"),
         help="Output JSON summary path",
     )
+    parser.add_argument(
+        "--context-soft-gate",
+        action="store_true",
+        help="Replay-only soft gate using context-reason combos; does not affect live engine.",
+    )
     return parser.parse_args()
 
 
@@ -212,14 +299,18 @@ async def replay_symbol(
     symbol: str,
     buckets: dict[str, list[TimeframeBucket]],
 ) -> tuple[list[TradeSignal], ReplayDiagnostics]:
-    replay_db = ReplayDatabase({symbol: buckets})
-    service = SignalService(settings, replay_db, RealtimeHub())
-    service.symbols = [symbol]
     diagnostics = ReplayDiagnostics(
         stage_counts=Counter(),
         reason_counts=Counter(),
         pass_counts=Counter(),
     )
+    replay_db = ReplayDatabase(
+        {symbol: buckets},
+        soft_gate=ReplaySoftGateConfig(enabled=getattr(settings, "replay_context_soft_gate_enabled", False)),
+        diagnostics=diagnostics,
+    )
+    service = SignalService(settings, replay_db, RealtimeHub())
+    service.symbols = [symbol]
     seen_filter_events: set[tuple[str, datetime, str, bool, tuple[str, ...]]] = set()
 
     # Use closed bucket boundaries instead of every sample timestamp for speed
@@ -486,6 +577,7 @@ async def _replay_one(
 async def main() -> int:
     args = parse_args()
     settings = get_settings()
+    settings.replay_context_soft_gate_enabled = bool(args.context_soft_gate)
     source_db = DatabaseManager(settings)
     source_db.enabled = True
 
@@ -562,6 +654,7 @@ async def main() -> int:
         "symbols_replayed": len(grouped),
         "replay_elapsed_seconds": round(replay_elapsed, 1),
         "workers": args.workers,
+        "context_soft_gate_enabled": bool(args.context_soft_gate),
         "summary": {
             "trade_count": summary.trade_count,
             "open_count": summary.open_count,
