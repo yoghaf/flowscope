@@ -15,7 +15,7 @@ from backend.database import DatabaseManager
 async def main():
     settings = Settings()
     db = DatabaseManager(settings)
-    await db.initialize()
+    await db.init()
     
     print("Fetching historical trades from Database...")
     trades = await db.list_trade_signals()
