@@ -2464,7 +2464,7 @@ class SignalService:
             return
         if action.status != "Triggered":
             return
-        if execution.entry_min is None or execution.invalidation is None or execution.target is None:
+        if execution is None or execution.entry_min is None or execution.invalidation is None or execution.target is None:
             return
 
         key = (symbol, timeframe, state.state)
