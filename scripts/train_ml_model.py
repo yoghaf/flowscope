@@ -10,11 +10,11 @@ import sys
 # Inject root directory into python path to allow absolute imports from 'backend'
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from backend.config import Settings
-from backend.database import Database
+from backend.database import DatabaseManager
 
 async def main():
     settings = Settings()
-    db = Database(settings)
+    db = DatabaseManager(settings)
     await db.initialize()
     
     print("Fetching historical trades from Database...")
