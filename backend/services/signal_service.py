@@ -2424,6 +2424,14 @@ class SignalService:
         if vol_z_4h is not None and vol_z_4h > 1.20:
             insights.append("🟢 Ledakan Volume 4H: Likuiditas institusi masuk secara masif tanpa indikasi climax.")
 
+        comp_score = getattr(flow_metrics, "compression_score_15m", 1.0)
+        if comp_score is not None and comp_score < 0.30:
+            insights.append(f"🟢 Momentum Bebas: Harga terpantau lepas dari zona sideway sempit (Compression: {comp_score:.2f}).")
+
+        wick_ratio = getattr(flow_metrics, "wick_ratio_24h", 0.0)
+        if wick_ratio is not None and wick_ratio > 0.05:
+            insights.append(f"🟢 Wick Reject: Terdapat penolakan harga skala harian (Wick > 5%).")
+
         liq_pressure_1h = getattr(flow_metrics, "liq_pressure_1h", 0.0)
         if bias == "Bullish" and liq_pressure_1h < -0.40:
             insights.append("🟢 Short Squeeze: Tekanan likuidasi negatif menjebak posisi Short, memicu lonjakan harga.")
