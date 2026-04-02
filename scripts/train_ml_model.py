@@ -5,7 +5,10 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
 import joblib
+import sys
 
+# Inject root directory into python path to allow absolute imports from 'backend'
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from backend.config import Settings
 from backend.database import Database
 
