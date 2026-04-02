@@ -27,6 +27,9 @@ class FakeDatabase:
     async def has_trade_signal_event(self, **_: object) -> bool:
         return self.has_duplicate
 
+    async def is_token_cooling_down(self, **_: object) -> bool:
+        return False
+
     async def save_trade_signal(self, payload: dict[str, object]) -> int | None:
         self.saved_payloads.append(payload)
         return 1
@@ -266,8 +269,27 @@ def test_trade_signal_persists_clarity_confidence_and_entry_flow_alignment() -> 
         )
         asset_state = SimpleNamespace(
             signal="Breakout Watch",
+            phase="Pump",
+            phase_score=0.84,
+            phase_confidence=0.77,
+            market_regime="Trending",
+            volatility_regime="High",
+            setup_type="Continuation",
             action_opportunity_score=0.91,
-            market_interpretation={"clarity_confidence": 0.91, "flow_alignment": 0.73},
+            market_interpretation={
+                "clarity_confidence": 0.91,
+                "flow_alignment": 0.73,
+                "structure_strength": 0.68,
+                "trap_risk": 0.14,
+                "conflict_score": 0.09,
+                "trend_alignment": 0.81,
+                "trend": "Bullish",
+                "control": "Buyer Dominant",
+                "state": "Trend continuation",
+                "structure_label": "HH/HL",
+                "structure_shift": "Bullish BOS",
+                "action": "ENTER",
+            },
         )
 
         await service._maybe_record_trade_signal(
@@ -285,6 +307,29 @@ def test_trade_signal_persists_clarity_confidence_and_entry_flow_alignment() -> 
         payload = service.database.saved_payloads[0]
         assert payload["confidence"] == 0.91
         assert payload["entry_flow_alignment"] == 0.73
+        assert payload["entry_features"]["clarity_confidence"] == 0.91
+        assert payload["entry_features"]["flow_alignment"] == 0.73
+        assert payload["entry_features"]["structure_strength"] == 0.68
+        assert payload["entry_features"]["trap_risk"] == 0.14
+        assert payload["entry_features"]["conflict_score"] == 0.09
+        assert payload["entry_features"]["trend_alignment"] == 0.81
+        assert payload["entry_features"]["trend"] == "Bullish"
+        assert payload["entry_features"]["control"] == "Buyer Dominant"
+        assert payload["entry_features"]["state"] == "Trend continuation"
+        assert payload["entry_features"]["structure_label"] == "HH/HL"
+        assert payload["entry_features"]["structure_shift"] == "Bullish BOS"
+        assert payload["entry_features"]["action"] == "ENTER"
+        assert payload["entry_features"]["phase"] == "Pump"
+        assert payload["entry_features"]["phase_score"] == 0.84
+        assert payload["entry_features"]["phase_confidence"] == 0.77
+        assert payload["entry_features"]["decision_market_regime"] == "Trending"
+        assert payload["entry_features"]["decision_volatility_regime"] == "High"
+        assert payload["entry_features"]["decision_setup_type"] == "Continuation"
+        assert payload["entry_features"]["decision_signal"] == "Breakout Watch"
+        assert payload["entry_features"]["action_opportunity_score"] == 0.91
+        assert payload["entry_features"]["decision_bias"] == "Bullish"
+        assert payload["entry_features"]["decision_setup_gate"] == "Continuation"
+        assert payload["entry_features"]["decision_status"] == "Triggered"
 
     asyncio.run(run())
 

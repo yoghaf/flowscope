@@ -2582,8 +2582,11 @@ class SignalService:
         volatility = self._volatility_regime(flow_metrics, timeframe)
         clarity_confidence = self._trade_confidence_from_asset_state(asset_state, state.confidence)
         entry_flow_alignment = self._entry_flow_alignment_from_asset_state(asset_state)
-        features = flow_metrics.model_dump()
-        features["insights"] = self._generate_trade_insights(flow_metrics, action.bias)
+        features = self._entry_features_from_context(
+            flow_metrics=flow_metrics,
+            action=action,
+            asset_state=asset_state,
+        )
 
         payload = {
             "symbol": symbol,
@@ -4098,6 +4101,74 @@ class SignalService:
             return float(value) if value is not None else None
         except (TypeError, ValueError):
             return None
+
+    def _entry_features_from_context(
+        self,
+        *,
+        flow_metrics: FlowMetrics,
+        action: ActionAssessment,
+        asset_state: AssetState | Any,
+    ) -> dict[str, Any]:
+        features = flow_metrics.model_dump()
+        features["insights"] = self._generate_trade_insights(flow_metrics, action.bias)
+
+        market_interpretation = getattr(asset_state, "market_interpretation", None)
+        if isinstance(market_interpretation, dict):
+            interpretive_fields = (
+                "clarity_confidence",
+                "flow_alignment",
+                "structure_strength",
+                "trap_risk",
+                "conflict_score",
+                "trend_alignment",
+                "trend",
+                "control",
+                "state",
+                "structure_label",
+                "structure_shift",
+                "action",
+            )
+            for field in interpretive_fields:
+                value = market_interpretation.get(field)
+                if isinstance(value, (int, float, bool, str)):
+                    features[field] = value
+
+        phase_value = getattr(asset_state, "phase", None)
+        if isinstance(phase_value, str):
+            features["phase"] = phase_value
+
+        phase_score = getattr(asset_state, "phase_score", None)
+        if isinstance(phase_score, (int, float)):
+            features["phase_score"] = float(phase_score)
+
+        phase_confidence = getattr(asset_state, "phase_confidence", None)
+        if isinstance(phase_confidence, (int, float)):
+            features["phase_confidence"] = float(phase_confidence)
+
+        market_regime = getattr(asset_state, "market_regime", None)
+        if isinstance(market_regime, str):
+            features["decision_market_regime"] = market_regime
+
+        volatility_regime = getattr(asset_state, "volatility_regime", None)
+        if isinstance(volatility_regime, str):
+            features["decision_volatility_regime"] = volatility_regime
+
+        setup_type = getattr(asset_state, "setup_type", None)
+        if isinstance(setup_type, str):
+            features["decision_setup_type"] = setup_type
+
+        signal_value = getattr(asset_state, "signal", None)
+        if isinstance(signal_value, str):
+            features["decision_signal"] = signal_value
+
+        action_opportunity_score = getattr(asset_state, "action_opportunity_score", None)
+        if isinstance(action_opportunity_score, (int, float)):
+            features["action_opportunity_score"] = float(action_opportunity_score)
+
+        features["decision_bias"] = action.bias
+        features["decision_setup_gate"] = action.setup_type
+        features["decision_status"] = action.status
+        return features
 
     def _apply_followthrough_gate(
         self,
