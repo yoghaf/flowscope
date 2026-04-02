@@ -2416,35 +2416,58 @@ class SignalService:
         return warmed
 
     def _generate_trade_insights(self, flow_metrics: FlowMetrics, bias: str) -> list[str]:
-        insights = []
-        if flow_metrics.atr_24h > 0.08:
-            insights.append("🟢 HTF Volatility: Pergerakan harian stabil, memberikan ruang momentum yang luas (ATR24H > 0.08).")
-        
-        vol_z_4h = getattr(flow_metrics, "volume_z_4h", 0.0)
-        if vol_z_4h is not None and vol_z_4h > 1.20:
-            insights.append("🟢 Ledakan Volume 4H: Likuiditas institusi masuk secara masif tanpa indikasi climax.")
+        insights: list[str] = []
+        direction = "Long" if bias == "Bullish" else "Short" if bias == "Bearish" else "Netral"
 
-        comp_score = getattr(flow_metrics, "compression_score_15m", 1.0)
-        if comp_score is not None and comp_score < 0.30:
-            insights.append(f"🟢 Momentum Bebas: Harga terpantau lepas dari zona sideway sempit (Compression: {comp_score:.2f}).")
+        # --- 1. OI Persistence (Institutional vs Retail) ---
+        oi_1h = getattr(flow_metrics, "oi_change_1h", 0.0) or 0.0
+        oi_4h = getattr(flow_metrics, "oi_change_4h", 0.0) or 0.0
+        oi_24h = getattr(flow_metrics, "oi_change_24h", 0.0) or 0.0
+        if oi_4h > 0 and oi_24h > 0:
+            insights.append(f"🏦 OI Bertahan di 4H & 24H → Posisi institusi REAL, bukan spike sesaat")
+        elif oi_1h > 0 and oi_4h <= 0:
+            insights.append(f"⚠️ OI naik di 1H tapi FLAT/turun di 4H → Hati-hati, bisa jadi spike retail sementara")
 
-        wick_ratio = getattr(flow_metrics, "wick_ratio_24h", 0.0)
-        if wick_ratio is not None and wick_ratio > 0.05:
-            insights.append(f"🟢 Wick Reject: Terdapat penolakan harga skala harian (Wick > 5%).")
+        # --- 2. Market Behavior Classification ---
+        liq_pressure_1h = getattr(flow_metrics, "liq_pressure_1h", 0.0) or 0.0
+        funding_1h = getattr(flow_metrics, "funding_level_1h", 0.0) or 0.0
+        market_pressure_4h = getattr(flow_metrics, "market_pressure_4h", 0.0) or 0.0
 
-        liq_pressure_1h = getattr(flow_metrics, "liq_pressure_1h", 0.0)
         if bias == "Bullish" and liq_pressure_1h < -0.40:
-            insights.append("🟢 Short Squeeze: Tekanan likuidasi negatif menjebak posisi Short, memicu lonjakan harga.")
+            insights.append("💥 Short Squeeze terdeteksi → Posisi Short dipaksa tutup, harga terdorong naik")
         elif bias == "Bearish" and liq_pressure_1h > 0.40:
-            insights.append("🟢 Long Squeeze: Tekanan likuidasi positif membuang volume Long berlebih ke bawah.")
+            insights.append("💥 Long Squeeze terdeteksi → Posisi Long ter-likuidasi, tekanan jual besar")
 
-        oi_percent_1h = getattr(flow_metrics, "oi_percentile_1h", 0.0)
-        if oi_percent_1h > 0.80:
-            insights.append("🟢 Open Interest (OI) Berat: Volume kontrak turunan sangat proaktif merespon pergerakan ini.")
+        if bias == "Bullish" and market_pressure_4h > 0.5:
+            insights.append("🟢 Tekanan Beli dominan di 4H → Pembeli mengendalikan pasar")
+        elif bias == "Bearish" and market_pressure_4h < -0.5:
+            insights.append("🔴 Tekanan Jual dominan di 4H → Penjual mengendalikan pasar")
+
+        # --- 3. Funding Rate Context ---
+        funding_extreme = getattr(flow_metrics, "funding_extreme_1h", False)
+        if funding_extreme and bias == "Bullish":
+            insights.append("⚠️ Funding Rate tinggi → Pasar sudah ramai Long, waspada koreksi")
+        elif funding_extreme and bias == "Bearish":
+            insights.append("⚠️ Funding Rate sangat negatif → Pasar sudah ramai Short, waspada bounce")
+
+        # --- 4. Volume Confirmation ---
+        vol_z_4h = getattr(flow_metrics, "volume_z_4h", 0.0) or 0.0
+        vol_change_4h = getattr(flow_metrics, "volume_change_4h", 0.0) or 0.0
+        if vol_z_4h > 2.0:
+            insights.append(f"📊 Volume 4H sangat tinggi (Z={vol_z_4h:.1f}x) → Aktivitas institusi besar")
+        elif vol_change_4h < -0.5:
+            insights.append("⚠️ Volume 4H menurun → Pergerakan ini kurang didukung likuiditas baru")
+
+        # --- 5. HTF Volatility ---
+        atr_24h = getattr(flow_metrics, "atr_24h", 0.0) or 0.0
+        if atr_24h > 0.10:
+            insights.append(f"🔥 Volatilitas harian tinggi (ATR={atr_24h:.1%}) → Potensi swing besar")
+        elif atr_24h < 0.03:
+            insights.append(f"😴 Volatilitas harian rendah (ATR={atr_24h:.1%}) → Pergerakan mungkin lambat")
 
         if not insights:
-            insights.append("🟢 Momentum Setup: Distribusi Orderflow secara umum mendukung konfirmasi Setup.")
-        
+            insights.append(f"📈 Setup {direction} terkonfirmasi oleh flow data multi-timeframe")
+
         return insights
 
     async def _maybe_record_trade_signal(
@@ -3335,44 +3358,72 @@ class SignalService:
         frontend = self.settings.frontend_url.rstrip("/")
         detail_url = f"{frontend}/coin/{symbol}?timeframe={timeframe}&snapshot_id=latest"
 
+        direction_emoji = "🟢" if escaped_bias == "Bullish" else "🔴" if escaped_bias == "Bearish" else "⚪"
+        direction_label = "LONG" if escaped_bias == "Bullish" else "SHORT" if escaped_bias == "Bearish" else "NETRAL"
+
+        # --- Header ---
+        body = [
+            f"{direction_emoji} <b>#{escaped_symbol} — {direction_label}</b>",
+            f"<i>{escaped_setup} | {escaped_timeframe} | {escaped_market_state}</i>",
+            "",
+        ]
+
+        # --- Execution Levels with R:R ---
+        if state.execution is not None:
+            entry = state.execution.entry_min
+            sl = state.execution.invalidation
+            tp1 = state.execution.target_1
+            tp2 = state.execution.target_2
+
+            if entry is not None and sl is not None:
+                risk_pct = abs(entry - sl) / entry * 100
+                body.append(f"📍 <b>Entry</b>:  <code>{entry:.6f}</code>")
+                body.append(f"🛑 <b>Stop Loss</b>:  <code>{sl:.6f}</code>  ({risk_pct:.1f}% risiko)")
+
+                if tp1 is not None:
+                    reward_1 = abs(tp1 - entry) / abs(entry - sl) if abs(entry - sl) > 0 else 0
+                    body.append(f"🎯 <b>Target 1</b>:  <code>{tp1:.6f}</code>  (R:R = 1:{reward_1:.1f})")
+                    body.append(f"   <i>→ Amankan 50% posisi, pindah SL ke Entry</i>")
+                if tp2 is not None:
+                    reward_2 = abs(tp2 - entry) / abs(entry - sl) if abs(entry - sl) > 0 else 0
+                    body.append(f"🏆 <b>Target 2</b>:  <code>{tp2:.6f}</code>  (R:R = 1:{reward_2:.1f})")
+            elif entry is not None:
+                body.append(f"📍 <b>Entry</b>:  <code>{entry:.6f}</code>")
+
+        body.append("")
+
+        # --- Behavioral Insights ---
         insight_lines: list[str] = []
         if state.flow_metrics:
             try:
                 insights = self._generate_trade_insights(state.flow_metrics, state.action_bias or "Neutral")
                 if insights:
-                    insight_lines.append("")
-                    insight_lines.append("📊 <b>Data Insights:</b>")
+                    insight_lines.append("📊 <b>Kenapa Trade Ini Diambil:</b>")
                     for insight in insights:
-                        insight_lines.append(self.telegram_notifier.escape(insight))
+                        insight_lines.append(f"  • {self.telegram_notifier.escape(insight)}")
             except Exception as e:
                 logger.error("Failed to generate telegram insights: %s", e)
 
-        direction_emoji = "🚀" if escaped_bias == "Bullish" else "🩸" if escaped_bias == "Bearish" else "⚠️"
-        
-        body = [
-            f"{direction_emoji} <b>{escaped_symbol} {escaped_bias} Entry ({escaped_timeframe})</b>",
-            f"Setup: <b>{escaped_setup}</b> | Market: <b>{escaped_market_state}</b>",
-            *insight_lines,
-            "",
-            "🎯 <b>Eksekusi & Trading Plan:</b>",
-        ]
+        if insight_lines:
+            body.extend(insight_lines)
+            body.append("")
 
-        if state.execution is not None:
-            if state.execution.entry_min is not None and state.execution.entry_max is not None:
-                body.append(f"🔸 <b>Area Entry</b>: <code>{state.execution.entry_min:.6f} - {state.execution.entry_max:.6f}</code>")
-            elif state.execution.entry_min is not None:
-                body.append(f"🔸 <b>Area Entry</b>: <code>{state.execution.entry_min:.6f}</code>")
-                
-            if state.execution.target_1 is not None:
-                body.append(f"🔸 <b>Target 1 (Hit TP1)</b>: <code>{state.execution.target_1:.6f}</code> <i>(Amankan 50%, Trail Stop)</i>")
-            if state.execution.target_2 is not None:
-                body.append(f"🔸 <b>Target 2 (Maksimum)</b>: <code>{state.execution.target_2:.6f}</code>")
-            if state.execution.invalidation is not None:
-                body.append(f"🛑 <b>Invalidasi (Cut)</b>: <code>{state.execution.invalidation:.6f}</code> <i>(Cut jika Tembus)</i>")
-                
+        # --- BTC Context ---
+        btc_trend = self._global_btc_trend()
+        btc_emoji = "🟢" if btc_trend == "Bullish" else "🔴" if btc_trend == "Bearish" else "⚪"
+        body.append(f"{btc_emoji} BTC Trend: <b>{btc_trend}</b>")
         body.append("")
-        body.append(f"🔗 <a href='{detail_url}'>Buka Chart FlowScope Sekarang</a>")
-        
+
+        # --- Quality Badge ---
+        if state.execution is not None:
+            quality = state.execution.quality_score
+            risk_level = state.execution.risk_level
+            quality_emoji = "🏅" if quality == "A" else "🥈" if quality == "B" else "🥉"
+            body.append(f"{quality_emoji} Kualitas: <b>{quality}</b> | Risiko: <b>{risk_level}</b>")
+            body.append("")
+
+        body.append(f"🔗 <a href='{detail_url}'>Buka Chart FlowScope</a>")
+
         return "\n".join(body)
 
     def _should_deliver_alert(
