@@ -12,6 +12,7 @@ from backend.api.coin import router as coin_router
 from backend.api.dashboard import router as dashboard_router
 from backend.api.performance import router as performance_router
 from backend.api.scanner import router as scanner_router
+from backend.api.signals import router as signals_router
 from backend.config import get_settings
 from backend.database import DatabaseManager
 from backend.schemas import RealtimeEvent
@@ -30,6 +31,7 @@ signal_service = SignalService(settings, database, realtime_hub)
 async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.database = database
+    app.state.db = database
     app.state.realtime_hub = realtime_hub
     app.state.signal_service = signal_service
     await database.init()
@@ -53,6 +55,7 @@ app.include_router(scanner_router)
 app.include_router(coin_router)
 app.include_router(alerts_router)
 app.include_router(performance_router)
+app.include_router(signals_router)
 
 
 @app.get("/health")
