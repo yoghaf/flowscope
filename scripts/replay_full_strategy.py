@@ -7,7 +7,7 @@ import time
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import sys
 from typing import Any
@@ -113,6 +113,22 @@ class ReplayDatabase:
             and trade.timestamp == timestamp
             for trade in self._trades
         )
+
+    async def is_token_cooling_down(self, symbol: str) -> bool:
+        if not self.enabled:
+            return False
+
+        now = datetime.now(UTC)
+        cutoff = now - timedelta(hours=24)
+        
+        loss_count = sum(
+            1 for trade in self._trades
+            if trade.symbol == symbol 
+            and trade.result == "loss" 
+            and trade.closed_at is not None 
+            and trade.closed_at >= cutoff
+        )
+        return loss_count >= 2
 
     async def list_trade_signals(self, result_filter: str | None = None) -> list[TradeSignal]:
         if result_filter is None:
