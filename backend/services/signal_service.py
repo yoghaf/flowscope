@@ -2550,6 +2550,11 @@ class SignalService:
             self.last_trade_signal_at[key] = bucket.last_timestamp
             return
 
+        is_cooling_down = await self.database.is_token_cooling_down(symbol=symbol)
+        if is_cooling_down:
+            logger.info("Skipping trade for %s timeframe=%s due to 24h cooldown blacklist (>=2 recent losses)", symbol, timeframe)
+            return
+
         regime = self._market_regime(flow_metrics, timeframe)
         volatility = self._volatility_regime(flow_metrics, timeframe)
         clarity_confidence = self._trade_confidence_from_asset_state(asset_state, state.confidence)
@@ -3890,6 +3895,11 @@ class SignalService:
                 # Dynamic context: only allow logic-defying short blocks if BTC is not Bearish
                 if self._global_btc_trend() != "Bearish":
                     reasons.append("short_direction_disabled")
+        elif action.bias == "Bullish":
+            if getattr(flow_metrics, "oi_change_4h", 0.0) <= 0.0:
+                reasons.append("htf_oi_not_supportive")
+            if getattr(flow_metrics, "market_pressure_4h", 0.0) <= 0.0:
+                reasons.append("htf_market_pressure_negative")
         if flow_metrics.history_length_1h < self.settings.entry_filter_min_history_1h:
             reasons.append("history_young_coin")
         if flow_metrics.atr_24h < self.settings.entry_filter_min_atr_24h:

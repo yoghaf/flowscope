@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import insert, select, text, update
+from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
@@ -258,6 +258,24 @@ class DatabaseManager:
                 .values(**payload)
             )
             await session.commit()
+
+    async def is_token_cooling_down(self, symbol: str) -> bool:
+        if not self.enabled:
+            return False
+
+        now = datetime.now(UTC)
+        cutoff = now - timedelta(hours=24)
+        
+        statement = (
+            select(func.count(TradeSignal.id))
+            .where(TradeSignal.symbol == symbol)
+            .where(TradeSignal.result == "loss")
+            .where(TradeSignal.closed_at >= cutoff)
+        )
+        async with self.session_factory() as session:
+            result = await session.execute(statement)
+            loss_count = result.scalar() or 0
+            return loss_count >= 2
 
     async def load_open_trade_signals(self) -> list[TradeSignal]:
         if not self.enabled:

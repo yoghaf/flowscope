@@ -257,6 +257,9 @@ class ExecutionEngine:
         if risk <= 0:
             return None
 
+        if (risk / current_price) > 0.08:
+            return None
+
         tp1 = entry + (direction * risk * 1.0)
         tp2 = entry + (direction * risk * 2.0)
 
