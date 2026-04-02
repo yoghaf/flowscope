@@ -35,6 +35,19 @@ async def main():
             data.append(feat)
             
     if not data:
+        print("No live training data in DB. Falling back to Replay CSV...")
+        csv_path = "/var/www/flowscope/replay-performance-report.csv"
+        if os.path.exists(csv_path):
+            df_csv = pd.read_csv(csv_path)
+            valid_df = df_csv[df_csv["result"].isin(["win", "loss"])]
+            if not valid_df.empty:
+                feat_cols = [c for c in valid_df.columns if c.startswith("feat_")]
+                for _, row in valid_df.iterrows():
+                    feat = {c.replace("feat_", ""): row[c] for c in feat_cols if pd.notnull(row[c])}
+                    feat["_label"] = 1 if row["result"] == "win" else 0
+                    data.append(feat)
+                    
+    if not data:
         print("No training data available. Run the replay script or collect live trades first.")
         await db.close()
         return
