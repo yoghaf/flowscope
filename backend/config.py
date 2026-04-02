@@ -137,7 +137,11 @@ class Settings(BaseSettings):
     entry_filter_min_history_1h: int = 48
     entry_filter_max_volume_z_15m: float = 6.00
     entry_filter_max_oi_delta_z_15m: float = 2.40
-    entry_filter_min_atr_24h: float = 0.05
+    entry_filter_min_atr_24h: float = 0.06
+    entry_filter_min_atr_1h: float = 0.01
+    entry_filter_min_atr_15m: float = 0.01
+    entry_filter_max_compression_score_15m: float = 0.30
+    entry_filter_min_wick_ratio_24h: float = 0.05
     entry_filter_min_volume_change_4h: float = -0.60
     entry_filter_allow_shorts: bool = False
     entry_filter_max_liq_pressure_1h: float = 0.23

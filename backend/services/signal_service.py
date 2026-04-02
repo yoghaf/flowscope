@@ -3872,7 +3872,14 @@ class SignalService:
             reasons.append("exhaustion_oi_climax")
         if flow_metrics.liq_pressure_1h > self.settings.entry_filter_max_liq_pressure_1h:
             reasons.append("exhaustion_liq_climax")
-
+        if flow_metrics.atr_15m < self.settings.entry_filter_min_atr_15m:
+            reasons.append("dead_atr_15m")
+        if flow_metrics.atr_1h < self.settings.entry_filter_min_atr_1h:
+            reasons.append("dead_atr_1h")
+        if getattr(flow_metrics, "compression_score_15m", 0.0) > self.settings.entry_filter_max_compression_score_15m:
+            reasons.append("high_compression_15m")
+        if getattr(flow_metrics, "wick_ratio_24h", 1.0) < self.settings.entry_filter_min_wick_ratio_24h:
+            reasons.append("tiny_wick_24h")
         if action.setup_type == "Breakout":
             if volume_z is None or volume_z < self.settings.entry_filter_min_volume_z:
                 reasons.append("volume_z_below_threshold")
