@@ -145,6 +145,9 @@ class Settings(BaseSettings):
     entry_filter_min_volume_change_4h: float = -0.60
     entry_filter_allow_shorts: bool = False
     entry_filter_max_liq_pressure_1h: float = 0.23
+    entry_filter_max_price_change_4h: float = 0.08
+    entry_filter_max_funding_level_4h: float = 0.05
+    entry_filter_max_ls_ratio_delta_1h: float = 2.00
     breakout_close_confirmation_buffer: float = 0.001
     breakout_max_late_entry_distance: float = 0.004
     continuation_min_flow_alignment: float = 0.70
