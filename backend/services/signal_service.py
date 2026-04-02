@@ -2415,6 +2415,30 @@ class SignalService:
                 warmed += 1
         return warmed
 
+    def _generate_trade_insights(self, flow_metrics: FlowMetrics, bias: str) -> list[str]:
+        insights = []
+        if flow_metrics.atr_24h > 0.08:
+            insights.append("🟢 HTF Volatility: Pergerakan harian stabil, memberikan ruang momentum yang luas (ATR24H > 0.08).")
+        
+        vol_z_4h = getattr(flow_metrics, "volume_z_4h", 0.0)
+        if vol_z_4h is not None and vol_z_4h > 1.20:
+            insights.append("🟢 Ledakan Volume 4H: Likuiditas institusi masuk secara masif tanpa indikasi climax.")
+
+        liq_pressure_1h = getattr(flow_metrics, "liq_pressure_1h", 0.0)
+        if bias == "Bullish" and liq_pressure_1h < -0.40:
+            insights.append("🟢 Short Squeeze: Tekanan likuidasi negatif menjebak posisi Short, memicu lonjakan harga.")
+        elif bias == "Bearish" and liq_pressure_1h > 0.40:
+            insights.append("🟢 Long Squeeze: Tekanan likuidasi positif membuang volume Long berlebih ke bawah.")
+
+        oi_percent_1h = getattr(flow_metrics, "oi_percentile_1h", 0.0)
+        if oi_percent_1h > 0.80:
+            insights.append("🟢 Open Interest (OI) Berat: Volume kontrak turunan sangat proaktif merespon pergerakan ini.")
+
+        if not insights:
+            insights.append("🟢 Momentum Setup: Distribusi Orderflow secara umum mendukung konfirmasi Setup.")
+        
+        return insights
+
     async def _maybe_record_trade_signal(
         self,
         symbol: str,
@@ -2522,6 +2546,9 @@ class SignalService:
         volatility = self._volatility_regime(flow_metrics, timeframe)
         clarity_confidence = self._trade_confidence_from_asset_state(asset_state, state.confidence)
         entry_flow_alignment = self._entry_flow_alignment_from_asset_state(asset_state)
+        features = flow_metrics.model_dump()
+        features["insights"] = self._generate_trade_insights(flow_metrics, action.bias)
+
         payload = {
             "symbol": symbol,
             "timeframe": timeframe,
@@ -2553,7 +2580,7 @@ class SignalService:
             "pnl_pct": 0.0,
             "max_drawdown_pct": 0.0,
             "max_profit_pct": 0.0,
-            "entry_features": flow_metrics.model_dump(),
+            "entry_features": features,
         }
         trade_id = await self.database.save_trade_signal(payload)
         if trade_id:
@@ -3295,27 +3322,44 @@ class SignalService:
         frontend = self.settings.frontend_url.rstrip("/")
         detail_url = f"{frontend}/coin/{symbol}?timeframe={timeframe}&snapshot_id=latest"
 
-        execution_lines: list[str] = []
-        if state.execution is not None:
-            if state.execution.entry_min is not None:
-                execution_lines.append(f"Entry: <code>{state.execution.entry_min:.6f}</code>")
-            if state.execution.invalidation is not None:
-                execution_lines.append(f"Stop: <code>{state.execution.invalidation:.6f}</code>")
-            if state.execution.target_1 is not None:
-                execution_lines.append(f"TP1: <code>{state.execution.target_1:.6f}</code>")
-            if state.execution.target_2 is not None:
-                execution_lines.append(f"TP2: <code>{state.execution.target_2:.6f}</code>")
+        insight_lines: list[str] = []
+        if state.flow_metrics:
+            try:
+                insights = self._generate_trade_insights(state.flow_metrics, state.action_bias or "Neutral")
+                if insights:
+                    insight_lines.append("")
+                    insight_lines.append("📊 <b>Data Insights:</b>")
+                    for insight in insights:
+                        insight_lines.append(self.telegram_notifier.escape(insight))
+            except Exception as e:
+                logger.error("Failed to generate telegram insights: %s", e)
 
+        direction_emoji = "🚀" if escaped_bias == "Bullish" else "🩸" if escaped_bias == "Bearish" else "⚠️"
+        
         body = [
-            "<b>FlowScope Entry Triggered</b>",
-            f"Asset: <b>{escaped_symbol}</b> | TF: <b>{escaped_timeframe}</b>",
-            f"Setup: <b>{escaped_setup}</b> | Bias: <b>{escaped_bias}</b>",
-            f"State: <b>{escaped_market_state}</b>",
-            f"Price Now: <code>{state.price:.6f}</code>",
-            *execution_lines,
-            f"Time: {bucket.last_timestamp.isoformat()}",
-            f"Open: {self.telegram_notifier.escape(detail_url)}",
+            f"{direction_emoji} <b>{escaped_symbol} {escaped_bias} Entry ({escaped_timeframe})</b>",
+            f"Setup: <b>{escaped_setup}</b> | Market: <b>{escaped_market_state}</b>",
+            *insight_lines,
+            "",
+            "🎯 <b>Eksekusi & Trading Plan:</b>",
         ]
+
+        if state.execution is not None:
+            if state.execution.entry_min is not None and state.execution.entry_max is not None:
+                body.append(f"🔸 <b>Area Entry</b>: <code>{state.execution.entry_min:.6f} - {state.execution.entry_max:.6f}</code>")
+            elif state.execution.entry_min is not None:
+                body.append(f"🔸 <b>Area Entry</b>: <code>{state.execution.entry_min:.6f}</code>")
+                
+            if state.execution.target_1 is not None:
+                body.append(f"🔸 <b>Target 1 (Hit TP1)</b>: <code>{state.execution.target_1:.6f}</code> <i>(Amankan 50%, Trail Stop)</i>")
+            if state.execution.target_2 is not None:
+                body.append(f"🔸 <b>Target 2 (Maksimum)</b>: <code>{state.execution.target_2:.6f}</code>")
+            if state.execution.invalidation is not None:
+                body.append(f"🛑 <b>Invalidasi (Cut)</b>: <code>{state.execution.invalidation:.6f}</code> <i>(Cut jika Tembus)</i>")
+                
+        body.append("")
+        body.append(f"🔗 <a href='{detail_url}'>Buka Chart FlowScope Sekarang</a>")
+        
         return "\n".join(body)
 
     def _should_deliver_alert(
