@@ -312,6 +312,40 @@ def test_15m_continuation_late_expansion_climax_is_blocked() -> None:
     assert "continuation_15m_late_expansion_climax" in reasons
 
 
+def test_15m_continuation_pullback_expansion_state_is_blocked() -> None:
+    service = make_service()
+    reasons = service._continuation_filter_reasons(
+        action=ActionAssessment(
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Triggered",
+            confidence_label="High",
+            opportunity_score=0.88,
+        ),
+        state_name="Expansion",
+        market_interpretation=make_interpretation(
+            action="WAIT",
+            flow_alignment=0.70,
+            structure_strength=0.72,
+        ),
+        flow_metrics=FlowMetrics(
+            price_change_15m=0.012,
+            atr_15m=0.010,
+            taker_buy_sell_ratio_delta_15m=-0.02,
+            taker_buy_sell_ratio_delta_4h=0.08,
+            oi_percentile_1h=0.82,
+            oi_percentile_4h=0.86,
+            recent_high_15m=0.8710,
+            recent_low_15m=0.8580,
+        ),
+        timeframe="15m",
+        bucket=make_bucket(),
+        execution=make_execution(entry_min=0.8662, invalidation=0.8548, target_1=0.8776, target_2=0.8890),
+    )
+
+    assert "continuation_15m_pullback_expansion_state" in reasons
+
+
 def test_15m_pullback_acceptance_promotes_ready_after_cooling_reclaim() -> None:
     service = make_service()
     action, pending = service._apply_continuation_pullback_acceptance_gate(

@@ -4275,6 +4275,11 @@ class SignalService:
             reasons.append("continuation_15m_pullback_requires_enter")
 
         if execution.entry_type == "Continuation Pullback":
+            if (
+                not self.settings.continuation_15m_pullback_allow_expansion_state
+                and state_name == "Expansion"
+            ):
+                reasons.append("continuation_15m_pullback_expansion_state")
             if market_interpretation.flow_alignment < self.settings.continuation_15m_pullback_min_flow_alignment:
                 reasons.append("continuation_15m_pullback_flow_alignment_too_weak")
             if market_interpretation.structure_strength < self.settings.continuation_15m_pullback_min_structure_strength:
