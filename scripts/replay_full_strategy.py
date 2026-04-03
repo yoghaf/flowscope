@@ -48,6 +48,12 @@ class ReplayDiagnostics:
     stage_counts: Counter[str]
     reason_counts: Counter[str]
     pass_counts: Counter[str]
+    continuation_15m_stage_counts: Counter[str]
+    continuation_15m_state_counts: Counter[str]
+    continuation_15m_status_counts: Counter[str]
+    continuation_15m_entry_type_counts: Counter[str]
+    continuation_15m_reason_counts: Counter[str]
+    continuation_15m_samples: list[dict[str, object]]
 
 
 @dataclass(slots=True)
@@ -266,6 +272,12 @@ async def replay_symbol(
         stage_counts=Counter(),
         reason_counts=Counter(),
         pass_counts=Counter(),
+        continuation_15m_stage_counts=Counter(),
+        continuation_15m_state_counts=Counter(),
+        continuation_15m_status_counts=Counter(),
+        continuation_15m_entry_type_counts=Counter(),
+        continuation_15m_reason_counts=Counter(),
+        continuation_15m_samples=[],
     )
     replay_db = ReplayDatabase(
         {symbol: buckets},
@@ -275,6 +287,7 @@ async def replay_symbol(
     service = SignalService(settings, replay_db, RealtimeHub())
     service.symbols = [symbol]
     seen_filter_events: set[tuple[str, datetime, str, bool, tuple[str, ...]]] = set()
+    seen_15m_candidate_events: set[tuple[datetime, str, str, str, str, tuple[str, ...]]] = set()
 
     # Use closed bucket boundaries instead of every sample timestamp for speed
     timeline = sorted(
@@ -326,6 +339,43 @@ async def replay_symbol(
                 diagnostics.stage_counts[stage] += 1
                 for reason in reasons:
                     diagnostics.reason_counts[reason] += 1
+            if timeframe == "15m" and current_state.setup_type == "Continuation":
+                action_status = str(current_state.action_status or "unknown")
+                market_state = str(current_state.market_state or "Neutral")
+                entry_type = (
+                    str(current_state.execution.entry_type)
+                    if current_state.execution is not None and current_state.execution.entry_type
+                    else "none"
+                )
+                candidate_key = (
+                    current_state.timestamp,
+                    stage,
+                    action_status,
+                    market_state,
+                    entry_type,
+                    reasons,
+                )
+                if candidate_key in seen_15m_candidate_events:
+                    continue
+                seen_15m_candidate_events.add(candidate_key)
+                diagnostics.continuation_15m_stage_counts[stage] += 1
+                diagnostics.continuation_15m_state_counts[market_state] += 1
+                diagnostics.continuation_15m_status_counts[action_status] += 1
+                diagnostics.continuation_15m_entry_type_counts[entry_type] += 1
+                for reason in reasons:
+                    diagnostics.continuation_15m_reason_counts[reason] += 1
+                if len(diagnostics.continuation_15m_samples) < 15:
+                    diagnostics.continuation_15m_samples.append(
+                        {
+                            "timestamp": current_state.timestamp.isoformat(),
+                            "stage": stage,
+                            "action_status": action_status,
+                            "market_state": market_state,
+                            "signal_status": current_state.signal_status,
+                            "entry_type": entry_type,
+                            "reasons": list(reasons),
+                        }
+                    )
 
     return await replay_db.list_trade_signals(), diagnostics
 
@@ -591,6 +641,12 @@ async def main() -> int:
     aggregate_stage_counts: Counter[str] = Counter()
     aggregate_reason_counts: Counter[str] = Counter()
     aggregate_pass_counts: Counter[str] = Counter()
+    aggregate_15m_stage_counts: Counter[str] = Counter()
+    aggregate_15m_state_counts: Counter[str] = Counter()
+    aggregate_15m_status_counts: Counter[str] = Counter()
+    aggregate_15m_entry_type_counts: Counter[str] = Counter()
+    aggregate_15m_reason_counts: Counter[str] = Counter()
+    aggregate_15m_samples: list[dict[str, object]] = []
     next_trade_id = 1
 
     for symbol, trades, diagnostics in results:
@@ -598,6 +654,14 @@ async def main() -> int:
         aggregate_stage_counts.update(diagnostics.stage_counts)
         aggregate_reason_counts.update(diagnostics.reason_counts)
         aggregate_pass_counts.update(diagnostics.pass_counts)
+        aggregate_15m_stage_counts.update(diagnostics.continuation_15m_stage_counts)
+        aggregate_15m_state_counts.update(diagnostics.continuation_15m_state_counts)
+        aggregate_15m_status_counts.update(diagnostics.continuation_15m_status_counts)
+        aggregate_15m_entry_type_counts.update(diagnostics.continuation_15m_entry_type_counts)
+        aggregate_15m_reason_counts.update(diagnostics.continuation_15m_reason_counts)
+        remaining_sample_slots = max(0, 15 - len(aggregate_15m_samples))
+        if remaining_sample_slots:
+            aggregate_15m_samples.extend(diagnostics.continuation_15m_samples[:remaining_sample_slots])
         for trade in trades:
             trade.id = next_trade_id
             next_trade_id += 1
@@ -639,6 +703,15 @@ async def main() -> int:
             "rejected_by_stage": dict(aggregate_stage_counts.most_common()),
             "rejected_by_reason": dict(aggregate_reason_counts.most_common()),
             "passed_by_stage": dict(aggregate_pass_counts.most_common()),
+            "continuation_15m_candidates": {
+                "total": int(sum(aggregate_15m_stage_counts.values())),
+                "by_stage": dict(aggregate_15m_stage_counts.most_common()),
+                "by_state": dict(aggregate_15m_state_counts.most_common()),
+                "by_action_status": dict(aggregate_15m_status_counts.most_common()),
+                "by_entry_type": dict(aggregate_15m_entry_type_counts.most_common()),
+                "top_reasons": dict(aggregate_15m_reason_counts.most_common()),
+                "samples": aggregate_15m_samples,
+            },
         },
         "performance": performance.model_dump(mode="json") if performance is not None else None,
         "csv_path": str(csv_path),
@@ -663,6 +736,9 @@ async def main() -> int:
     print(f"  Open:      {summary.open_count}")
     print(f"  Rejected:  {dict(aggregate_stage_counts.most_common(10))}")
     print(f"  Reasons:   {dict(aggregate_reason_counts.most_common(10))}")
+    if aggregate_15m_stage_counts:
+        print(f"  15m Candidates: {sum(aggregate_15m_stage_counts.values())}")
+        print(f"  15m Stages: {dict(aggregate_15m_stage_counts.most_common(5))}")
     if performance is not None:
         print(f"  Winrate:   {performance.winrate * 100:.2f}%")
         print(f"  Expectancy:{performance.expectancy:.4f}")
