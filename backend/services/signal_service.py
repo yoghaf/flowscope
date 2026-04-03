@@ -14,7 +14,7 @@ from backend.config import Settings, TIMEFRAME_PROFILES
 from backend.data_collector.base import ExchangeSnapshot
 from backend.data_collector.binance_collector import BinanceCollector
 from backend.database import DatabaseManager
-from backend.engines.context_bridge import ContextBridgeEngine
+from backend.engines.context_bridge import ContextBridgeEngine, ContextDecisionGateConfig
 from backend.engines.execution_engine import ActionAssessment, ExecutionEngine, ExecutionPlan
 from backend.engines.flow_engine import HistoryPoint
 from backend.engines.market_interpreter import MarketInterpretationAssessment, MarketInterpreterEngine
@@ -1149,6 +1149,7 @@ class SignalService:
             post_action_filter_reasons.extend(
                 self._continuation_filter_reasons(
                     action=action,
+                    state_name=state_assessment.state,
                     market_interpretation=market_interpretation,
                     flow_metrics=flow_metrics,
                     timeframe=timeframe,
@@ -4023,6 +4024,7 @@ class SignalService:
         self,
         *,
         action: ActionAssessment,
+        state_name: str,
         market_interpretation: MarketInterpretationAssessment,
         flow_metrics: FlowMetrics,
         timeframe: str,
@@ -4058,6 +4060,35 @@ class SignalService:
             reasons.append("continuation_taker_unavailable")
         elif direction * float(taker_delta) <= 0:
             reasons.append("continuation_taker_not_aligned")
+
+        bridge_features = {
+            "taker_buy_sell_ratio_delta_4h": getattr(flow_metrics, "taker_buy_sell_ratio_delta_4h", None),
+            "taker_buy_sell_ratio_level_4h": getattr(flow_metrics, "taker_buy_sell_ratio_level_4h", None),
+            "oi_percentile_1h": getattr(flow_metrics, "oi_percentile_1h", None),
+            "oi_percentile_4h": getattr(flow_metrics, "oi_percentile_4h", None),
+            "volume_change_4h": getattr(flow_metrics, "volume_change_4h", None),
+            "price_change_4h": getattr(flow_metrics, "price_change_4h", None),
+        }
+        reasons.extend(
+            self.context_bridge.decision_gate_reasons(
+                bias=action.bias,
+                setup_type=action.setup_type,
+                state=state_name,
+                features=bridge_features,
+                config=ContextDecisionGateConfig(
+                    enabled=self.settings.decision_bridge_live_gate_enabled,
+                    include_bearish_4h_taker_context=True,
+                    include_low_htf_oi_percentile=True,
+                    include_late_expansion_climax=self.settings.decision_bridge_live_gate_late_expansion_enabled,
+                    bearish_taker_delta_4h_max=self.settings.decision_bridge_bearish_taker_delta_4h_max,
+                    bearish_taker_level_4h_max=self.settings.decision_bridge_bearish_taker_level_4h_max,
+                    min_oi_percentile_1h=self.settings.decision_bridge_min_oi_percentile_1h,
+                    min_oi_percentile_4h=self.settings.decision_bridge_min_oi_percentile_4h,
+                    late_expansion_volume_change_4h_min=self.settings.decision_bridge_late_expansion_volume_change_4h_min,
+                    late_expansion_price_change_4h_min=self.settings.decision_bridge_late_expansion_price_change_4h_min,
+                ),
+            )
+        )
         return reasons
 
     def _breakout_filter_reasons(

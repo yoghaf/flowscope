@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from backend.config import Settings
+from backend.engines.context_bridge import ContextBridgeEngine
 from backend.services.signal_service import SignalService
 from backend.schemas import FlowMetrics
 from backend.services.timeframe_aggregator import TimeframeBucket
@@ -502,9 +503,11 @@ def test_breakout_requires_ranging_regime_blocks() -> None:
 def test_continuation_strict_mode_rejects_missing_taker_alignment() -> None:
     service = SignalService.__new__(SignalService)
     service.settings = Settings(demo_mode=False)
+    service.context_bridge = ContextBridgeEngine()
 
     reasons = service._continuation_filter_reasons(
         action=SimpleNamespace(setup_type="Continuation", bias="Bullish"),
+        state_name="Long Build-up",
         market_interpretation=SimpleNamespace(
             control="Buyer Dominant",
             flow_alignment=0.70,
@@ -517,3 +520,33 @@ def test_continuation_strict_mode_rejects_missing_taker_alignment() -> None:
     )
 
     assert "continuation_taker_unavailable" in reasons
+
+
+def test_continuation_live_decision_bridge_rejects_bearish_4h_taker_and_low_oi_combo() -> None:
+    service = SignalService.__new__(SignalService)
+    service.settings = Settings(demo_mode=False)
+    service.context_bridge = ContextBridgeEngine()
+
+    reasons = service._continuation_filter_reasons(
+        action=SimpleNamespace(setup_type="Continuation", bias="Bullish"),
+        state_name="Long Build-up",
+        market_interpretation=SimpleNamespace(
+            control="Buyer Dominant",
+            flow_alignment=0.88,
+            structure_strength=0.82,
+            clarity_confidence=0.89,
+            higher_timeframe_trend="Bullish",
+            state="Long Build-up",
+        ),
+        flow_metrics=FlowMetrics(
+            taker_buy_sell_ratio_delta_15m=0.14,
+            taker_buy_sell_ratio_delta_4h=-0.12,
+            taker_buy_sell_ratio_level_4h=-0.08,
+            oi_percentile_1h=0.20,
+            oi_percentile_4h=0.12,
+        ),
+        timeframe="15m",
+    )
+
+    assert "decision_bridge_bearish_4h_taker_context" in reasons
+    assert "decision_bridge_low_htf_oi_percentile" in reasons

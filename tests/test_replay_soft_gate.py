@@ -19,7 +19,7 @@ def test_context_soft_gate_blocks_bearish_4h_taker_combo() -> None:
         config=ReplaySoftGateConfig(enabled=True),
     )
 
-    assert reasons == ["soft_gate_bearish_4h_taker_context"]
+    assert reasons == []
 
 
 def test_context_soft_gate_blocks_low_htf_oi_percentile_combo() -> None:
@@ -38,7 +38,7 @@ def test_context_soft_gate_blocks_low_htf_oi_percentile_combo() -> None:
         config=ReplaySoftGateConfig(enabled=True),
     )
 
-    assert reasons == ["soft_gate_low_htf_oi_percentile"]
+    assert reasons == []
 
 
 def test_context_soft_gate_blocks_late_expansion_combo() -> None:
@@ -57,7 +57,7 @@ def test_context_soft_gate_blocks_late_expansion_combo() -> None:
         config=ReplaySoftGateConfig(enabled=True),
     )
 
-    assert reasons == ["soft_gate_late_expansion_climax"]
+    assert reasons == ["decision_bridge_late_expansion_climax"]
 
 
 def test_context_soft_gate_does_not_block_when_disabled() -> None:

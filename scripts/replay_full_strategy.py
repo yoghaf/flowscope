@@ -19,6 +19,7 @@ if str(REPO_ROOT) not in sys.path:
 from sqlalchemy import select
 
 from backend.config import get_settings
+from backend.engines.context_bridge import ContextBridgeEngine, ContextDecisionGateConfig
 from backend.models import MarketDataBucket, TradeSignal
 from backend.database import DatabaseManager
 from backend.services.performance_engine import PerformanceEngine
@@ -53,14 +54,6 @@ class ReplayDiagnostics:
 class ReplaySoftGateConfig:
     enabled: bool = False
 
-
-def _safe_float(value: object) -> float | None:
-    try:
-        return float(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None
-
-
 def _context_soft_gate_reasons(
     payload: dict[str, object],
     *,
@@ -69,50 +62,19 @@ def _context_soft_gate_reasons(
     if not config.enabled:
         return []
 
-    bias = str(payload.get("bias") or "")
-    setup_type = str(payload.get("setup_type") or "")
-    state = str(payload.get("state") or "")
-    if bias != "Bullish" or setup_type != "Continuation":
-        return []
-
     features = payload.get("entry_features")
-    if not isinstance(features, dict):
-        return []
-
-    reasons: list[str] = []
-    taker_delta_4h = _safe_float(features.get("taker_buy_sell_ratio_delta_4h"))
-    taker_level_4h = _safe_float(features.get("taker_buy_sell_ratio_level_4h"))
-    oi_percentile_1h = _safe_float(features.get("oi_percentile_1h"))
-    oi_percentile_4h = _safe_float(features.get("oi_percentile_4h"))
-    volume_change_4h = _safe_float(features.get("volume_change_4h"))
-    price_change_4h = _safe_float(features.get("price_change_4h"))
-
-    if (
-        taker_delta_4h is not None
-        and taker_level_4h is not None
-        and taker_delta_4h < -0.07
-        and taker_level_4h < -0.03
-    ):
-        reasons.append("soft_gate_bearish_4h_taker_context")
-
-    if (
-        oi_percentile_1h is not None
-        and oi_percentile_4h is not None
-        and oi_percentile_1h < 0.46
-        and oi_percentile_4h < 0.47
-    ):
-        reasons.append("soft_gate_low_htf_oi_percentile")
-
-    if (
-        state == "Expansion"
-        and volume_change_4h is not None
-        and price_change_4h is not None
-        and volume_change_4h > 3.17
-        and price_change_4h > 0.18
-    ):
-        reasons.append("soft_gate_late_expansion_climax")
-
-    return reasons
+    return ContextBridgeEngine.decision_gate_reasons(
+        bias=str(payload.get("bias") or ""),
+        setup_type=str(payload.get("setup_type") or ""),
+        state=str(payload.get("state") or ""),
+        features=features if isinstance(features, dict) else None,
+        config=ContextDecisionGateConfig(
+            enabled=config.enabled,
+            include_bearish_4h_taker_context=False,
+            include_low_htf_oi_percentile=False,
+            include_late_expansion_climax=True,
+        ),
+    )
 
 
 class ReplayDatabase:

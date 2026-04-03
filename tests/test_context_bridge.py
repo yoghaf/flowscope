@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.engines.context_bridge import ContextBridgeEngine
+from backend.engines.context_bridge import ContextBridgeEngine, ContextDecisionGateConfig
 from backend.engines.execution_engine import ActionAssessment
 from backend.engines.market_interpreter import MarketInterpretationAssessment
 from backend.engines.phase_engine import PhaseAssessment
@@ -130,3 +130,33 @@ def test_context_bridge_detects_late_expansion() -> None:
     assert scenario.label in {"late_expansion", "climax_event"}
     assert scenario.disposition == "wait"
     assert any(reason in scenario.reasons for reason in {"extended_4h_price_move", "4h_volume_surge"})
+
+
+def test_decision_gate_reasons_block_bearish_4h_taker_context() -> None:
+    reasons = ContextBridgeEngine.decision_gate_reasons(
+        bias="Bullish",
+        setup_type="Continuation",
+        state="Long Build-up",
+        features={
+            "taker_buy_sell_ratio_delta_4h": -0.12,
+            "taker_buy_sell_ratio_level_4h": -0.08,
+        },
+        config=ContextDecisionGateConfig(enabled=True),
+    )
+
+    assert reasons == ["decision_bridge_bearish_4h_taker_context"]
+
+
+def test_decision_gate_reasons_block_low_htf_oi_percentile() -> None:
+    reasons = ContextBridgeEngine.decision_gate_reasons(
+        bias="Bullish",
+        setup_type="Continuation",
+        state="Long Build-up",
+        features={
+            "oi_percentile_1h": 0.20,
+            "oi_percentile_4h": 0.12,
+        },
+        config=ContextDecisionGateConfig(enabled=True),
+    )
+
+    assert reasons == ["decision_bridge_low_htf_oi_percentile"]

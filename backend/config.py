@@ -149,6 +149,14 @@ class Settings(BaseSettings):
     breakout_max_late_entry_distance: float = 0.004
     continuation_min_flow_alignment: float = 0.70
     continuation_min_structure_strength: float = 0.65
+    decision_bridge_live_gate_enabled: bool = True
+    decision_bridge_live_gate_late_expansion_enabled: bool = False
+    decision_bridge_bearish_taker_delta_4h_max: float = -0.07
+    decision_bridge_bearish_taker_level_4h_max: float = -0.03
+    decision_bridge_min_oi_percentile_1h: float = 0.46
+    decision_bridge_min_oi_percentile_4h: float = 0.47
+    decision_bridge_late_expansion_volume_change_4h_min: float = 3.17
+    decision_bridge_late_expansion_price_change_4h_min: float = 0.18
     fail_fast_max_candles: int = 2
     fail_fast_min_mfe_r: float = 0.30
     fail_fast_flow_drop: float = 0.20

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 
 from backend.engines.execution_engine import ActionAssessment
@@ -19,6 +20,20 @@ class ContextScenarioAssessment:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+@dataclass(slots=True)
+class ContextDecisionGateConfig:
+    enabled: bool = False
+    include_bearish_4h_taker_context: bool = True
+    include_low_htf_oi_percentile: bool = True
+    include_late_expansion_climax: bool = False
+    bearish_taker_delta_4h_max: float = -0.07
+    bearish_taker_level_4h_max: float = -0.03
+    min_oi_percentile_1h: float = 0.46
+    min_oi_percentile_4h: float = 0.47
+    late_expansion_volume_change_4h_min: float = 3.17
+    late_expansion_price_change_4h_min: float = 0.18
 
 
 class ContextBridgeEngine:
@@ -42,12 +57,71 @@ class ContextBridgeEngine:
         return float(value) if value is not None else default
 
     @staticmethod
+    def _mapping_float(features: Mapping[str, object], key: str) -> float | None:
+        value = features.get(key)
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
     def _direction(action: ActionAssessment) -> int:
         if action.bias == "Bullish":
             return 1
         if action.bias == "Bearish":
             return -1
         return 0
+
+    @classmethod
+    def decision_gate_reasons(
+        cls,
+        *,
+        bias: str,
+        setup_type: str,
+        state: str,
+        features: Mapping[str, object] | None,
+        config: ContextDecisionGateConfig,
+    ) -> list[str]:
+        if not config.enabled or bias != "Bullish" or setup_type != "Continuation" or not isinstance(features, Mapping):
+            return []
+
+        reasons: list[str] = []
+        taker_delta_4h = cls._mapping_float(features, "taker_buy_sell_ratio_delta_4h")
+        taker_level_4h = cls._mapping_float(features, "taker_buy_sell_ratio_level_4h")
+        oi_percentile_1h = cls._mapping_float(features, "oi_percentile_1h")
+        oi_percentile_4h = cls._mapping_float(features, "oi_percentile_4h")
+        volume_change_4h = cls._mapping_float(features, "volume_change_4h")
+        price_change_4h = cls._mapping_float(features, "price_change_4h")
+
+        if (
+            config.include_bearish_4h_taker_context
+            and taker_delta_4h is not None
+            and taker_level_4h is not None
+            and taker_delta_4h < config.bearish_taker_delta_4h_max
+            and taker_level_4h < config.bearish_taker_level_4h_max
+        ):
+            reasons.append("decision_bridge_bearish_4h_taker_context")
+
+        if (
+            config.include_low_htf_oi_percentile
+            and oi_percentile_1h is not None
+            and oi_percentile_4h is not None
+            and oi_percentile_1h < config.min_oi_percentile_1h
+            and oi_percentile_4h < config.min_oi_percentile_4h
+        ):
+            reasons.append("decision_bridge_low_htf_oi_percentile")
+
+        if (
+            config.include_late_expansion_climax
+            and state == "Expansion"
+            and volume_change_4h is not None
+            and price_change_4h is not None
+            and volume_change_4h > config.late_expansion_volume_change_4h_min
+            and price_change_4h > config.late_expansion_price_change_4h_min
+        ):
+            reasons.append("decision_bridge_late_expansion_climax")
+
+        return reasons
 
     def assess(
         self,
