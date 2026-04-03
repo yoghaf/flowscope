@@ -2634,6 +2634,9 @@ class SignalService:
             action=action,
             asset_state=asset_state,
         )
+        execution_entry_type = getattr(execution, "entry_type", None)
+        if execution_entry_type:
+            features["entry_type"] = execution_entry_type
 
         payload = {
             "symbol": symbol,
@@ -2982,6 +2985,16 @@ class SignalService:
         bucket: TimeframeBucket,
         state: AssetState,
     ) -> None:
+        stale_reason = self._trade_entry_stale_reason(bucket=bucket, state=state)
+        if stale_reason is not None:
+            logger.info(
+                "Trade-entry notification skipped symbol=%s timeframe=%s reason=%s",
+                symbol,
+                timeframe,
+                stale_reason,
+            )
+            self._mark_trade_entry_notification_processed(trade_id=trade_id)
+            return
         entry_alert = self._build_trade_entry_alert(
             symbol=symbol,
             timeframe=timeframe,
@@ -3194,6 +3207,24 @@ class SignalService:
                     )
                 continue
 
+            stale_reason = self._trade_entry_stale_reason(
+                bucket=bucket,
+                state=self._state_for_trade_notification(trade, signal, state),
+            )
+            if stale_reason is not None:
+                if user_id != DEFAULT_USER_ID:
+                    logger.info(
+                        "Trade-entry catch-up skipped user=%s trade_id=%s symbol=%s timeframe=%s signal=%s reason=%s",
+                        user_id,
+                        trade.id,
+                        trade.symbol,
+                        trade.timeframe,
+                        signal,
+                        stale_reason,
+                    )
+                self._mark_trade_entry_notification_processed(trade_id=trade.id)
+                continue
+
             queued = True
             self.user_alerts[user_id].appendleft(alert)
             if user_id != DEFAULT_USER_ID:
@@ -3316,7 +3347,11 @@ class SignalService:
             debug_trace={},
             market_interpretation={},
             execution=ExecutionPlan(
-                entry_type=trade.setup_type,
+                entry_type=(
+                    str(trade.entry_features.get("entry_type"))
+                    if isinstance(trade.entry_features, dict) and trade.entry_features.get("entry_type")
+                    else trade.setup_type
+                ),
                 entry_min=trade.entry_price,
                 entry_max=trade.entry_price,
                 invalidation=trade.invalidation_price,
@@ -3410,6 +3445,8 @@ class SignalService:
 
         direction_emoji = "🟢" if escaped_bias == "Bullish" else "🔴" if escaped_bias == "Bearish" else "⚪"
         direction_label = "LONG" if escaped_bias == "Bullish" else "SHORT" if escaped_bias == "Bearish" else "NETRAL"
+        entry_type = state.execution.entry_type if state.execution is not None else None
+        escaped_entry_type = self.telegram_notifier.escape(entry_type) if entry_type else None
 
         # --- Header ---
         body = [
@@ -3417,6 +3454,9 @@ class SignalService:
             f"<i>{escaped_setup} | {escaped_timeframe} | {escaped_market_state}</i>",
             "",
         ]
+        if escaped_entry_type:
+            body.append(f"🎯 <b>Mode Entry</b>: <code>{escaped_entry_type}</code>")
+            body.append("")
 
         # --- Execution Levels with R:R ---
         if state.execution is not None:
@@ -3562,6 +3602,50 @@ class SignalService:
         if not self.telegram_notifier.configured:
             return "telegram_bot_missing"
         return None
+
+    def _trade_entry_stale_reason(
+        self,
+        *,
+        bucket: TimeframeBucket,
+        state: AssetState,
+    ) -> str | None:
+        execution = getattr(state, "execution", None)
+        if execution is None or execution.entry_min is None or execution.invalidation is None:
+            return None
+
+        bias = getattr(state, "action_bias", None)
+        direction = 1 if bias == "Bullish" else -1 if bias == "Bearish" else 0
+        if direction == 0:
+            return None
+
+        risk = abs(execution.entry_min - execution.invalidation)
+        if risk <= VALUE_EPSILON:
+            return None
+
+        current_price = bucket.close_price
+        progress_r = ((current_price - execution.entry_min) * direction) / risk
+        if progress_r >= self.settings.trade_entry_notification_max_progress_r:
+            return "price_already_far_from_entry"
+
+        if execution.target_1 is not None:
+            target_progress_r = ((current_price - execution.target_1) * direction) / risk
+            if target_progress_r >= 0:
+                return "price_already_at_or_beyond_tp1"
+
+        return None
+
+    def _mark_trade_entry_notification_processed(self, *, trade_id: int | None) -> None:
+        if trade_id is None or not self.database.enabled:
+            return
+        self._spawn_background_task(
+            self.database.update_trade_signal(
+                trade_id,
+                {
+                    "entry_notification_sent_at": datetime.now(UTC),
+                    "updated_at": datetime.now(UTC),
+                },
+            )
+        )
 
     @staticmethod
     def _normalize_user_id(user_id: str | None) -> str:

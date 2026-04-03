@@ -169,6 +169,7 @@ class Settings(BaseSettings):
     auto_filter_negative_expectancy: bool = False
     expectancy_boost_factor: float = 0.15
     signal_decay_per_bucket: float = 0.08
+    trade_entry_notification_max_progress_r: float = 0.50
     self_calibration_enabled: bool = False
     calibration_confidence_scale: float = 0.2
     bootstrap_from_database: bool = True
