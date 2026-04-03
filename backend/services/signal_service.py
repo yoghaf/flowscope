@@ -4168,6 +4168,11 @@ class SignalService:
             return []
 
         direction = 1 if action.bias == "Bullish" else -1
+        is_15m_pullback = (
+            timeframe == "15m"
+            and execution is not None
+            and execution.entry_type == "Continuation Pullback"
+        )
         taker_delta = getattr(flow_metrics, f"taker_buy_sell_ratio_delta_{timeframe}", None)
         taker_available = taker_delta is not None and abs(taker_delta) > VALUE_EPSILON
         higher_tf_aligns = (
@@ -4176,11 +4181,17 @@ class SignalService:
         )
 
         reasons: list[str] = []
-        if market_interpretation.control not in {"Buyer Dominant", "Seller Dominant"}:
+        if not is_15m_pullback and market_interpretation.control not in {"Buyer Dominant", "Seller Dominant"}:
             reasons.append("continuation_control_not_directional")
-        if market_interpretation.flow_alignment < self.settings.continuation_min_flow_alignment:
+        if (
+            not is_15m_pullback
+            and market_interpretation.flow_alignment < self.settings.continuation_min_flow_alignment
+        ):
             reasons.append("continuation_flow_alignment_below_threshold")
-        if market_interpretation.structure_strength < self.settings.continuation_min_structure_strength:
+        if (
+            not is_15m_pullback
+            and market_interpretation.structure_strength < self.settings.continuation_min_structure_strength
+        ):
             reasons.append("continuation_structure_strength_below_threshold")
         
         is_long = action.bias == "Bullish"
@@ -4191,9 +4202,9 @@ class SignalService:
         elif not is_long and htf_trend == "Bullish":
             reasons.append("continuation_higher_timeframe_not_aligned")
             
-        if not taker_available:
+        if not is_15m_pullback and not taker_available:
             reasons.append("continuation_taker_unavailable")
-        elif direction * float(taker_delta) <= 0:
+        elif not is_15m_pullback and direction * float(taker_delta) <= 0:
             reasons.append("continuation_taker_not_aligned")
 
         bridge_features = {

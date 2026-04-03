@@ -184,6 +184,44 @@ def test_15m_continuation_pullback_wait_context_can_pass_when_pullback_is_health
     assert "continuation_15m_pullback_too_high_in_range" not in reasons
 
 
+def test_15m_continuation_pullback_allows_local_taker_dip_during_pullback() -> None:
+    service = make_service()
+    reasons = service._continuation_filter_reasons(
+        action=ActionAssessment(
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Triggered",
+            confidence_label="High",
+            opportunity_score=0.91,
+        ),
+        state_name="Long Build-up",
+        market_interpretation=make_interpretation(
+            action="WAIT",
+            control="Neutral",
+            flow_alignment=0.64,
+            structure_strength=0.60,
+        ),
+        flow_metrics=FlowMetrics(
+            price_change_15m=0.010,
+            atr_15m=0.010,
+            taker_buy_sell_ratio_delta_15m=-0.04,
+            taker_buy_sell_ratio_delta_4h=0.08,
+            oi_percentile_1h=0.92,
+            oi_percentile_4h=0.95,
+            recent_high_15m=0.8710,
+            recent_low_15m=0.8580,
+        ),
+        timeframe="15m",
+        bucket=make_bucket(),
+        execution=make_execution(entry_min=0.8662, invalidation=0.8548, target_1=0.8776, target_2=0.8890),
+    )
+
+    assert "continuation_control_not_directional" not in reasons
+    assert "continuation_taker_not_aligned" not in reasons
+    assert "continuation_flow_alignment_below_threshold" not in reasons
+    assert "continuation_structure_strength_below_threshold" not in reasons
+
+
 def test_15m_continuation_pullback_high_in_range_is_blocked() -> None:
     service = make_service()
     reasons = service._continuation_filter_reasons(
