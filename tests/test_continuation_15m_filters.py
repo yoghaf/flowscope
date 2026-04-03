@@ -98,6 +98,92 @@ def make_previous_bucket(
     )
 
 
+def make_1h_bucket(
+    *,
+    open_price: float = 1.0000,
+    close_price: float = 1.0220,
+) -> TimeframeBucket:
+    from datetime import UTC, datetime, timedelta
+
+    bucket_end = datetime(2026, 4, 3, 10, 0, tzinfo=UTC)
+    return TimeframeBucket(
+        symbol="LITUSDT",
+        timeframe="1h",
+        bucket_start=bucket_end - timedelta(hours=1),
+        bucket_end=bucket_end,
+        last_timestamp=bucket_end,
+        open_price=open_price,
+        high_price=max(open_price, close_price) + 0.0080,
+        low_price=min(open_price, close_price) - 0.0080,
+        close_price=close_price,
+        open_interest_open=1000.0,
+        open_interest_high=1030.0,
+        open_interest_low=995.0,
+        open_interest_close=1025.0,
+        spot_volume_open=100.0,
+        spot_volume_close=140.0,
+        spot_volume_delta=40.0,
+        futures_volume_open=120.0,
+        futures_volume_close=180.0,
+        futures_volume_delta=60.0,
+        funding_rate_sum=0.0,
+        funding_rate_close=0.0,
+        long_short_ratio_sum=1.0,
+        long_short_ratio_close=1.0,
+        taker_buy_sell_ratio_sum=1.0,
+        taker_buy_sell_ratio_close=1.0,
+        long_liquidations_close=0.0,
+        long_liquidations_total=0.0,
+        short_liquidations_close=0.0,
+        short_liquidations_total=0.0,
+        exchange_count_sum=1,
+        sample_count=1,
+    )
+
+
+def make_previous_1h_bucket(
+    *,
+    open_price: float = 1.0180,
+    close_price: float = 0.9940,
+) -> TimeframeBucket:
+    from datetime import UTC, datetime, timedelta
+
+    bucket_end = datetime(2026, 4, 3, 9, 0, tzinfo=UTC)
+    return TimeframeBucket(
+        symbol="LITUSDT",
+        timeframe="1h",
+        bucket_start=bucket_end - timedelta(hours=1),
+        bucket_end=bucket_end,
+        last_timestamp=bucket_end,
+        open_price=open_price,
+        high_price=max(open_price, close_price) + 0.0080,
+        low_price=min(open_price, close_price) - 0.0080,
+        close_price=close_price,
+        open_interest_open=985.0,
+        open_interest_high=1010.0,
+        open_interest_low=980.0,
+        open_interest_close=990.0,
+        spot_volume_open=90.0,
+        spot_volume_close=120.0,
+        spot_volume_delta=30.0,
+        futures_volume_open=110.0,
+        futures_volume_close=150.0,
+        futures_volume_delta=40.0,
+        funding_rate_sum=0.0,
+        funding_rate_close=0.0,
+        long_short_ratio_sum=1.0,
+        long_short_ratio_close=1.0,
+        taker_buy_sell_ratio_sum=1.0,
+        taker_buy_sell_ratio_close=1.0,
+        long_liquidations_close=0.0,
+        long_liquidations_total=0.0,
+        short_liquidations_close=0.0,
+        short_liquidations_total=0.0,
+        exchange_count_sum=1,
+        sample_count=1,
+    )
+
+
 def make_interpretation(**overrides: object) -> MarketInterpretationAssessment:
     payload = {
         "trend": "Bullish",
@@ -407,6 +493,90 @@ def test_15m_pullback_acceptance_stays_ready_without_cooling_bar() -> None:
             range_mid=0.8645,
             recent_high=0.8710,
             recent_low=0.8580,
+        ),
+    )
+
+    assert action.status == "Ready"
+    assert pending is True
+
+
+def test_1h_pullback_is_not_auto_promoted_before_acceptance() -> None:
+    action = SignalService._promote_continuation_pullback_trigger(
+        action=ActionAssessment(
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Ready",
+            confidence_label="High",
+            opportunity_score=0.91,
+        ),
+        execution=make_execution(entry_min=1.0120, invalidation=0.9920, target_1=1.0320, target_2=1.0520),
+        timeframe="1h",
+    )
+
+    assert action.status == "Ready"
+
+
+def test_1h_pullback_acceptance_promotes_after_micro_reclaim() -> None:
+    service = make_service()
+    action, pending = service._apply_continuation_pullback_acceptance_gate(
+        symbol="LITUSDT",
+        timeframe="1h",
+        bucket=make_1h_bucket(),
+        history=[make_previous_1h_bucket(), make_1h_bucket()],
+        action=ActionAssessment(
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Ready",
+            confidence_label="High",
+            opportunity_score=0.89,
+        ),
+        execution=make_execution(entry_min=1.0120, invalidation=0.9920, target_1=1.0320, target_2=1.0520),
+        flow_metrics=FlowMetrics(
+            range_mid_1h=1.0060,
+            price_change_15m=0.004,
+            volume_change_1h=-0.30,
+            volume_z_15m=0.20,
+            taker_buy_sell_ratio_delta_15m=0.04,
+        ),
+        market_interpretation=make_interpretation(
+            action="WAIT",
+            range_mid=1.0060,
+            recent_high=1.0300,
+            recent_low=0.9900,
+        ),
+    )
+
+    assert action.status == "Triggered"
+    assert pending is False
+
+
+def test_1h_pullback_acceptance_waits_when_micro_pullback_is_still_falling() -> None:
+    service = make_service()
+    action, pending = service._apply_continuation_pullback_acceptance_gate(
+        symbol="DRIFTUSDT",
+        timeframe="1h",
+        bucket=make_1h_bucket(),
+        history=[make_previous_1h_bucket(), make_1h_bucket()],
+        action=ActionAssessment(
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Ready",
+            confidence_label="High",
+            opportunity_score=0.84,
+        ),
+        execution=make_execution(entry_min=1.0120, invalidation=0.9920, target_1=1.0320, target_2=1.0520),
+        flow_metrics=FlowMetrics(
+            range_mid_1h=1.0060,
+            price_change_15m=-0.001,
+            volume_change_1h=-0.92,
+            volume_z_15m=-0.60,
+            taker_buy_sell_ratio_delta_15m=-0.08,
+        ),
+        market_interpretation=make_interpretation(
+            action="WAIT",
+            range_mid=1.0060,
+            recent_high=1.0300,
+            recent_low=0.9900,
         ),
     )
 

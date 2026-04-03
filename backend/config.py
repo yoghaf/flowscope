@@ -156,6 +156,9 @@ class Settings(BaseSettings):
     continuation_15m_pullback_min_structure_strength: float = 0.58
     continuation_15m_max_pullback_range_position: float = 0.72
     continuation_15m_long_build_relaxed_min_volume_change_4h: float = -1.20
+    continuation_1h_pullback_min_price_change_15m: float = 0.0
+    continuation_1h_pullback_min_volume_change_1h: float = -0.80
+    continuation_1h_pullback_min_volume_z_15m: float = -0.10
     continuation_15m_late_expansion_volume_change_4h_min: float = 3.00
     continuation_15m_late_expansion_price_change_4h_min: float = 0.18
     continuation_15m_extreme_volume_z_4h_min: float = 8.00

@@ -4414,13 +4414,12 @@ class SignalService:
             return action
         if execution.entry_type != "Continuation Pullback":
             return action
-        if timeframe == "15m":
+        if timeframe in {"15m", "1h"}:
             return action
         return cls._action_with_status(action, "Triggered")
 
-    @classmethod
     def _apply_continuation_pullback_acceptance_gate(
-        cls,
+        self,
         *,
         symbol: str,
         timeframe: str,
@@ -4431,13 +4430,13 @@ class SignalService:
         flow_metrics: FlowMetrics,
         market_interpretation: MarketInterpretationAssessment,
     ) -> tuple[ActionAssessment, bool]:
-        if timeframe != "15m" or action.setup_type != "Continuation" or action.status != "Ready":
+        if timeframe not in {"15m", "1h"} or action.setup_type != "Continuation" or action.status != "Ready":
             return action, False
         if action.bias == "Neutral" or execution is None or execution.entry_type != "Continuation Pullback":
             return action, False
 
         direction = 1 if action.bias == "Bullish" else -1
-        range_mid = market_interpretation.range_mid or getattr(flow_metrics, "range_mid_15m", 0.0)
+        range_mid = market_interpretation.range_mid or getattr(flow_metrics, f"range_mid_{timeframe}", 0.0)
         current_body = bucket.close_price - bucket.open_price
         supportive_close = (direction * current_body) > 0
         reclaimed_mid = True if range_mid <= 0 else (direction * (bucket.close_price - range_mid)) >= 0
@@ -4450,8 +4449,23 @@ class SignalService:
             if not prior_cooling and range_mid > 0:
                 prior_cooling = (direction * (previous_bucket.close_price - range_mid)) <= 0
 
-        if supportive_close and reclaimed_mid and prior_cooling:
-            return cls._action_with_status(action, "Triggered"), False
+        local_supportive = True
+        if timeframe == "1h":
+            price_change_15m = float(getattr(flow_metrics, "price_change_15m", 0.0) or 0.0)
+            volume_change_1h = float(getattr(flow_metrics, "volume_change_1h", 0.0) or 0.0)
+            volume_z_15m = float(getattr(flow_metrics, "volume_z_15m", 0.0) or 0.0)
+            taker_delta_15m = float(getattr(flow_metrics, "taker_buy_sell_ratio_delta_15m", 0.0) or 0.0)
+            local_supportive = (
+                direction * price_change_15m > self.settings.continuation_1h_pullback_min_price_change_15m
+                and volume_change_1h >= self.settings.continuation_1h_pullback_min_volume_change_1h
+                and (
+                    direction * taker_delta_15m > 0
+                    or volume_z_15m >= self.settings.continuation_1h_pullback_min_volume_z_15m
+                )
+            )
+
+        if supportive_close and reclaimed_mid and prior_cooling and local_supportive:
+            return self._action_with_status(action, "Triggered"), False
 
         return action, True
 

@@ -524,7 +524,7 @@ def test_hard_entry_filters_keep_htf_context_blocks_when_15m_long_build_is_truly
     assert "htf_volume_dried_up" in reasons
 
 
-def test_ready_continuation_pullback_is_promoted_to_triggered() -> None:
+def test_ready_1h_continuation_pullback_is_not_auto_promoted() -> None:
     service = SignalService.__new__(SignalService)
 
     promoted = service._promote_continuation_pullback_trigger(
@@ -537,6 +537,26 @@ def test_ready_continuation_pullback_is_promoted_to_triggered() -> None:
         ),
         execution=SimpleNamespace(entry_type="Continuation Pullback"),
         timeframe="1h",
+    )
+
+    assert promoted.status == "Ready"
+    assert promoted.setup_type == "Continuation"
+    assert promoted.bias == "Bullish"
+
+
+def test_ready_4h_continuation_pullback_is_still_auto_promoted() -> None:
+    service = SignalService.__new__(SignalService)
+
+    promoted = service._promote_continuation_pullback_trigger(
+        action=SimpleNamespace(
+            setup_type="Continuation",
+            status="Ready",
+            bias="Bullish",
+            confidence_label="High",
+            opportunity_score=0.78,
+        ),
+        execution=SimpleNamespace(entry_type="Continuation Pullback"),
+        timeframe="4h",
     )
 
     assert promoted.status == "Triggered"
