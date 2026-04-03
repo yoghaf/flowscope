@@ -1099,6 +1099,7 @@ class SignalService:
                     flow_metrics=flow_metrics,
                     timeframe=timeframe,
                     clarity_confidence=market_interpretation.clarity_confidence,
+                    state_name=state_assessment.state,
                 )
             if hard_entry_filter_reasons:
                 self._clear_ready_states(symbol, timeframe)
@@ -4113,12 +4114,37 @@ class SignalService:
         flow_metrics: FlowMetrics,
         timeframe: str,
         clarity_confidence: float,
+        state_name: str | None = None,
     ) -> list[str]:
         reasons: list[str] = []
         regime = self._market_regime(flow_metrics, timeframe)
         volatility = self._volatility_regime(flow_metrics, timeframe)
         volume_z = getattr(flow_metrics, f"volume_z_{timeframe}", None)
         oi_delta_z = getattr(flow_metrics, f"oi_delta_z_{timeframe}", None)
+        is_15m_long_build_candidate = (
+            timeframe == "15m"
+            and action.setup_type == "Continuation"
+            and action.bias == "Bullish"
+            and state_name == "Long Build-up"
+        )
+
+        allow_relaxed_htf_oi = (
+            is_15m_long_build_candidate
+            and getattr(flow_metrics, "oi_percentile_1h", 0.0) >= self.settings.decision_bridge_min_oi_percentile_1h
+            and getattr(flow_metrics, "oi_percentile_4h", 0.0) >= self.settings.decision_bridge_min_oi_percentile_4h
+        )
+        taker_delta_4h = float(getattr(flow_metrics, "taker_buy_sell_ratio_delta_4h", 0.0) or 0.0)
+        taker_level_4h = float(getattr(flow_metrics, "taker_buy_sell_ratio_level_4h", 0.0) or 0.0)
+        bearish_4h_taker_context = (
+            taker_delta_4h <= self.settings.decision_bridge_bearish_taker_delta_4h_max
+            and taker_level_4h <= self.settings.decision_bridge_bearish_taker_level_4h_max
+        )
+        allow_relaxed_htf_market_pressure = is_15m_long_build_candidate and not bearish_4h_taker_context
+        min_volume_change_4h = (
+            self.settings.continuation_15m_long_build_relaxed_min_volume_change_4h
+            if is_15m_long_build_candidate
+            else self.settings.entry_filter_min_volume_change_4h
+        )
 
         if regime == "Ranging" and volatility == "Low":
             reasons.append("market_regime_ranging")
@@ -4133,15 +4159,15 @@ class SignalService:
                 if self._global_btc_trend() != "Bearish":
                     reasons.append("short_direction_disabled")
         elif action.bias == "Bullish":
-            if getattr(flow_metrics, "oi_change_4h", 0.0) <= 0.0:
+            if getattr(flow_metrics, "oi_change_4h", 0.0) <= 0.0 and not allow_relaxed_htf_oi:
                 reasons.append("htf_oi_not_supportive")
-            if getattr(flow_metrics, "market_pressure_4h", 0.0) <= 0.0:
+            if getattr(flow_metrics, "market_pressure_4h", 0.0) <= 0.0 and not allow_relaxed_htf_market_pressure:
                 reasons.append("htf_market_pressure_negative")
         if flow_metrics.history_length_1h < self.settings.entry_filter_min_history_1h:
             reasons.append("history_young_coin")
         if flow_metrics.atr_24h < self.settings.entry_filter_min_atr_24h:
             reasons.append("htf_volatility_dead")
-        if getattr(flow_metrics, "volume_change_4h", 0.0) < self.settings.entry_filter_min_volume_change_4h:
+        if getattr(flow_metrics, "volume_change_4h", 0.0) < min_volume_change_4h:
             reasons.append("htf_volume_dried_up")
         if flow_metrics.volume_z_15m is not None and flow_metrics.volume_z_15m > self.settings.entry_filter_max_volume_z_15m:
             reasons.append("exhaustion_volume_climax")

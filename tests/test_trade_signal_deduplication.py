@@ -460,6 +460,70 @@ def test_hard_entry_filters_do_not_force_breakout_anomaly_rules_on_continuation(
     assert "oi_delta_z_below_threshold" not in reasons
 
 
+def test_hard_entry_filters_relax_htf_context_for_15m_long_build_candidate() -> None:
+    service = SignalService.__new__(SignalService)
+    service.settings = Settings(demo_mode=False)
+
+    reasons = service._entry_hard_filter_reasons(
+        action=SimpleNamespace(setup_type="Continuation", bias="Bullish", status="Ready"),
+        flow_metrics=FlowMetrics(
+            price_change_15m=0.01,
+            atr_15m=0.012,
+            atr_1h=0.02,
+            atr_24h=0.12,
+            compression_score_15m=0.2,
+            history_length_1h=72,
+            oi_change_4h=-0.01,
+            oi_percentile_1h=0.8,
+            oi_percentile_4h=0.8,
+            market_pressure_4h=-0.02,
+            taker_buy_sell_ratio_delta_4h=0.08,
+            taker_buy_sell_ratio_level_4h=0.06,
+            volume_change_4h=-0.9,
+            wick_ratio_24h=0.3,
+        ),
+        timeframe="15m",
+        clarity_confidence=0.9,
+        state_name="Long Build-up",
+    )
+
+    assert "htf_oi_not_supportive" not in reasons
+    assert "htf_market_pressure_negative" not in reasons
+    assert "htf_volume_dried_up" not in reasons
+
+
+def test_hard_entry_filters_keep_htf_context_blocks_when_15m_long_build_is_truly_weak() -> None:
+    service = SignalService.__new__(SignalService)
+    service.settings = Settings(demo_mode=False)
+
+    reasons = service._entry_hard_filter_reasons(
+        action=SimpleNamespace(setup_type="Continuation", bias="Bullish", status="Ready"),
+        flow_metrics=FlowMetrics(
+            price_change_15m=0.01,
+            atr_15m=0.012,
+            atr_1h=0.02,
+            atr_24h=0.12,
+            compression_score_15m=0.2,
+            history_length_1h=72,
+            oi_change_4h=-0.01,
+            oi_percentile_1h=0.2,
+            oi_percentile_4h=0.2,
+            market_pressure_4h=-0.02,
+            taker_buy_sell_ratio_delta_4h=-0.4,
+            taker_buy_sell_ratio_level_4h=-0.2,
+            volume_change_4h=-1.3,
+            wick_ratio_24h=0.3,
+        ),
+        timeframe="15m",
+        clarity_confidence=0.9,
+        state_name="Long Build-up",
+    )
+
+    assert "htf_oi_not_supportive" in reasons
+    assert "htf_market_pressure_negative" in reasons
+    assert "htf_volume_dried_up" in reasons
+
+
 def test_ready_continuation_pullback_is_promoted_to_triggered() -> None:
     service = SignalService.__new__(SignalService)
 
@@ -472,6 +536,7 @@ def test_ready_continuation_pullback_is_promoted_to_triggered() -> None:
             opportunity_score=0.78,
         ),
         execution=SimpleNamespace(entry_type="Continuation Pullback"),
+        timeframe="1h",
     )
 
     assert promoted.status == "Triggered"
