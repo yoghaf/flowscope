@@ -298,6 +298,7 @@ async def replay_symbol(
     settings: object,
     symbol: str,
     buckets: dict[str, list[TimeframeBucket]],
+    context_soft_gate_enabled: bool = False,
 ) -> tuple[list[TradeSignal], ReplayDiagnostics]:
     diagnostics = ReplayDiagnostics(
         stage_counts=Counter(),
@@ -306,7 +307,7 @@ async def replay_symbol(
     )
     replay_db = ReplayDatabase(
         {symbol: buckets},
-        soft_gate=ReplaySoftGateConfig(enabled=getattr(settings, "replay_context_soft_gate_enabled", False)),
+        soft_gate=ReplaySoftGateConfig(enabled=context_soft_gate_enabled),
         diagnostics=diagnostics,
     )
     service = SignalService(settings, replay_db, RealtimeHub())
@@ -554,6 +555,7 @@ async def _replay_one(
     buckets: dict[str, list[TimeframeBucket]],
     progress: dict[str, int],
     start_time: float,
+    context_soft_gate_enabled: bool,
 ) -> tuple[str, list[TradeSignal], ReplayDiagnostics]:
     """Replay a single symbol under the concurrency semaphore."""
     async with semaphore:
@@ -561,6 +563,7 @@ async def _replay_one(
             settings=settings,
             symbol=symbol,
             buckets=buckets,
+            context_soft_gate_enabled=context_soft_gate_enabled,
         )
         progress["done"] += 1
         elapsed = time.time() - start_time
@@ -577,7 +580,6 @@ async def _replay_one(
 async def main() -> int:
     args = parse_args()
     settings = get_settings()
-    settings.replay_context_soft_gate_enabled = bool(args.context_soft_gate)
     source_db = DatabaseManager(settings)
     source_db.enabled = True
 
@@ -608,7 +610,15 @@ async def main() -> int:
     replay_start = time.time()
 
     tasks = [
-        _replay_one(semaphore, settings, symbol, grouped[symbol], progress, replay_start)
+        _replay_one(
+            semaphore,
+            settings,
+            symbol,
+            grouped[symbol],
+            progress,
+            replay_start,
+            bool(args.context_soft_gate),
+        )
         for symbol in sorted(grouped)
     ]
     results = await asyncio.gather(*tasks)
