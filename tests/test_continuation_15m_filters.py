@@ -86,23 +86,31 @@ def make_interpretation(**overrides: object) -> MarketInterpretationAssessment:
     return MarketInterpretationAssessment(**payload)
 
 
-def make_execution(*, entry_type: str = "Continuation Pullback", breakout_valid: bool = False) -> ExecutionPlan:
+def make_execution(
+    *,
+    entry_type: str = "Continuation Pullback",
+    breakout_valid: bool = False,
+    entry_min: float = 0.8696,
+    invalidation: float = 0.8548,
+    target_1: float = 0.8843,
+    target_2: float = 0.8991,
+) -> ExecutionPlan:
     return ExecutionPlan(
         entry_type=entry_type,
-        entry_min=0.8696,
-        entry_max=0.8696,
-        invalidation=0.8548,
-        target=0.8991,
-        target_1=0.8843,
-        target_2=0.8991,
-        initial_stop=0.8548,
+        entry_min=entry_min,
+        entry_max=entry_min,
+        invalidation=invalidation,
+        target=target_2,
+        target_1=target_1,
+        target_2=target_2,
+        initial_stop=invalidation,
         risk_level="Low",
         quality_score="A",
         breakout_valid=breakout_valid,
     )
 
 
-def test_15m_continuation_pullback_wait_context_is_blocked() -> None:
+def test_15m_continuation_pullback_wait_context_can_pass_when_pullback_is_healthy() -> None:
     service = make_service()
     reasons = service._continuation_filter_reasons(
         action=ActionAssessment(
@@ -115,6 +123,40 @@ def test_15m_continuation_pullback_wait_context_is_blocked() -> None:
         state_name="Long Build-up",
         market_interpretation=make_interpretation(action="WAIT"),
         flow_metrics=FlowMetrics(
+            price_change_15m=0.031,
+            atr_15m=0.020,
+            taker_buy_sell_ratio_delta_15m=0.05,
+            taker_buy_sell_ratio_delta_4h=0.08,
+            oi_percentile_1h=0.92,
+            oi_percentile_4h=0.95,
+            recent_high_15m=0.8710,
+            recent_low_15m=0.8580,
+        ),
+        timeframe="15m",
+        bucket=make_bucket(),
+        execution=make_execution(entry_min=0.8662, invalidation=0.8548, target_1=0.8776, target_2=0.8890),
+    )
+
+    assert "continuation_15m_pullback_requires_enter" not in reasons
+    assert "continuation_15m_pullback_requires_trending_regime" not in reasons
+    assert "continuation_15m_pullback_too_high_in_range" not in reasons
+
+
+def test_15m_continuation_pullback_high_in_range_is_blocked() -> None:
+    service = make_service()
+    reasons = service._continuation_filter_reasons(
+        action=ActionAssessment(
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Triggered",
+            confidence_label="High",
+            opportunity_score=0.91,
+        ),
+        state_name="Long Build-up",
+        market_interpretation=make_interpretation(action="WAIT"),
+        flow_metrics=FlowMetrics(
+            price_change_15m=0.031,
+            atr_15m=0.020,
             taker_buy_sell_ratio_delta_15m=0.05,
             taker_buy_sell_ratio_delta_4h=0.08,
             oi_percentile_1h=0.92,
@@ -127,8 +169,37 @@ def test_15m_continuation_pullback_wait_context_is_blocked() -> None:
         execution=make_execution(),
     )
 
-    assert "continuation_15m_pullback_requires_enter" in reasons
     assert "continuation_15m_pullback_too_high_in_range" in reasons
+
+
+def test_15m_continuation_pullback_balanced_context_is_blocked() -> None:
+    service = make_service()
+    reasons = service._continuation_filter_reasons(
+        action=ActionAssessment(
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Triggered",
+            confidence_label="High",
+            opportunity_score=0.91,
+        ),
+        state_name="Long Build-up",
+        market_interpretation=make_interpretation(action="WAIT"),
+        flow_metrics=FlowMetrics(
+            price_change_15m=0.010,
+            atr_15m=0.010,
+            taker_buy_sell_ratio_delta_15m=0.05,
+            taker_buy_sell_ratio_delta_4h=0.08,
+            oi_percentile_1h=0.92,
+            oi_percentile_4h=0.95,
+            recent_high_15m=0.8710,
+            recent_low_15m=0.8580,
+        ),
+        timeframe="15m",
+        bucket=make_bucket(),
+        execution=make_execution(entry_min=0.8662, invalidation=0.8548, target_1=0.8776, target_2=0.8890),
+    )
+
+    assert "continuation_15m_pullback_requires_trending_regime" in reasons
 
 
 def test_15m_continuation_late_expansion_climax_is_blocked() -> None:

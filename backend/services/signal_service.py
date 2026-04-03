@@ -4233,12 +4233,24 @@ class SignalService:
             return []
 
         reasons: list[str] = []
+        regime = self._market_regime(flow_metrics, timeframe)
         if (
             execution.entry_type == "Continuation Pullback"
             and self.settings.continuation_15m_require_enter_for_pullback
             and market_interpretation.action != "ENTER"
         ):
             reasons.append("continuation_15m_pullback_requires_enter")
+
+        if execution.entry_type == "Continuation Pullback":
+            if (
+                self.settings.continuation_15m_pullback_requires_trending_regime
+                and regime != "Trending"
+            ):
+                reasons.append("continuation_15m_pullback_requires_trending_regime")
+            if market_interpretation.flow_alignment < self.settings.continuation_15m_pullback_min_flow_alignment:
+                reasons.append("continuation_15m_pullback_flow_alignment_too_weak")
+            if market_interpretation.structure_strength < self.settings.continuation_15m_pullback_min_structure_strength:
+                reasons.append("continuation_15m_pullback_structure_too_weak")
 
         recent_high = market_interpretation.recent_high or getattr(flow_metrics, "recent_high_15m", 0.0)
         recent_low = market_interpretation.recent_low or getattr(flow_metrics, "recent_low_15m", 0.0)
