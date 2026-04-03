@@ -1153,6 +1153,8 @@ class SignalService:
                     market_interpretation=market_interpretation,
                     flow_metrics=flow_metrics,
                     timeframe=timeframe,
+                    bucket=bucket,
+                    execution=execution,
                 )
             )
             if execution is not None:
@@ -2496,6 +2498,12 @@ class SignalService:
             insights.append(f"📊 Volume 4H sangat tinggi (Z={vol_z_4h:.1f}x) → Aktivitas institusi besar")
         elif vol_change_4h < -0.5:
             insights.append("⚠️ Volume 4H menurun → Pergerakan ini kurang didukung likuiditas baru")
+        if vol_z_4h >= self.settings.continuation_15m_extreme_volume_z_4h_min:
+            insights.append("⚠️ Volume 4H sudah sangat ekstrem → bisa menandakan fase akhir move, jangan kejar continuation telat")
+        if bias == "Bullish" and liq_pressure_1h <= -self.settings.continuation_15m_squeeze_pressure_min:
+            insights.append("⚠️ Short squeeze kuat → tunggu acceptance/pullback sehat, jangan kejar candle akhir")
+        elif bias == "Bearish" and liq_pressure_1h >= self.settings.continuation_15m_squeeze_pressure_min:
+            insights.append("⚠️ Long squeeze kuat → hindari entry telat setelah flush terakhir")
 
         # --- 5. HTF Volatility ---
         atr_24h = getattr(flow_metrics, "atr_24h", 0.0) or 0.0
@@ -3450,6 +3458,24 @@ class SignalService:
             body.extend(insight_lines)
             body.append("")
 
+        market_interpretation = state.market_interpretation if isinstance(state.market_interpretation, dict) else {}
+        warning_lines: list[str] = []
+        warnings = market_interpretation.get("warnings", [])
+        risk_notes = market_interpretation.get("risk_notes", [])
+        if isinstance(warnings, list) and warnings:
+            warning_lines.append("⚠️ <b>Peringatan Struktur:</b>")
+            for warning in warnings[:2]:
+                warning_lines.append(f"  • {self.telegram_notifier.escape(str(warning))}")
+        if isinstance(risk_notes, list) and risk_notes:
+            if not warning_lines:
+                warning_lines.append("⚠️ <b>Risiko yang Perlu Diperhatikan:</b>")
+            for note in risk_notes[:2]:
+                warning_lines.append(f"  • {self.telegram_notifier.escape(str(note))}")
+
+        if warning_lines:
+            body.extend(warning_lines)
+            body.append("")
+
         # --- BTC Context ---
         btc_trend = self._global_btc_trend()
         btc_emoji = "🟢" if btc_trend == "Bullish" else "🔴" if btc_trend == "Bearish" else "⚪"
@@ -4028,6 +4054,8 @@ class SignalService:
         market_interpretation: MarketInterpretationAssessment,
         flow_metrics: FlowMetrics,
         timeframe: str,
+        bucket: TimeframeBucket | None = None,
+        execution: ExecutionPlan | None = None,
     ) -> list[str]:
         if action.setup_type != "Continuation" or action.bias == "Neutral":
             return []
@@ -4089,6 +4117,78 @@ class SignalService:
                 ),
             )
         )
+        reasons.extend(
+            self._continuation_late_entry_reasons(
+                action=action,
+                state_name=state_name,
+                market_interpretation=market_interpretation,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                bucket=bucket,
+                execution=execution,
+            )
+        )
+        return reasons
+
+    def _continuation_late_entry_reasons(
+        self,
+        *,
+        action: ActionAssessment,
+        state_name: str,
+        market_interpretation: MarketInterpretationAssessment,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        bucket: TimeframeBucket,
+        execution: ExecutionPlan | None,
+    ) -> list[str]:
+        if timeframe != "15m" or execution is None or action.setup_type != "Continuation":
+            return []
+
+        direction = 1 if action.bias == "Bullish" else -1 if action.bias == "Bearish" else 0
+        if direction == 0:
+            return []
+
+        reasons: list[str] = []
+        if (
+            execution.entry_type == "Continuation Pullback"
+            and self.settings.continuation_15m_require_enter_for_pullback
+            and market_interpretation.action != "ENTER"
+        ):
+            reasons.append("continuation_15m_pullback_requires_enter")
+
+        recent_high = market_interpretation.recent_high or getattr(flow_metrics, "recent_high_15m", 0.0)
+        recent_low = market_interpretation.recent_low or getattr(flow_metrics, "recent_low_15m", 0.0)
+        entry_price = execution.entry_min
+        if (
+            execution.entry_type == "Continuation Pullback"
+            and entry_price is not None
+            and recent_high > recent_low > 0
+        ):
+            range_span = recent_high - recent_low
+            if range_span > VALUE_EPSILON:
+                range_position = (entry_price - recent_low) / range_span
+                max_position = self.settings.continuation_15m_max_pullback_range_position
+                if direction > 0 and range_position > max_position:
+                    reasons.append("continuation_15m_pullback_too_high_in_range")
+                elif direction < 0 and range_position < (1.0 - max_position):
+                    reasons.append("continuation_15m_pullback_too_low_in_range")
+
+        volume_change_4h = float(getattr(flow_metrics, "volume_change_4h", 0.0) or 0.0)
+        price_change_4h = abs(float(getattr(flow_metrics, "price_change_4h", 0.0) or 0.0))
+        volume_z_4h = float(getattr(flow_metrics, "volume_z_4h", 0.0) or 0.0)
+        liq_pressure_1h = float(getattr(flow_metrics, "liq_pressure_1h", 0.0) or 0.0)
+        aligned_squeeze_pressure = direction * -liq_pressure_1h
+        if (
+            state_name == "Expansion"
+            and price_change_4h >= self.settings.continuation_15m_late_expansion_price_change_4h_min
+            and (
+                volume_change_4h >= self.settings.continuation_15m_late_expansion_volume_change_4h_min
+                or volume_z_4h >= self.settings.continuation_15m_extreme_volume_z_4h_min
+                or aligned_squeeze_pressure >= self.settings.continuation_15m_squeeze_pressure_min
+            )
+        ):
+            reasons.append("continuation_15m_late_expansion_climax")
+
         return reasons
 
     def _breakout_filter_reasons(
