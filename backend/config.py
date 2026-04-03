@@ -150,7 +150,7 @@ class Settings(BaseSettings):
     continuation_min_flow_alignment: float = 0.70
     continuation_min_structure_strength: float = 0.65
     continuation_15m_require_enter_for_pullback: bool = False
-    continuation_15m_pullback_requires_trending_regime: bool = True
+    continuation_15m_pullback_requires_trending_regime: bool = False
     continuation_15m_pullback_min_flow_alignment: float = 0.78
     continuation_15m_pullback_min_structure_strength: float = 0.72
     continuation_15m_max_pullback_range_position: float = 0.72

@@ -1206,6 +1206,17 @@ class SignalService:
             action = self._promote_continuation_pullback_trigger(
                 action=action,
                 execution=execution,
+                timeframe=timeframe,
+            )
+            action, pullback_acceptance_pending = self._apply_continuation_pullback_acceptance_gate(
+                symbol=symbol,
+                timeframe=timeframe,
+                bucket=bucket,
+                history=history,
+                action=action,
+                execution=execution,
+                flow_metrics=flow_metrics,
+                market_interpretation=market_interpretation,
             )
             action, followthrough_pending = self._apply_followthrough_gate(
                 symbol=symbol,
@@ -1299,8 +1310,20 @@ class SignalService:
                     "scenario": scenario.to_dict(),
                     "entry_filters": {
                         "passed": True,
-                        "stage": "follow_through" if followthrough_pending else "pass",
-                        "reasons": ["awaiting_follow_through"] if followthrough_pending else [],
+                        "stage": (
+                            "pullback_acceptance"
+                            if pullback_acceptance_pending
+                            else "follow_through"
+                            if followthrough_pending
+                            else "pass"
+                        ),
+                        "reasons": (
+                            ["awaiting_pullback_acceptance"]
+                            if pullback_acceptance_pending
+                            else ["awaiting_follow_through"]
+                            if followthrough_pending
+                            else []
+                        ),
                     },
                 },
             )
@@ -4233,7 +4256,6 @@ class SignalService:
             return []
 
         reasons: list[str] = []
-        regime = self._market_regime(flow_metrics, timeframe)
         if (
             execution.entry_type == "Continuation Pullback"
             and self.settings.continuation_15m_require_enter_for_pullback
@@ -4242,11 +4264,6 @@ class SignalService:
             reasons.append("continuation_15m_pullback_requires_enter")
 
         if execution.entry_type == "Continuation Pullback":
-            if (
-                self.settings.continuation_15m_pullback_requires_trending_regime
-                and regime != "Trending"
-            ):
-                reasons.append("continuation_15m_pullback_requires_trending_regime")
             if market_interpretation.flow_alignment < self.settings.continuation_15m_pullback_min_flow_alignment:
                 reasons.append("continuation_15m_pullback_flow_alignment_too_weak")
             if market_interpretation.structure_strength < self.settings.continuation_15m_pullback_min_structure_strength:
@@ -4336,6 +4353,7 @@ class SignalService:
         *,
         action: ActionAssessment,
         execution: ExecutionPlan | None,
+        timeframe: str,
     ) -> ActionAssessment:
         if action.setup_type != "Continuation" or action.status != "Ready":
             return action
@@ -4343,7 +4361,46 @@ class SignalService:
             return action
         if execution.entry_type != "Continuation Pullback":
             return action
+        if timeframe == "15m":
+            return action
         return cls._action_with_status(action, "Triggered")
+
+    @classmethod
+    def _apply_continuation_pullback_acceptance_gate(
+        cls,
+        *,
+        symbol: str,
+        timeframe: str,
+        bucket: TimeframeBucket,
+        history: list[TimeframeBucket],
+        action: ActionAssessment,
+        execution: ExecutionPlan | None,
+        flow_metrics: FlowMetrics,
+        market_interpretation: MarketInterpretationAssessment,
+    ) -> tuple[ActionAssessment, bool]:
+        if timeframe != "15m" or action.setup_type != "Continuation" or action.status != "Ready":
+            return action, False
+        if action.bias == "Neutral" or execution is None or execution.entry_type != "Continuation Pullback":
+            return action, False
+
+        direction = 1 if action.bias == "Bullish" else -1
+        range_mid = market_interpretation.range_mid or getattr(flow_metrics, "range_mid_15m", 0.0)
+        current_body = bucket.close_price - bucket.open_price
+        supportive_close = (direction * current_body) > 0
+        reclaimed_mid = True if range_mid <= 0 else (direction * (bucket.close_price - range_mid)) >= 0
+
+        prior_cooling = False
+        if len(history) >= 2:
+            previous_bucket = history[-2]
+            previous_body = previous_bucket.close_price - previous_bucket.open_price
+            prior_cooling = (direction * previous_body) <= 0
+            if not prior_cooling and range_mid > 0:
+                prior_cooling = (direction * (previous_bucket.close_price - range_mid)) <= 0
+
+        if supportive_close and reclaimed_mid and prior_cooling:
+            return cls._action_with_status(action, "Triggered"), False
+
+        return action, True
 
     @staticmethod
     def _trade_confidence_from_asset_state(asset_state: AssetState | Any, fallback: float) -> float:
