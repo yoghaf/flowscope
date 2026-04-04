@@ -247,7 +247,15 @@ class ExecutionEngine:
         pullback_mode = action.setup_type == "Continuation" and action.status == "Ready" and (not breakout_valid or breakout_distance > max(float(profile["price_break"]), 0.02))
 
         entry = breakout_entry if not pullback_mode else current_price
-        atr_buffer = atr_abs * 1.5
+        # Risk Management Split: Trap setups need wider stops because they catch exhaustions
+        if action.setup_type == "Trap":
+            atr_sl_multiplier = 2.5
+        elif action.setup_type == "Squeeze":
+            atr_sl_multiplier = 2.0
+        else:
+            atr_sl_multiplier = 1.5
+            
+        atr_buffer = atr_abs * atr_sl_multiplier
 
         if direction == 1:
             invalidation = entry - atr_buffer
@@ -260,8 +268,10 @@ class ExecutionEngine:
         if action.status == "Triggered" and (not breakout_valid or not breakout_touched):
             return None
 
+        # Fix Trap invalidation logic. We only use range_mid to calculate risk/profit boundaries,
+        # we DO NOT overwrite the rigid stop loss with it if it breaks mathematical directionality.
         if action.setup_type == "Trap":
-            invalidation = range_mid if range_mid > 0 else invalidation
+            pass # Keep the wide ATR stop loss for Trap (2.5x)
 
         risk = abs(entry - invalidation)
         if risk <= 0:
