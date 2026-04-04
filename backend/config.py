@@ -171,9 +171,9 @@ class Settings(BaseSettings):
     decision_bridge_min_oi_percentile_4h: float = 0.47
     decision_bridge_late_expansion_volume_change_4h_min: float = 3.17
     decision_bridge_late_expansion_price_change_4h_min: float = 0.18
-    fail_fast_max_candles: int = 2
-    fail_fast_min_mfe_r: float = 0.30
-    fail_fast_flow_drop: float = 0.20
+    fail_fast_max_candles: int = 4
+    fail_fast_min_mfe_r: float = 0.15
+    fail_fast_flow_drop: float = 0.30
     auto_filter_negative_expectancy: bool = False
     expectancy_boost_factor: float = 0.15
     signal_decay_per_bucket: float = 0.08

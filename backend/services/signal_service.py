@@ -4188,6 +4188,28 @@ class SignalService:
                 reasons.append("volume_z_below_threshold")
             if oi_delta_z is None or abs(oi_delta_z) < self.settings.entry_filter_min_abs_oi_delta_z:
                 reasons.append("oi_delta_z_below_threshold")
+
+        # --- Range Position Guard: Prevent "longing at the top" ---
+        if action.bias == "Bullish":
+            recent_high = getattr(flow_metrics, "recent_high_1h", 0.0) or 0.0
+            recent_low = getattr(flow_metrics, "recent_low_1h", 0.0) or 0.0
+            price_range = recent_high - recent_low
+            if price_range > 0 and recent_high > 0:
+                current_price_approx = recent_low + price_range  # approximation via close
+                # Use range_mid as proxy for current position
+                range_mid = getattr(flow_metrics, "range_mid_1h", 0.0) or 0.0
+                if range_mid > 0:
+                    range_position = (range_mid - recent_low) / price_range
+                else:
+                    range_position = 1.0
+                if range_position >= 0.75:
+                    reasons.append("range_position_at_top")
+
+        # --- Chase Guard: Reject if 15m candle is a huge pump (chasing) ---
+        price_change_15m = abs(getattr(flow_metrics, "price_change_15m", 0.0) or 0.0)
+        if price_change_15m >= 0.03:
+            reasons.append("chasing_pump_candle")
+
         return reasons
 
     def _continuation_filter_reasons(
