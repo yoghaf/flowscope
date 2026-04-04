@@ -561,6 +561,15 @@ class MarketInterpreterEngine:
         price_change = abs(self._metric(metrics, "price_change", timeframe))
         price_flat = float(TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])["price_flat"])
 
+        # --- EXHAUSTION CLIMAX DETECTION ---
+        # If massive 4H volume or high 15m price spike + high 15m volume happens, it's a Trap, not a continuation.
+        vol_z_15m = self._metric(metrics, "volume_z", "15m")
+        price_chg_15m = abs(self._metric(metrics, "price_change", "15m"))
+        vol_chg_4h = self._metric(metrics, "volume_change", "4h")
+        
+        if (price_chg_15m >= 0.02 or abs(vol_chg_4h) >= 2.0) and abs(vol_z_15m) >= 1.5:
+            return "Trap"
+
         if control == "Seller Dominant" and oi_intent == "Position Closing":
             return "Pause after selloff"
         if control == "Buyer Dominant" and oi_intent == "Position Closing":

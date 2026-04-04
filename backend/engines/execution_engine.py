@@ -140,8 +140,18 @@ class ExecutionEngine:
 
         if market_interpretation.state == "Compression" or "Squeeze" in decision:
             setup_type: SetupType = "Squeeze"
-        elif "Trap" in decision or state.state == "Trap":
+        elif "Trap" in decision or state.state == "Trap" or market_interpretation.state == "Trap":
             setup_type = "Trap"
+            # Reverse bias for traps: if price pumped (price_change > 0), we short (Bearish).
+            if price_change > 0:
+                bias = "Bearish"
+            elif price_change < 0:
+                bias = "Bullish"
+            # Re-evaluate direction since bias flipped
+            direction = 1 if bias == "Bullish" else -1
+            breakout_entry = self._breakout_entry(direction, bucket, recent_high, recent_low)
+            breakout_touched = self._entry_touched(direction, bucket, breakout_entry)
+            breakout_distance = abs(breakout_entry - current_price) / current_price
         elif market_interpretation.state == "Trend continuation" or decision.startswith("Continuation"):
             setup_type = "Continuation"
         elif state.state == "Expansion":

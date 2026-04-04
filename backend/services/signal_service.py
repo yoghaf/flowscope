@@ -4121,6 +4121,7 @@ class SignalService:
         volatility = self._volatility_regime(flow_metrics, timeframe)
         volume_z = getattr(flow_metrics, f"volume_z_{timeframe}", None)
         oi_delta_z = getattr(flow_metrics, f"oi_delta_z_{timeframe}", None)
+        is_trap_setup = action.setup_type == "Trap"
         is_15m_long_build_candidate = (
             timeframe == "15m"
             and action.setup_type == "Continuation"
@@ -4169,11 +4170,11 @@ class SignalService:
             reasons.append("htf_volatility_dead")
         if getattr(flow_metrics, "volume_change_4h", 0.0) < min_volume_change_4h:
             reasons.append("htf_volume_dried_up")
-        if flow_metrics.volume_z_15m is not None and flow_metrics.volume_z_15m > self.settings.entry_filter_max_volume_z_15m:
+        if not is_trap_setup and flow_metrics.volume_z_15m is not None and flow_metrics.volume_z_15m > self.settings.entry_filter_max_volume_z_15m:
             reasons.append("exhaustion_volume_climax")
-        if flow_metrics.oi_delta_z_15m is not None and flow_metrics.oi_delta_z_15m > self.settings.entry_filter_max_oi_delta_z_15m:
+        if not is_trap_setup and flow_metrics.oi_delta_z_15m is not None and flow_metrics.oi_delta_z_15m > self.settings.entry_filter_max_oi_delta_z_15m:
             reasons.append("exhaustion_oi_climax")
-        if flow_metrics.liq_pressure_1h > self.settings.entry_filter_max_liq_pressure_1h:
+        if not is_trap_setup and flow_metrics.liq_pressure_1h > self.settings.entry_filter_max_liq_pressure_1h:
             reasons.append("exhaustion_liq_climax")
         if flow_metrics.atr_15m < self.settings.entry_filter_min_atr_15m:
             reasons.append("dead_atr_15m")
@@ -4190,7 +4191,7 @@ class SignalService:
                 reasons.append("oi_delta_z_below_threshold")
 
         # --- Range Position Guard: Prevent "longing at the top" ---
-        if action.bias == "Bullish":
+        if action.bias == "Bullish" and not is_trap_setup:
             recent_high = getattr(flow_metrics, "recent_high_1h", 0.0) or 0.0
             recent_low = getattr(flow_metrics, "recent_low_1h", 0.0) or 0.0
             price_range = recent_high - recent_low
@@ -4207,7 +4208,7 @@ class SignalService:
 
         # --- Chase Guard: Reject if 15m candle is a huge pump (chasing) ---
         price_change_15m = abs(getattr(flow_metrics, "price_change_15m", 0.0) or 0.0)
-        if price_change_15m >= 0.03:
+        if price_change_15m >= 0.03 and not is_trap_setup:
             reasons.append("chasing_pump_candle")
 
         return reasons
