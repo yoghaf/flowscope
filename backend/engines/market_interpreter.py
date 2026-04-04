@@ -712,21 +712,23 @@ class MarketInterpreterEngine:
             clarity_confidence *= 0.55
         clarity_confidence = round(self._clamp(clarity_confidence), 4)
 
-        if distribution_risk["active"]:
+        if state_label == "Trap":
+            clarity_confidence = 0.85
+            action = "ENTER"
+            action_rationale = "Exhaustion climax identified, overriding metrics to initiate Trap reversal."
+        elif distribution_risk["active"]:
             action = "WAIT"
             action_rationale = "Prepare for breakdown, avoid long until price reclaims strength or breakout validation returns."
         elif clarity_confidence < 0.35:
             action: ActionDirective = "NO TRADE"
             action_rationale = "Directional clarity is too low to justify a trade."
-        elif breakout_valid and not counter_trend and trap_risk < 0.6 and conflict_score < 0.45 and clarity_confidence >= 0.68:
+        elif clarity_confidence >= 0.68 and conflict_score < 0.45:
             action = "ENTER"
-            action_rationale = "Structure, control, and flow are aligned and breakout validation is active."
+            action_rationale = "Directional clarity and conflict metrics are favorable."
         else:
             action = "WAIT"
             if state_label in {"Compression", "Unclear"}:
                 action_rationale = "Wait for structure to become directional before acting."
-            elif not breakout_valid:
-                action_rationale = "Breakout is not validated yet, so the setup stays on watch."
             else:
                 action_rationale = "Direction is forming, but risk and conflict still need to improve."
 
