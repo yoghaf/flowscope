@@ -4148,10 +4148,10 @@ class SignalService:
         )
 
         if regime == "Ranging" and volatility == "Low":
-            reasons.append("market_regime_ranging")
+            pass
         if volatility == "Low":
-            reasons.append("volatility_regime_low")
-        if clarity_confidence < self.settings.entry_filter_min_clarity_confidence:
+            pass
+        if clarity_confidence < 0.35:
             reasons.append("clarity_below_threshold")
             
         if action.bias == "Bearish":
@@ -4160,30 +4160,25 @@ class SignalService:
                 if self._global_btc_trend() != "Bearish":
                     reasons.append("short_direction_disabled")
         elif action.bias == "Bullish":
-            if getattr(flow_metrics, "oi_change_4h", 0.0) <= 0.0 and not allow_relaxed_htf_oi:
-                reasons.append("htf_oi_not_supportive")
-            if getattr(flow_metrics, "market_pressure_4h", 0.0) <= 0.0 and not allow_relaxed_htf_market_pressure:
-                reasons.append("htf_market_pressure_negative")
-        if flow_metrics.history_length_1h < self.settings.entry_filter_min_history_1h:
-            reasons.append("history_young_coin")
-        if flow_metrics.atr_24h < self.settings.entry_filter_min_atr_24h:
-            reasons.append("htf_volatility_dead")
-        if getattr(flow_metrics, "volume_change_4h", 0.0) < min_volume_change_4h:
-            reasons.append("htf_volume_dried_up")
+            pass # Removed HTF OI checks for Intraday mode
+            pass # Removed HTF Market Pressure checks for Intraday mode
+        # Removed young coin checks for Intraday mode
+        # Removed 24H ATR filter to catch 15m localized bursts
+        # Removed 4H Volume drop filter because localized 15m volume matters more in intraday
         if not is_trap_setup and flow_metrics.volume_z_15m is not None and flow_metrics.volume_z_15m > self.settings.entry_filter_max_volume_z_15m:
             reasons.append("exhaustion_volume_climax")
         if not is_trap_setup and flow_metrics.oi_delta_z_15m is not None and flow_metrics.oi_delta_z_15m > self.settings.entry_filter_max_oi_delta_z_15m:
             reasons.append("exhaustion_oi_climax")
         if not is_trap_setup and flow_metrics.liq_pressure_1h > self.settings.entry_filter_max_liq_pressure_1h:
             reasons.append("exhaustion_liq_climax")
-        if flow_metrics.atr_15m < self.settings.entry_filter_min_atr_15m:
-            reasons.append("dead_atr_15m")
-        if flow_metrics.atr_1h < self.settings.entry_filter_min_atr_1h:
-            reasons.append("dead_atr_1h")
+        if flow_metrics.atr_15m < 0.001:
+            pass # Dead atr check disabled for intraday
+        if flow_metrics.atr_1h < 0.001:
+            pass
         if getattr(flow_metrics, "compression_score_15m", 0.0) > self.settings.entry_filter_max_compression_score_15m:
             reasons.append("high_compression_15m")
-        if getattr(flow_metrics, "wick_ratio_24h", 1.0) < self.settings.entry_filter_min_wick_ratio_24h:
-            reasons.append("tiny_wick_24h")
+        if getattr(flow_metrics, "wick_ratio_24h", 1.0) < 0.001:
+            pass # Wick check disabled
         if action.setup_type == "Breakout":
             if volume_z is None or volume_z < self.settings.entry_filter_min_volume_z:
                 reasons.append("volume_z_below_threshold")
