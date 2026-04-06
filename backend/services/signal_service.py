@@ -1173,6 +1173,12 @@ class SignalService:
                         execution=execution,
                     )
                 )
+            post_action_filter_reasons = self._adjust_post_action_filter_reasons(
+                action=action,
+                execution=execution,
+                timeframe=timeframe,
+                reasons=post_action_filter_reasons,
+            )
             if post_action_filter_reasons:
                 self._clear_ready_states(symbol, timeframe)
                 interpretation_payload = market_interpretation.to_dict()
@@ -4407,6 +4413,28 @@ class SignalService:
             reasons.append("breakout_oi_crowded")
         if late_distance > self.settings.breakout_max_late_entry_distance:
             reasons.append("breakout_late_entry")
+        return reasons
+
+    @staticmethod
+    def _adjust_post_action_filter_reasons(
+        *,
+        action: ActionAssessment,
+        execution: ExecutionPlan | None,
+        timeframe: str,
+        reasons: list[str],
+    ) -> list[str]:
+        if not reasons:
+            return reasons
+        if (
+            timeframe == "1h"
+            and action.setup_type == "Continuation"
+            and action.bias == "Bullish"
+            and action.status == "Triggered"
+            and execution is not None
+            and execution.entry_type == "Continuation Breakout"
+            and set(reasons) == {"breakout_close_not_confirmed"}
+        ):
+            return []
         return reasons
 
     @staticmethod

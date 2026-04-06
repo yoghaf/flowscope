@@ -564,6 +564,36 @@ def test_ready_4h_continuation_pullback_is_still_auto_promoted() -> None:
     assert promoted.bias == "Bullish"
 
 
+def test_1h_bullish_continuation_breakout_defers_close_confirmation_to_followthrough() -> None:
+    adjusted = SignalService._adjust_post_action_filter_reasons(
+        action=SimpleNamespace(
+            setup_type="Continuation",
+            status="Triggered",
+            bias="Bullish",
+        ),
+        execution=SimpleNamespace(entry_type="Continuation Breakout"),
+        timeframe="1h",
+        reasons=["breakout_close_not_confirmed"],
+    )
+
+    assert adjusted == []
+
+
+def test_1h_bullish_continuation_breakout_keeps_other_post_action_blocks() -> None:
+    adjusted = SignalService._adjust_post_action_filter_reasons(
+        action=SimpleNamespace(
+            setup_type="Continuation",
+            status="Triggered",
+            bias="Bullish",
+        ),
+        execution=SimpleNamespace(entry_type="Continuation Breakout"),
+        timeframe="1h",
+        reasons=["breakout_close_not_confirmed", "decision_bridge_bearish_4h_taker_context"],
+    )
+
+    assert adjusted == ["breakout_close_not_confirmed", "decision_bridge_bearish_4h_taker_context"]
+
+
 def test_breakout_requires_ranging_regime_blocks() -> None:
     service = SignalService.__new__(SignalService)
     service.settings = Settings(demo_mode=False)
