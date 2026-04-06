@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Annotated, Literal
 
@@ -130,6 +131,7 @@ class Settings(BaseSettings):
     trade_evaluator_interval_seconds: int = 180
     entry_touch_timeout_buckets: int = 2
     entry_notification_catchup_minutes: int = 60
+    trade_signals_active_since: datetime | None = datetime(2026, 4, 2, 5, 0, 0, tzinfo=UTC)
     entry_filter_min_clarity_confidence: float = 0.65
     entry_filter_min_volume_z: float = 1.15
     entry_filter_min_abs_oi_delta_z: float = 0.95

@@ -21,6 +21,20 @@ class PerformanceEngine:
     def __init__(self, database: DatabaseManager) -> None:
         self.database = database
 
+    def _active_since(self) -> datetime | None:
+        settings = getattr(self.database, "settings", None)
+        value = getattr(settings, "trade_signals_active_since", None)
+        return value if isinstance(value, datetime) else None
+
+    def _trade_in_scope(self, trade: object, *, scope: str) -> bool:
+        if scope != "active":
+            return True
+        active_since = self._active_since()
+        if active_since is None:
+            return True
+        created_at = getattr(trade, "created_at", None)
+        return isinstance(created_at, datetime) and created_at >= active_since
+
     @staticmethod
     def _round(value: float | None, digits: int = 4) -> float | None:
         if value is None:
@@ -47,10 +61,13 @@ class PerformanceEngine:
         symbol: str = "ALL",
         timeframe: str = "ALL",
         setup_type: str | None = None,
+        scope: str = "active",
     ) -> list:
         trades = await self.database.list_trade_signals()
         filtered = []
         for trade in trades:
+            if not self._trade_in_scope(trade, scope=scope):
+                continue
             if symbol != "ALL" and trade.symbol != symbol:
                 continue
             if timeframe != "ALL" and trade.timeframe != timeframe:
@@ -67,12 +84,14 @@ class PerformanceEngine:
         symbol: str = "ALL",
         timeframe: str = "ALL",
         setup_type: str | None = None,
+        scope: str = "active",
         capital_per_trade: float = 100.0,
     ) -> list[dict[str, object]]:
         filtered = await self._filtered_trades(
             symbol=symbol,
             timeframe=timeframe,
             setup_type=setup_type,
+            scope=scope,
         )
 
         rows: list[dict[str, object]] = []
@@ -159,12 +178,14 @@ class PerformanceEngine:
         symbol: str = "ALL",
         timeframe: str = "ALL",
         setup_type: str | None = None,
+        scope: str = "active",
         capital_per_trade: float = 100.0,
     ) -> str:
         rows = await self._trade_report_rows(
             symbol=symbol,
             timeframe=timeframe,
             setup_type=setup_type,
+            scope=scope,
             capital_per_trade=capital_per_trade,
         )
 
@@ -236,12 +257,14 @@ class PerformanceEngine:
         symbol: str = "ALL",
         timeframe: str = "ALL",
         setup_type: str | None = None,
+        scope: str = "active",
         capital_per_trade: float = 100.0,
     ) -> PerformanceTradeTableResponse:
         rows = await self._trade_report_rows(
             symbol=symbol,
             timeframe=timeframe,
             setup_type=setup_type,
+            scope=scope,
             capital_per_trade=capital_per_trade,
         )
         return PerformanceTradeTableResponse(
@@ -260,12 +283,14 @@ class PerformanceEngine:
         symbol: str = "ALL",
         timeframe: str = "ALL",
         setup_type: str | None = None,
+        scope: str = "active",
         capital_per_trade: float = 100.0,
     ) -> str:
         rows = await self._trade_report_rows(
             symbol=symbol,
             timeframe=timeframe,
             setup_type=setup_type,
+            scope=scope,
             capital_per_trade=capital_per_trade,
         )
         closed_rows = [row for row in rows if row["result"] in {"win", "loss"}]
@@ -581,7 +606,7 @@ class PerformanceEngine:
 <body>
   <h1>FlowScope Performance Report</h1>
   <p>Readable trade table with RR, modal per trade, quantity, and realized dollar performance.</p>
-  <p class="meta">Generated at: {html.escape(datetime.now(UTC).isoformat())} | Symbol: {html.escape(symbol)} | Timeframe: {html.escape(timeframe)} | Setup: {html.escape(setup_type or "ALL")}</p>
+  <p class="meta">Generated at: {html.escape(datetime.now(UTC).isoformat())} | Symbol: {html.escape(symbol)} | Timeframe: {html.escape(timeframe)} | Setup: {html.escape(setup_type or "ALL")} | Scope: {html.escape(scope)}</p>
   <div class="summary">{summary_html}</div>
   <div class="filters">
     <div class="filters-head">
@@ -660,11 +685,12 @@ class PerformanceEngine:
 </body>
 </html>"""
 
-    async def compute(self) -> PerformanceResponse | None:
+    async def compute(self, *, scope: str = "active") -> PerformanceResponse | None:
         if not self.database.enabled:
             return None
 
         trades = await self.database.list_trade_signals()
+        trades = [trade for trade in trades if self._trade_in_scope(trade, scope=scope)]
         grouped_all: dict[str, list] = {}
         for trade in trades:
             grouped_all.setdefault(trade.setup_type, []).append(trade)

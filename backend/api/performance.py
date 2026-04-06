@@ -27,6 +27,7 @@ async def get_performance_report_data(
     symbol: str = Query("ALL", min_length=1),
     timeframe: str = Query("ALL", pattern="^(15m|1h|4h|24h|ALL)$"),
     setup_type: str | None = Query(None),
+    scope: str = Query("active", pattern="^(active|all)$"),
     capital_per_trade: float = Query(100.0, gt=0),
 ) -> PerformanceTradeTableResponse:
     performance_engine = request.app.state.signal_service.performance_engine
@@ -34,6 +35,7 @@ async def get_performance_report_data(
         symbol=symbol,
         timeframe=timeframe,
         setup_type=setup_type,
+        scope=scope,
         capital_per_trade=capital_per_trade,
     )
 
@@ -44,6 +46,7 @@ async def download_performance_report(
     symbol: str = Query("ALL", min_length=1),
     timeframe: str = Query("ALL", pattern="^(15m|1h|4h|24h|ALL)$"),
     setup_type: str | None = Query(None),
+    scope: str = Query("active", pattern="^(active|all)$"),
     capital_per_trade: float = Query(100.0, gt=0),
     format: str = Query("html", pattern="^(html|csv)$"),
 ) -> Response:
@@ -53,6 +56,7 @@ async def download_performance_report(
             symbol=symbol,
             timeframe=timeframe,
             setup_type=setup_type,
+            scope=scope,
             capital_per_trade=capital_per_trade,
         )
         media_type = "text/csv"
@@ -62,6 +66,7 @@ async def download_performance_report(
             symbol=symbol,
             timeframe=timeframe,
             setup_type=setup_type,
+            scope=scope,
             capital_per_trade=capital_per_trade,
         )
         media_type = "text/html"

@@ -48,6 +48,12 @@ class ReplayDiagnostics:
     stage_counts: Counter[str]
     reason_counts: Counter[str]
     pass_counts: Counter[str]
+    strategy_stage_counts: dict[str, Counter[str]]
+    strategy_state_counts: dict[str, Counter[str]]
+    strategy_status_counts: dict[str, Counter[str]]
+    strategy_entry_type_counts: dict[str, Counter[str]]
+    strategy_reason_counts: dict[str, Counter[str]]
+    strategy_samples: dict[str, list[dict[str, object]]]
     continuation_15m_stage_counts: Counter[str]
     continuation_15m_state_counts: Counter[str]
     continuation_15m_status_counts: Counter[str]
@@ -272,6 +278,12 @@ async def replay_symbol(
         stage_counts=Counter(),
         reason_counts=Counter(),
         pass_counts=Counter(),
+        strategy_stage_counts=defaultdict(Counter),
+        strategy_state_counts=defaultdict(Counter),
+        strategy_status_counts=defaultdict(Counter),
+        strategy_entry_type_counts=defaultdict(Counter),
+        strategy_reason_counts=defaultdict(Counter),
+        strategy_samples=defaultdict(list),
         continuation_15m_stage_counts=Counter(),
         continuation_15m_state_counts=Counter(),
         continuation_15m_status_counts=Counter(),
@@ -288,6 +300,7 @@ async def replay_symbol(
     service.symbols = [symbol]
     seen_filter_events: set[tuple[str, datetime, str, bool, tuple[str, ...]]] = set()
     seen_15m_candidate_events: set[tuple[datetime, str, str, str, str, tuple[str, ...]]] = set()
+    seen_strategy_candidate_events: set[tuple[str, datetime, str, str, str, str, tuple[str, ...]]] = set()
 
     # Use closed bucket boundaries instead of every sample timestamp for speed
     timeline = sorted(
@@ -339,14 +352,45 @@ async def replay_symbol(
                 diagnostics.stage_counts[stage] += 1
                 for reason in reasons:
                     diagnostics.reason_counts[reason] += 1
+            setup_type = str(current_state.setup_type or "unknown")
+            action_status = str(current_state.action_status or "unknown")
+            market_state = str(current_state.market_state or "Neutral")
+            entry_type = (
+                str(current_state.execution.entry_type)
+                if current_state.execution is not None and current_state.execution.entry_type
+                else "none"
+            )
+            strategy_key = f"{setup_type}|{timeframe}"
+            generic_candidate_key = (
+                strategy_key,
+                current_state.timestamp,
+                stage,
+                action_status,
+                market_state,
+                entry_type,
+                reasons,
+            )
+            if generic_candidate_key not in seen_strategy_candidate_events:
+                seen_strategy_candidate_events.add(generic_candidate_key)
+                diagnostics.strategy_stage_counts[strategy_key][stage] += 1
+                diagnostics.strategy_state_counts[strategy_key][market_state] += 1
+                diagnostics.strategy_status_counts[strategy_key][action_status] += 1
+                diagnostics.strategy_entry_type_counts[strategy_key][entry_type] += 1
+                for reason in reasons:
+                    diagnostics.strategy_reason_counts[strategy_key][reason] += 1
+                if len(diagnostics.strategy_samples[strategy_key]) < 10:
+                    diagnostics.strategy_samples[strategy_key].append(
+                        {
+                            "timestamp": current_state.timestamp.isoformat(),
+                            "stage": stage,
+                            "action_status": action_status,
+                            "market_state": market_state,
+                            "signal_status": current_state.signal_status,
+                            "entry_type": entry_type,
+                            "reasons": list(reasons),
+                        }
+                    )
             if timeframe == "15m" and current_state.setup_type == "Continuation":
-                action_status = str(current_state.action_status or "unknown")
-                market_state = str(current_state.market_state or "Neutral")
-                entry_type = (
-                    str(current_state.execution.entry_type)
-                    if current_state.execution is not None and current_state.execution.entry_type
-                    else "none"
-                )
                 candidate_key = (
                     current_state.timestamp,
                     stage,
@@ -641,6 +685,12 @@ async def main() -> int:
     aggregate_stage_counts: Counter[str] = Counter()
     aggregate_reason_counts: Counter[str] = Counter()
     aggregate_pass_counts: Counter[str] = Counter()
+    aggregate_strategy_stage_counts: dict[str, Counter[str]] = defaultdict(Counter)
+    aggregate_strategy_state_counts: dict[str, Counter[str]] = defaultdict(Counter)
+    aggregate_strategy_status_counts: dict[str, Counter[str]] = defaultdict(Counter)
+    aggregate_strategy_entry_type_counts: dict[str, Counter[str]] = defaultdict(Counter)
+    aggregate_strategy_reason_counts: dict[str, Counter[str]] = defaultdict(Counter)
+    aggregate_strategy_samples: dict[str, list[dict[str, object]]] = defaultdict(list)
     aggregate_15m_stage_counts: Counter[str] = Counter()
     aggregate_15m_state_counts: Counter[str] = Counter()
     aggregate_15m_status_counts: Counter[str] = Counter()
@@ -654,6 +704,20 @@ async def main() -> int:
         aggregate_stage_counts.update(diagnostics.stage_counts)
         aggregate_reason_counts.update(diagnostics.reason_counts)
         aggregate_pass_counts.update(diagnostics.pass_counts)
+        for strategy_key, counter in diagnostics.strategy_stage_counts.items():
+            aggregate_strategy_stage_counts[strategy_key].update(counter)
+        for strategy_key, counter in diagnostics.strategy_state_counts.items():
+            aggregate_strategy_state_counts[strategy_key].update(counter)
+        for strategy_key, counter in diagnostics.strategy_status_counts.items():
+            aggregate_strategy_status_counts[strategy_key].update(counter)
+        for strategy_key, counter in diagnostics.strategy_entry_type_counts.items():
+            aggregate_strategy_entry_type_counts[strategy_key].update(counter)
+        for strategy_key, counter in diagnostics.strategy_reason_counts.items():
+            aggregate_strategy_reason_counts[strategy_key].update(counter)
+        for strategy_key, samples in diagnostics.strategy_samples.items():
+            remaining_sample_slots = max(0, 10 - len(aggregate_strategy_samples[strategy_key]))
+            if remaining_sample_slots:
+                aggregate_strategy_samples[strategy_key].extend(samples[:remaining_sample_slots])
         aggregate_15m_stage_counts.update(diagnostics.continuation_15m_stage_counts)
         aggregate_15m_state_counts.update(diagnostics.continuation_15m_state_counts)
         aggregate_15m_status_counts.update(diagnostics.continuation_15m_status_counts)
@@ -685,6 +749,22 @@ async def main() -> int:
     csv_path.write_text(csv_report, encoding="utf-8", newline="")
 
     summary = summarize_trades(all_trades)
+    strategy_candidates_payload = {
+        strategy_key: {
+            "total": int(sum(aggregate_strategy_stage_counts[strategy_key].values())),
+            "by_stage": dict(aggregate_strategy_stage_counts[strategy_key].most_common()),
+            "by_state": dict(aggregate_strategy_state_counts[strategy_key].most_common()),
+            "by_action_status": dict(aggregate_strategy_status_counts[strategy_key].most_common()),
+            "by_entry_type": dict(aggregate_strategy_entry_type_counts[strategy_key].most_common()),
+            "top_reasons": dict(aggregate_strategy_reason_counts[strategy_key].most_common()),
+            "samples": aggregate_strategy_samples[strategy_key],
+        }
+        for strategy_key in sorted(
+            aggregate_strategy_stage_counts,
+            key=lambda key: sum(aggregate_strategy_stage_counts[key].values()),
+            reverse=True,
+        )
+    }
     payload = {
         "generated_at": datetime.now(UTC).isoformat(),
         "symbols_replayed": len(grouped),
@@ -703,6 +783,7 @@ async def main() -> int:
             "rejected_by_stage": dict(aggregate_stage_counts.most_common()),
             "rejected_by_reason": dict(aggregate_reason_counts.most_common()),
             "passed_by_stage": dict(aggregate_pass_counts.most_common()),
+            "strategy_candidates": strategy_candidates_payload,
             "continuation_15m_candidates": {
                 "total": int(sum(aggregate_15m_stage_counts.values())),
                 "by_stage": dict(aggregate_15m_stage_counts.most_common()),
