@@ -442,6 +442,7 @@ class TradeSignalEntry(BaseModel):
     pnl_pct: float
     max_drawdown_pct: float
     max_profit_pct: float
+    engine_tag: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -537,6 +538,7 @@ class PerformanceTradeRow(BaseModel):
     max_profit_usd: float | None = None
     max_drawdown_pct: float | None = None
     max_drawdown_usd: float | None = None
+    engine_tag: str | None = None
 
 
 class PerformanceTradeTableResponse(BaseModel):
@@ -544,6 +546,9 @@ class PerformanceTradeTableResponse(BaseModel):
     symbol: str
     timeframe: str
     setup_type: str | None = None
+    scope: str = "active"
+    active_tag: str | None = None
+    active_since: str | None = None
     capital_per_trade: float
     total_rows: int
     rows: list[PerformanceTradeRow] = Field(default_factory=list)

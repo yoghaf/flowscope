@@ -51,13 +51,18 @@ def make_trade(*, created_at: datetime, symbol: str = "EDGEUSDT", timeframe: str
         pnl_pct=5.0,
         max_drawdown_pct=-1.0,
         max_profit_pct=6.0,
+        engine_tag=None,
         entry_features={"entry_type": "Continuation Pullback"},
     )
 
 
 def test_filtered_trades_default_to_active_scope() -> None:
     active_since = datetime(2026, 4, 2, 5, 0, 0, tzinfo=UTC)
-    settings = Settings(demo_mode=False, trade_signals_active_since=active_since)
+    settings = Settings(
+        demo_mode=False,
+        trade_signals_active_tag=None,
+        trade_signals_active_since=active_since,
+    )
     old_trade = make_trade(created_at=datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC), symbol="OLDUSDT")
     new_trade = make_trade(created_at=datetime(2026, 4, 3, 12, 0, 0, tzinfo=UTC), symbol="NEWUSDT")
     engine = PerformanceEngine(DummyDatabase([old_trade, new_trade], settings))
@@ -77,3 +82,22 @@ def test_filtered_trades_can_include_all_history() -> None:
     filtered = asyncio.run(engine._filtered_trades(scope="all"))
 
     assert [trade.symbol for trade in filtered] == ["NEWUSDT", "OLDUSDT"]
+
+
+def test_filtered_trades_prefer_active_tag_when_present() -> None:
+    active_since = datetime(2026, 4, 2, 5, 0, 0, tzinfo=UTC)
+    settings = Settings(
+        demo_mode=False,
+        trade_signals_active_since=active_since,
+        trade_signals_active_tag="v14-active",
+    )
+    old_tagged = make_trade(created_at=datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC), symbol="OLDTAG")
+    old_tagged.engine_tag = "v13-legacy"
+    recent_untagged = make_trade(created_at=datetime(2026, 4, 3, 12, 0, 0, tzinfo=UTC), symbol="UNTAGGED")
+    fresh_tagged = make_trade(created_at=datetime(2026, 4, 3, 13, 0, 0, tzinfo=UTC), symbol="TAGGED")
+    fresh_tagged.engine_tag = "v14-active"
+    engine = PerformanceEngine(DummyDatabase([old_tagged, recent_untagged, fresh_tagged], settings))
+
+    filtered = asyncio.run(engine._filtered_trades())
+
+    assert [trade.symbol for trade in filtered] == ["TAGGED"]

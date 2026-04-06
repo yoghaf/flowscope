@@ -26,9 +26,17 @@ class PerformanceEngine:
         value = getattr(settings, "trade_signals_active_since", None)
         return value if isinstance(value, datetime) else None
 
+    def _active_tag(self) -> str | None:
+        settings = getattr(self.database, "settings", None)
+        value = getattr(settings, "trade_signals_active_tag", None)
+        return value if isinstance(value, str) and value.strip() else None
+
     def _trade_in_scope(self, trade: object, *, scope: str) -> bool:
         if scope != "active":
             return True
+        active_tag = self._active_tag()
+        if active_tag is not None:
+            return getattr(trade, "engine_tag", None) == active_tag
         active_since = self._active_since()
         if active_since is None:
             return True
@@ -164,6 +172,7 @@ class PerformanceEngine:
                 "max_profit_usd": self._round(max_profit_usd, 2),
                 "max_drawdown_pct": self._round(trade.max_drawdown_pct, 4),
                 "max_drawdown_usd": self._round(max_drawdown_usd, 2),
+                "engine_tag": getattr(trade, "engine_tag", None),
             }
             if getattr(trade, "entry_features", None):
                 for key, value in trade.entry_features.items():
@@ -272,6 +281,9 @@ class PerformanceEngine:
             symbol=symbol,
             timeframe=timeframe,
             setup_type=setup_type,
+            scope=scope,
+            active_tag=self._active_tag() if scope == "active" else None,
+            active_since=self._active_since().isoformat() if scope == "active" and self._active_since() is not None else None,
             capital_per_trade=capital_per_trade,
             total_rows=len(rows),
             rows=[PerformanceTradeRow.model_validate(row) for row in rows],

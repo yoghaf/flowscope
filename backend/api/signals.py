@@ -20,9 +20,13 @@ async def get_live_signals(
     settings = request.app.state.signal_service.settings
     trades = await db.list_trade_signals()
 
+    active_tag = getattr(settings, "trade_signals_active_tag", None)
     active_since = getattr(settings, "trade_signals_active_since", None)
-    if scope == "active" and active_since is not None:
-        trades = [t for t in trades if t.created_at and t.created_at >= active_since]
+    if scope == "active":
+        if active_tag:
+            trades = [t for t in trades if getattr(t, "engine_tag", None) == active_tag]
+        elif active_since is not None:
+            trades = [t for t in trades if t.created_at and t.created_at >= active_since]
 
     if status == "open":
         trades = [t for t in trades if t.result == "open"]
@@ -60,6 +64,7 @@ async def get_live_signals(
             "max_drawdown_pct": round(t.max_drawdown_pct, 2),
             "max_profit_pct": round(t.max_profit_pct, 2),
             "tp1_hit": t.tp1_hit,
+            "engine_tag": getattr(t, "engine_tag", None),
             "insights": insights,
             "created_at": t.created_at.isoformat() if t.created_at else None,
             "closed_at": t.closed_at.isoformat() if t.closed_at else None,
@@ -75,6 +80,7 @@ async def get_live_signals(
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "scope": scope,
+        "active_tag": active_tag if scope == "active" and active_tag else None,
         "active_since": active_since.isoformat() if scope == "active" and active_since is not None else None,
         "total": len(serialized),
         "summary": {

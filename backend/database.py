@@ -97,7 +97,19 @@ class DatabaseManager:
                 await connection.execute(
                     text(
                         "ALTER TABLE trade_signals "
+                        "ADD COLUMN IF NOT EXISTS engine_tag VARCHAR(64)"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE trade_signals "
                         "ADD COLUMN IF NOT EXISTS entry_features JSON"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_trade_signals_engine_tag "
+                        "ON trade_signals (engine_tag)"
                     )
                 )
             self.enabled = True

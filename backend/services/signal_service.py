@@ -2704,6 +2704,7 @@ class SignalService:
             "pnl_pct": 0.0,
             "max_drawdown_pct": 0.0,
             "max_profit_pct": 0.0,
+            "engine_tag": self.settings.trade_signals_active_tag,
             "entry_features": features,
         }
         trade_id = await self.database.save_trade_signal(payload)
