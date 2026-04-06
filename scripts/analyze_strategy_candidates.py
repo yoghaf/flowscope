@@ -51,6 +51,20 @@ def get_strategy_candidates(payload: Mapping[str, object]) -> dict[str, dict]:
     }
 
 
+def get_strategy_bias_candidates(payload: Mapping[str, object]) -> dict[str, dict]:
+    diagnostics = payload.get("diagnostics")
+    if not isinstance(diagnostics, Mapping):
+        return {}
+    strategies = diagnostics.get("strategy_bias_candidates")
+    if not isinstance(strategies, Mapping):
+        return {}
+    return {
+        str(key): value
+        for key, value in strategies.items()
+        if isinstance(value, Mapping)
+    }
+
+
 def strategy_summary_rows(strategies: Mapping[str, Mapping[str, object]]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for strategy_key, details in strategies.items():
@@ -109,6 +123,7 @@ def print_strategy_table(rows: list[dict[str, object]], *, top: int) -> None:
 def print_strategy_detail(strategy_key: str, details: Mapping[str, object], *, show_samples: int) -> None:
     total = _as_int(details.get("total"))
     by_stage = details.get("by_stage") if isinstance(details.get("by_stage"), Mapping) else {}
+    by_bias = details.get("by_bias") if isinstance(details.get("by_bias"), Mapping) else {}
     by_state = details.get("by_state") if isinstance(details.get("by_state"), Mapping) else {}
     by_entry_type = details.get("by_entry_type") if isinstance(details.get("by_entry_type"), Mapping) else {}
     top_reasons = details.get("top_reasons") if isinstance(details.get("top_reasons"), Mapping) else {}
@@ -125,6 +140,11 @@ def print_strategy_detail(strategy_key: str, details: Mapping[str, object], *, s
         for stage, count in by_stage.items():
             count_int = _as_int(count)
             print(f"  {stage:<16} {count_int:>5} ({_format_pct(count_int, total)})")
+    if by_bias:
+        print("Bias:")
+        for bias, count in by_bias.items():
+            count_int = _as_int(count)
+            print(f"  {bias:<16} {count_int:>5} ({_format_pct(count_int, total)})")
     if by_state:
         print("States:")
         for state, count in by_state.items():
@@ -153,12 +173,31 @@ def print_strategy_detail(strategy_key: str, details: Mapping[str, object], *, s
                         "stage": sample.get("stage"),
                         "action_status": sample.get("action_status"),
                         "market_state": sample.get("market_state"),
+                        "bias": sample.get("bias"),
                         "entry_type": sample.get("entry_type"),
                         "reasons": sample.get("reasons"),
                     },
                     ensure_ascii=True,
                 )
             )
+
+
+def print_bias_table(rows: list[dict[str, object]], *, top: int) -> None:
+    print()
+    print("Top Strategy Bias Pools")
+    print("-" * 86)
+    print(
+        f"{'Setup':<18} {'TF':<6} {'Bias':<10} {'Total':>6} {'Pass':>6} {'Hard':>6} {'Post':>6} {'Pass%':>8}"
+    )
+    print("-" * 86)
+    for row in rows[:top]:
+        setup_type, timeframe, bias = str(row["strategy_key"]).split("|", 2)
+        print(
+            f"{setup_type:<18} {timeframe:<6} {bias:<10} "
+            f"{int(row['total']):>6} {int(row['passed']):>6} "
+            f"{int(row['hard_entry']):>6} {int(row['post_action']):>6} "
+            f"{row['pass_rate'] * 100:>7.1f}%"
+        )
 
 
 def main() -> int:
@@ -172,6 +211,11 @@ def main() -> int:
     )
     parser.add_argument("--top", type=int, default=10, help="Top strategy pools to list")
     parser.add_argument("--show-samples", type=int, default=3, help="Number of sample candidates to print per detail section")
+    parser.add_argument(
+        "--include-bias-view",
+        action="store_true",
+        help="Also print strategy|timeframe|bias pools from diagnostics.strategy_bias_candidates",
+    )
     args = parser.parse_args()
 
     payload = load_payload(args.json_path)
@@ -183,6 +227,10 @@ def main() -> int:
     rows = strategy_summary_rows(strategies)
     print_header(payload)
     print_strategy_table(rows, top=max(args.top, 1))
+    if args.include_bias_view:
+        bias_rows = strategy_summary_rows(get_strategy_bias_candidates(payload))
+        if bias_rows:
+            print_bias_table(bias_rows, top=max(args.top, 1))
 
     wanted = args.strategy or [row["strategy_key"] for row in rows[: min(5, len(rows))]]
     for strategy_key in wanted:
