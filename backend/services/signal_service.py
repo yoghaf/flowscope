@@ -4178,14 +4178,22 @@ class SignalService:
             reasons.append("exhaustion_oi_climax")
         if not is_trap_setup and flow_metrics.liq_pressure_1h > self.settings.entry_filter_max_liq_pressure_1h:
             reasons.append("exhaustion_liq_climax")
-        if flow_metrics.atr_15m < 0.001:
-            pass # Dead atr check disabled for intraday
-        if flow_metrics.atr_1h < 0.001:
-            pass
-        if getattr(flow_metrics, "compression_score_15m", 0.0) > self.settings.entry_filter_max_compression_score_15m:
-            reasons.append("high_compression_15m")
-        if getattr(flow_metrics, "wick_ratio_24h", 1.0) < 0.001:
-            pass # Wick check disabled
+
+        # --- OVERCROWDED POSITIONING GUARD ---
+        # Block Breakout/Continuation entries when crowd is already max-positioned.
+        # LS ratio > 2.0 means 67%+ retail is long → historically high reversal probability.
+        if action.setup_type in {"Breakout", "Continuation"} and not is_trap_setup:
+            ls_level_15m = getattr(flow_metrics, "long_short_ratio_level_15m", 0.0) or 0.0
+            funding_lvl_15m = getattr(flow_metrics, "funding_level_15m", 0.0) or 0.0
+            if action.bias == "Bullish" and ls_level_15m > 2.0:
+                reasons.append("overcrowded_long_positioning")
+            elif action.bias == "Bearish" and ls_level_15m < 0.5:
+                reasons.append("overcrowded_short_positioning")
+            if action.bias == "Bullish" and funding_lvl_15m >= 0.0004:
+                reasons.append("funding_extreme_long_premium")
+            elif action.bias == "Bearish" and funding_lvl_15m <= -0.0004:
+                reasons.append("funding_extreme_short_premium")
+
         if action.setup_type == "Breakout":
             if volume_z is None or volume_z < self.settings.entry_filter_min_volume_z:
                 reasons.append("volume_z_below_threshold")

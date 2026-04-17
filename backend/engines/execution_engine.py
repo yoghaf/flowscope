@@ -32,7 +32,7 @@ class ExecutionPlan:
     risk_level: RiskLevel
     quality_score: QualityScore
     breakout_valid: bool
-
+    position_size_multiplier: float = 1.0
 
 class ExecutionEngine:
     def __init__(self) -> None:
@@ -105,30 +105,106 @@ class ExecutionEngine:
         profile: dict[str, float | int],
         market_interpretation: MarketInterpretationAssessment,
     ) -> ActionAssessment | None:
-        decision = positioning.decision
         confidence = market_interpretation.clarity_confidence
-
-        if market_interpretation.control == "Buyer Dominant" or market_interpretation.trend == "Bullish":
-            bias: TradeBias = "Bullish"
-        elif market_interpretation.control == "Seller Dominant" or market_interpretation.trend == "Bearish":
-            bias = "Bearish"
-        elif "Pre-Breakdown" in market_interpretation.state:
-            bias = "Bearish"
-        elif decision in {"Squeeze-Setup", "Squeeze-Immediate", "Watchlist-Squeeze"}:
-            bias = self._squeeze_bias(metrics, timeframe) or "Neutral"
-        else:
-            bias = "Neutral"
-
-        direction = 1 if bias == "Bullish" else -1
+        state_label = market_interpretation.state
         price_change = getattr(metrics, f"price_change_{timeframe}", 0.0)
         volume_z = getattr(metrics, f"volume_z_{timeframe}", 0.0)
         oi_delta_z = getattr(metrics, f"oi_delta_z_{timeframe}", 0.0)
         oi_change = getattr(metrics, f"oi_change_{timeframe}", 0.0)
+        funding_level = getattr(metrics, f"funding_level_{timeframe}", 0.0)
+        ls_level = getattr(metrics, f"long_short_ratio_level_{timeframe}", 0.0)
         recent_high = getattr(metrics, f"recent_high_{timeframe}", bucket.high_price)
         recent_low = getattr(metrics, f"recent_low_{timeframe}", bucket.low_price)
+        current_price = max(bucket.close_price, 1e-9)
+
+        # ============================================================
+        # CLASSIFICATION-BASED SETUP ROUTING (Mutually Exclusive)
+        # ============================================================
+
+        # --- ROUTE 1: SQUEEZE ---
+        if state_label == "Squeeze" or (market_interpretation.state == "Compression" and "Squeeze" in positioning.decision):
+            setup_type: SetupType = "Squeeze"
+            # Direction: squeeze AGAINST the overcrowded side
+            if funding_level > 0:
+                bias: TradeBias = "Bearish"  # Longs paying premium → squeeze longs
+            elif funding_level < 0:
+                bias = "Bullish"  # Shorts paying premium → squeeze shorts
+            else:
+                # Fallback to positioning engine's squeeze bias
+                squeeze_bias = self._squeeze_bias(metrics, timeframe)
+                bias = squeeze_bias if squeeze_bias else "Neutral"
+
+        # --- ROUTE 2: TRAP (Mean Reversion) ---
+        elif state_label == "Trap" or "Trap" in state_label or state.state == "Trap" or "Trap" in positioning.decision:
+            setup_type = "Trap"
+            # Direction: FADE the move (reverse of price direction)
+            if price_change > 0:
+                bias = "Bearish"
+            elif price_change < 0:
+                bias = "Bullish"
+            else:
+                bias = "Neutral"
+
+        # --- ROUTE 3: BREAKOUT / CONTINUATION (Real Flow) ---
+        elif state_label == "Trend continuation" or positioning.decision.startswith("Continuation"):
+            setup_type = "Continuation"
+            # Direction: FOLLOW the move
+            if market_interpretation.control == "Buyer Dominant" or market_interpretation.trend == "Bullish":
+                bias = "Bullish"
+            elif market_interpretation.control == "Seller Dominant" or market_interpretation.trend == "Bearish":
+                bias = "Bearish"
+            else:
+                bias = "Bullish" if price_change > 0 else "Bearish" if price_change < 0 else "Neutral"
+
+            # --- OVERCROWDED GUARD (Breakout-only) ---
+            # Block Long entries when the crowd is already max-long
+            if bias == "Bullish":
+                if ls_level > 2.0:
+                    bias = "Neutral"  # Overcrowded longs → don't enter
+                elif abs(funding_level) >= 0.0004 and funding_level > 0:
+                    bias = "Neutral"  # Longs paying extreme funding → don't chase
+            elif bias == "Bearish":
+                if ls_level < 0.5:
+                    bias = "Neutral"  # Overcrowded shorts → don't enter
+                elif abs(funding_level) >= 0.0004 and funding_level < 0:
+                    bias = "Neutral"  # Shorts paying extreme funding → don't chase
+
+        # --- ROUTE 4: ACCUMULATION / PAUSE ---
+        elif state_label in {"Pause after selloff", "Pause after rally"}:
+            setup_type = "Accumulation"
+            if market_interpretation.control == "Buyer Dominant" or market_interpretation.trend == "Bullish":
+                bias = "Bullish"
+            elif market_interpretation.control == "Seller Dominant" or market_interpretation.trend == "Bearish":
+                bias = "Bearish"
+            elif "Pre-Breakdown" in state_label:
+                bias = "Bearish"
+            else:
+                bias = "Neutral"
+
+        # --- ROUTE 5: BREAKOUT (from Expansion state) ---
+        elif state.state == "Expansion":
+            setup_type = "Breakout"
+            if price_change > 0:
+                bias = "Bullish"
+            elif price_change < 0:
+                bias = "Bearish"
+            else:
+                bias = "Neutral"
+
+        # --- FALLTHROUGH ---
+        else:
+            setup_type = "Accumulation"
+            bias = "Neutral"
+
+        # ============================================================
+        # STATUS DETERMINATION
+        # ============================================================
+        if market_interpretation.action == "NO TRADE":
+            return None
+
+        direction = 1 if bias == "Bullish" else -1
         breakout_entry = self._breakout_entry(direction, bucket, recent_high, recent_low)
         breakout_touched = self._entry_touched(direction, bucket, breakout_entry)
-        current_price = max(bucket.close_price, 1e-9)
         breakout_distance = abs(breakout_entry - current_price) / current_price
         breakout_valid = (
             abs(price_change) >= float(profile["price_break"])
@@ -138,31 +214,6 @@ class ExecutionEngine:
         )
         trigger_distance_limit = max(float(profile["price_break"]), 0.02)
 
-        if market_interpretation.state == "Compression" or "Squeeze" in decision:
-            setup_type: SetupType = "Squeeze"
-        elif "Trap" in decision or state.state == "Trap" or market_interpretation.state == "Trap":
-            setup_type = "Trap"
-            # Reverse bias for traps: if price pumped (price_change > 0), we short (Bearish).
-            if price_change > 0:
-                bias = "Bearish"
-            elif price_change < 0:
-                bias = "Bullish"
-            # Re-evaluate direction since bias flipped
-            direction = 1 if bias == "Bullish" else -1
-            breakout_entry = self._breakout_entry(direction, bucket, recent_high, recent_low)
-            breakout_touched = self._entry_touched(direction, bucket, breakout_entry)
-            breakout_distance = abs(breakout_entry - current_price) / current_price
-        elif market_interpretation.state == "Trend continuation" or decision.startswith("Continuation"):
-            setup_type = "Continuation"
-        elif state.state == "Expansion":
-            setup_type = "Breakout"
-        elif market_interpretation.state in {"Pause after selloff", "Pause after rally"}:
-            setup_type = "Accumulation"
-        else:
-            setup_type = "Accumulation"
-
-        if market_interpretation.action == "NO TRADE":
-            return None
         if market_interpretation.action == "ENTER":
             status: SetupStatus = "Triggered" if breakout_valid and breakout_touched and bias != "Neutral" else "Ready"
         elif "Pre-Breakdown" in market_interpretation.state and bias != "Neutral":
@@ -246,7 +297,42 @@ class ExecutionEngine:
         breakout_distance = abs((breakout_entry - current_price)) / max(current_price, 1e-9)
         pullback_mode = action.setup_type == "Continuation" and action.status == "Ready" and (not breakout_valid or breakout_distance > max(float(profile["price_break"]), 0.02))
 
-        entry = breakout_entry if not pullback_mode else current_price
+        vwap = getattr(metrics, f"vwap_{timeframe}", current_price)
+        structure_strength = getattr(metrics, f"structure_strength", 0.5)
+
+        # 1. ENTRTY TIMING & PULLBACK LOGIC
+        if action.setup_type == "Continuation":
+            # If trend is extremely strong, allow market entry. Otherwise demand a pullback.
+            if structure_strength >= 0.80 and breakout_valid:
+                entry = current_price
+                pullback_mode = False
+            else:
+                pullback_amount = atr_abs * 0.5
+                pullback_target = current_price - (direction * pullback_amount)
+                if direction == 1:
+                    entry = max(pullback_target, vwap)
+                else:
+                    entry = min(pullback_target, vwap)
+                pullback_mode = True
+        elif action.setup_type == "Trap":
+            entry = current_price
+            pullback_mode = False
+        elif action.setup_type == "Squeeze":
+            # Enter on breach of structure to confirm the squeeze has fired
+            entry = recent_high if direction == 1 else recent_low
+            pullback_mode = False
+        else:
+            entry = breakout_entry if not pullback_mode else current_price
+
+        # 2. POSITION SIZING (modulator)
+        if action.setup_type == "Trap":
+            size_multiplier = 0.5
+        elif action.setup_type == "Squeeze":
+            # Confidence-based sizing, max 1.5x at absolute 100% confidence
+            size_multiplier = round(max(0.75, confidence * 1.5), 2)
+        else:
+            size_multiplier = 1.0
+
         # Risk Management Split: Trap setups need wider stops because they catch exhaustions
         if action.setup_type == "Trap":
             atr_sl_multiplier = 2.5
@@ -295,4 +381,5 @@ class ExecutionEngine:
             risk_level=self._risk_level(confidence),
             quality_score=self._quality_score(confidence),
             breakout_valid=breakout_valid,
+            position_size_multiplier=size_multiplier,
         )

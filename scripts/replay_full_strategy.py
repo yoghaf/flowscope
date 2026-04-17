@@ -473,6 +473,16 @@ def _current_flow_alignment(service: SignalService, *, symbol: str, timeframe: s
         return None
 
 
+def _current_metric(service: SignalService, metric_name: str, symbol: str, timeframe: str) -> float | None:
+    state = service.states_by_timeframe.get(timeframe, {}).get(symbol)
+    if state is None or not getattr(state, "metrics_raw", None):
+        return None
+    value = state.metrics_raw.get(f"{metric_name}_{timeframe}")
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
 def _evaluate_trade_bucket(
     *,
     trade: TradeSignal,
@@ -518,7 +528,7 @@ def _evaluate_trade_bucket(
     trade.max_profit_pct = max(trade.max_profit_pct, trade.pnl_pct)
     trade.max_drawdown_pct = min(trade.max_drawdown_pct, trade.pnl_pct)
 
-    if trade.target_price_1 is not None and not trade.tp1_hit:
+    if trade.target_price_1 is not None and not getattr(trade, 'tp1_hit', False):
         if (direction > 0 and high_price >= trade.target_price_1) or (direction < 0 and low_price <= trade.target_price_1):
             trade.tp1_hit = True
             # Record TP1 PnL for the 50% partial close
@@ -544,7 +554,7 @@ def _evaluate_trade_bucket(
         trade.close_reason = "Target 2"
 
     # Trailing stop at breakeven after TP1 — partial win (50% already banked at TP1)
-    if exit_price is None and trade.tp1_hit and trade.trailing_stop_price is not None:
+    if exit_price is None and getattr(trade, 'tp1_hit', False) and getattr(trade, 'trailing_stop_price', None) is not None:
         if direction > 0 and low_price <= trade.trailing_stop_price:
             exit_price = trade.trailing_stop_price
             trade.result = "win"
@@ -577,23 +587,49 @@ def _evaluate_trade_bucket(
                 trade.close_reason = "Fail-Fast Exit"
 
     # Stale trade exit: close at market after 6 candles without TP1
-    if exit_price is None and not trade.tp1_hit and trade.entry_touched_at is not None:
+    if exit_price is None and not getattr(trade, 'tp1_hit', False) and trade.entry_touched_at is not None:
         stale_window = timeframe_delta * 6
         elapsed_since_entry = bucket.last_timestamp - trade.entry_touched_at
         if elapsed_since_entry >= stale_window and trade.pnl_pct < 0:
             exit_price = price
             trade.result = "loss"
             trade.close_reason = "Stale Exit"
+            
+    # --- DYNAMIC SETUP EXITS ---
+    if exit_price is None and trade.entry_touched_at is not None:
+        setup_type = getattr(trade, 'setup_type', None)
+        if setup_type == "Continuation":
+            atr = _current_metric(service, "atr", trade.symbol, trade.timeframe) or 0.0
+            if atr > 0:
+                recent_low = _current_metric(service, "recent_low", trade.symbol, trade.timeframe) or bucket.low_price
+                recent_high = _current_metric(service, "recent_high", trade.symbol, trade.timeframe) or bucket.high_price
+                trail_stop = recent_low - (1.0 * atr * price) if direction > 0 else recent_high + (1.0 * atr * price)
+                # Ensure we don't trail backwards past our fixed invalidation
+                fixed_inv = trade.invalidation_price or trail_stop
+                trail_stop = max(trail_stop, fixed_inv) if direction > 0 else min(trail_stop, fixed_inv)
+                
+                if (direction > 0 and low_price <= trail_stop) or (direction < 0 and high_price >= trail_stop):
+                    exit_price = trail_stop
+                    trade.result = "win" if trade.pnl_pct > 0 else "loss"
+                    trade.close_reason = "Dynamic Trail Stop"
+                    
+        elif setup_type == "Squeeze":
+            liq_z = _current_metric(service, "liq_z_score", trade.symbol, trade.timeframe) or 0.0
+            vol_z = _current_metric(service, "volume_z", trade.symbol, trade.timeframe) or 0.0
+            wick = _current_metric(service, "wick_ratio", trade.symbol, trade.timeframe) or 0.0
+            if (liq_z < 0 and vol_z < -0.5) or wick > 0.6:
+                exit_price = price
+                trade.result = "win" if trade.pnl_pct > 0 else "loss"
+                trade.close_reason = "Volatility Exhaust Exit"
 
     if exit_price is not None:
         close_pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
         # Blend 50% TP1 + 50% close for split-position model
-        if trade.tp1_hit and hasattr(trade, 'tp1_pnl_pct'):
-            trade.pnl_pct = 0.5 * trade.tp1_pnl_pct + 0.5 * close_pnl_pct
+        if getattr(trade, 'tp1_hit', False) and hasattr(trade, 'tp1_pnl_pct'):
+            trade.pnl_pct = 0.5 * getattr(trade, 'tp1_pnl_pct') + 0.5 * close_pnl_pct
         else:
             trade.pnl_pct = close_pnl_pct
         trade.closed_at = bucket.last_timestamp
-
 
 async def _evaluate_incremental_trades(
     *,

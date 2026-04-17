@@ -557,28 +557,72 @@ class MarketInterpreterEngine:
         flow_alignment: float,
         conflict_score: float,
     ) -> str:
+        """Classification-based setup router.
+
+        Decision hierarchy (mutually exclusive, evaluated top-to-bottom):
+        1. Squeeze  — compressed price + overcrowded positioning + liq activity
+        2. Trap     — sharp move driven by liquidations, NOT by real taker flow
+        3. Continuation — sharp move driven by real taker flow + fresh OI
+        4. Fallback states (Pause, Compression, Unclear)
+        """
         compression = self._metric(metrics, "compression_score", timeframe)
-        price_change = abs(self._metric(metrics, "price_change", timeframe))
+        price_change_raw = self._metric(metrics, "price_change", timeframe)
+        price_change = abs(price_change_raw)
         price_flat = float(TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])["price_flat"])
 
-        # --- EXHAUSTION CLIMAX DETECTION ---
-        # If big 4H volume or high 15m price spike + high 15m volume happens, it's a Trap, not a continuation.
-        vol_z_15m = self._metric(metrics, "volume_z", "15m")
-        price_chg_15m = abs(self._metric(metrics, "price_change", "15m"))
-        vol_chg_4h = self._metric(metrics, "volume_change", "4h")
+        # --- Extract classification variables ---
+        vol_z = self._metric(metrics, "volume_z", timeframe)
+        oi_delta_z = self._metric(metrics, "oi_delta_z", timeframe)
+        oi_pct = self._metric(metrics, "oi_percentile", timeframe)
+        taker_delta = self._metric(metrics, "taker_buy_sell_ratio_delta", timeframe)
+        ls_level = self._metric(metrics, "long_short_ratio_level", timeframe)
+        funding_level = self._metric(metrics, "funding_level", timeframe)
+        liq_pressure = self._metric(metrics, "liq_pressure", timeframe)
+        liq_z = self._metric(metrics, "liq_z_score", timeframe)
+        wick_ratio = self._metric(metrics, "wick_ratio", timeframe)
+
+        price_dir = 1 if price_change_raw > 0 else -1
+        is_sharp_move = price_change >= 0.012 and abs(vol_z) >= 1.0
+
+        # --- SETUP 1: LIQUIDATION SQUEEZE ---
+        # Compressed price + overcrowded positioning + liquidation activity starting.
+        # This fires BEFORE the move happens (coiled spring).
+        is_compressed = compression >= 0.50
+        is_oi_crowded = oi_pct >= 0.80
+        is_funding_extreme = abs(funding_level) >= 0.0004
+        is_liq_active = abs(liq_z) >= 1.0
+
+        if is_compressed and is_oi_crowded and is_funding_extreme and is_liq_active and price_change <= price_flat:
+            return "Squeeze"
+
+        # --- SETUP 2: TRAP (Mean Reversion / Fake Breakout) ---
+        # Sharp move where the DRIVER is liquidation, not genuine taker demand.
+        # Key distinction: liq_pressure confirms forced buying/selling on same side as move,
+        # while taker_delta does NOT confirm the move direction.
+        is_liq_driven = liq_pressure * price_dir > 0.10
+        is_taker_absent = taker_delta * price_dir <= 0
         
-        # Lowered trap threshold to generate more signals for statistical analysis
-        if (price_chg_15m >= 0.012 or abs(vol_chg_4h) >= 1.5) and abs(vol_z_15m) >= 1.0:
+        # Micro-confirmation: must show a stall (wick rejection) or severe taker divergence
+        micro_confirmed = wick_ratio >= 0.40 or (taker_delta * price_dir) <= -0.10
+
+        if is_sharp_move and is_liq_driven and is_taker_absent and micro_confirmed:
             return "Trap"
 
+        # --- SETUP 3: TREND CONTINUATION (Real Breakout) ---
+        # Sharp move where the DRIVER is genuine taker flow + fresh OI commitment.
+        is_taker_real = taker_delta * price_dir > 0
+        is_oi_fresh = abs(oi_delta_z) >= 0.6 and oi_intent == "Position Building"
+
+        if is_sharp_move and is_taker_real and is_oi_fresh:
+            return "Trend continuation"
+
+        # --- FALLBACK STATES ---
         if control == "Seller Dominant" and oi_intent == "Position Closing":
             return "Pause after selloff"
         if control == "Buyer Dominant" and oi_intent == "Position Closing":
             return "Pause after rally"
         if control == "Neutral" or compression >= 0.5 or conflict_score >= 0.35:
             return "Compression"
-        if conflict_score >= 0.55:
-            return "Unclear"
         if control in {"Buyer Dominant", "Seller Dominant"} and oi_intent == "Position Building" and flow_alignment >= 0.55:
             return "Trend continuation"
         if positioning.intent in {"Absorption", "Pre-Squeeze"} and price_change <= price_flat:
@@ -716,7 +760,11 @@ class MarketInterpreterEngine:
         if state_label == "Trap":
             clarity_confidence = 0.85
             action = "ENTER"
-            action_rationale = "Exhaustion climax identified, overriding metrics to initiate Trap reversal."
+            action_rationale = "Trap detected: liquidation-driven move without taker confirmation. Initiating mean reversion."
+        elif state_label == "Squeeze":
+            clarity_confidence = 0.80
+            action = "ENTER"
+            action_rationale = "Squeeze detected: compressed price + overcrowded positioning + active liquidations. Initiating squeeze trade."
         elif distribution_risk["active"]:
             action = "WAIT"
             action_rationale = "Prepare for breakdown, avoid long until price reclaims strength or breakout validation returns."
