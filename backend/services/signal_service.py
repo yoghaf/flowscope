@@ -995,7 +995,7 @@ class SignalService:
             )
             
             # Update cache lifetime
-            if market_interpretation.state_label == "Squeeze Setup":
+            if market_interpretation.state == "Squeeze Setup":
                 self.squeeze_memory[cache_key] = 3 # Exists for current + 2 future buckets
             elif squeeze_memory_active:
                 self.squeeze_memory[cache_key] -= 1
