@@ -273,13 +273,19 @@ async def load_bucket_history(
                     
                 result = await session.execute(statement)
                 rows = result.mappings().all()
-                
-                # Reverse back to ascending order since we fetched descending to get the latest
                 rows = list(reversed(rows))
                 
                 if rows:
                     for row in rows:
                         grouped[symbol][timeframe].append(TimeframeBucket.from_record(dict(row)))
+            
+            # Print inline progress since this can take a few seconds
+            sys.stdout.write(f"\r  Loaded {symbol} ({len(grouped)}/{len(target_symbols)})")
+            sys.stdout.flush()
+
+    # Clear inline progress
+    sys.stdout.write("\r" + " " * 80 + "\r")
+    sys.stdout.flush()
 
     return {symbol: dict(by_tf) for symbol, by_tf in grouped.items()}
 
