@@ -122,7 +122,7 @@ class ExecutionEngine:
         # ============================================================
 
         # --- ROUTE 1: SQUEEZE ---
-        if state_label == "Squeeze" or (market_interpretation.state == "Compression" and "Squeeze" in positioning.decision):
+        if state_label == "Squeeze Setup" or (market_interpretation.state == "Compression" and "Squeeze" in positioning.decision):
             setup_type: SetupType = "Squeeze"
             # Direction: squeeze AGAINST the overcrowded side
             if funding_level > 0:
@@ -286,12 +286,20 @@ class ExecutionEngine:
             else max(abs(bucket.high_price - bucket.low_price), max(current_price * 0.002, 1e-9))
         )
 
-        breakout_valid = (
-            abs(price_change) >= float(profile["price_break"])
-            and volume_z >= 0.8
-            and abs(oi_delta_z) >= 0.6
-            and oi_change * direction > 0
-        )
+        if action.setup_type == "Squeeze":
+            taker_delta = getattr(metrics, f"taker_buy_sell_ratio_delta_{timeframe}", 0.0)
+            breakout_valid = (
+                abs(price_change) >= float(profile["price_break"])
+                and volume_z > 0.0 # increasing volume
+                and taker_delta * direction > 0 # taker aligned with breakout
+            )
+        else:
+            breakout_valid = (
+                abs(price_change) >= float(profile["price_break"])
+                and volume_z >= 0.8
+                and abs(oi_delta_z) >= 0.6
+                and oi_change * direction > 0
+            )
         breakout_entry = self._breakout_entry(direction, bucket, recent_high, recent_low)
         breakout_touched = self._entry_touched(direction, bucket, breakout_entry)
         breakout_distance = abs((breakout_entry - current_price)) / max(current_price, 1e-9)
@@ -318,8 +326,8 @@ class ExecutionEngine:
             entry = current_price
             pullback_mode = False
         elif action.setup_type == "Squeeze":
-            # Enter on breach of structure to confirm the squeeze has fired
-            entry = recent_high if direction == 1 else recent_low
+            # Enter using stop order on breakout, NO pullback
+            entry = breakout_entry
             pullback_mode = False
         else:
             entry = breakout_entry if not pullback_mode else current_price
@@ -328,8 +336,13 @@ class ExecutionEngine:
         if action.setup_type == "Trap":
             size_multiplier = 0.5
         elif action.setup_type == "Squeeze":
-            # Confidence-based sizing, max 1.5x at absolute 100% confidence
-            size_multiplier = round(max(0.75, confidence * 1.5), 2)
+            comp = getattr(metrics, f"compression_score_{timeframe}", 0.0)
+            oi_pct = getattr(metrics, f"oi_percentile_{timeframe}", 0.0)
+            funding = abs(getattr(metrics, f"funding_level_{timeframe}", 0.0))
+            fund_score = min(1.0, funding / 0.00030)
+            sq_strength = (comp + oi_pct + fund_score) / 3.0
+            base_size = 0.7 + (0.55 * sq_strength)
+            size_multiplier = round(max(0.7, min(1.25, base_size)), 2)
         else:
             size_multiplier = 1.0
 

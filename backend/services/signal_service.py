@@ -22,6 +22,7 @@ from backend.engines.market_interpreter import MarketInterpretationAssessment, M
 from backend.engines.positioning_engine import PositioningAssessment, PositioningEngine
 from backend.engines.sharpness_filter import SharpnessAssessment, SharpnessFilter
 from backend.engines.phase_engine import PhaseAssessment, PhaseEngine
+from backend.engines.portfolio_manager import PortfolioManager
 from backend.engines.state_engine import StateAssessment, StateEngine
 from backend.schemas import (
     AlertEntry,
@@ -155,6 +156,7 @@ class SignalService:
         self.trade_evaluator = TradeEvaluator(settings, database, self)
         self.telegram_notifier = TelegramNotifier(settings)
         self.aggregate_store = TimeframeAggregateStore(settings.history_retention_points)
+        self.portfolio_manager = PortfolioManager()
         self.symbols: list[str] = []
         self.states_by_timeframe: dict[str, dict[str, AssetState]] = {
             timeframe: {}
@@ -1093,14 +1095,33 @@ class SignalService:
                     self.last_timeframe_update[(symbol, timeframe)] = now
                     continue
 
+            scenario = self.context_bridge.assess(
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                state=state_assessment,
+                action=action,
+                market_interpretation=market_interpretation,
+                phase=phase_result,
+            )
+
             hard_entry_filter_reasons: list[str] = []
             if action.status in {"Ready", "Triggered"}:
-                hard_entry_filter_reasons = self._entry_hard_filter_reasons(
-                    action=action,
-                    flow_metrics=flow_metrics,
-                    timeframe=timeframe,
-                    clarity_confidence=market_interpretation.clarity_confidence,
-                    state_name=state_assessment.state,
+                allowed, block_reason, global_multiplier = self.portfolio_manager.assess_entry(
+                    symbol=symbol,
+                    current_time=now,
+                    intended_risk_r=1.0
+                )
+                if not allowed:
+                    hard_entry_filter_reasons.append(block_reason)
+                    
+                hard_entry_filter_reasons.extend(
+                    self._entry_hard_filter_reasons(
+                        action=action,
+                        flow_metrics=flow_metrics,
+                        timeframe=timeframe,
+                        clarity_confidence=market_interpretation.clarity_confidence,
+                        state_name=state_assessment.state,
+                    )
                 )
             if hard_entry_filter_reasons:
                 self._clear_ready_states(symbol, timeframe)
@@ -1152,6 +1173,15 @@ class SignalService:
                 profile=profile,
                 confidence=positioning.reliability_score,
             )
+            
+            if execution is not None:
+                if scenario.label == "weak_propulsion":
+                    execution.position_size_multiplier *= 0.5
+                execution.position_size_multiplier *= min(1.0, max(0.0, market_interpretation.flow_alignment + 0.15))
+                # Apply Portfolio Global multiplier
+                global_multiplier = self.portfolio_manager.get_global_size_multiplier()
+                execution.position_size_multiplier *= global_multiplier
+
             post_action_filter_reasons: list[str] = []
             post_action_filter_reasons.extend(
                 self._continuation_filter_reasons(
@@ -1252,14 +1282,7 @@ class SignalService:
                 sharpness=sharpness,
             )
             breakdown = self._score_breakdown(flow_metrics, timeframe, profile)
-            scenario = self.context_bridge.assess(
-                flow_metrics=flow_metrics,
-                timeframe=timeframe,
-                state=state_assessment,
-                action=action,
-                market_interpretation=market_interpretation,
-                phase=phase_result,
-            )
+            
             self.aggregate_store.apply_signal(
                 symbol,
                 timeframe,

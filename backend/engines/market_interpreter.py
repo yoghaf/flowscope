@@ -584,20 +584,18 @@ class MarketInterpreterEngine:
         price_dir = 1 if price_change_raw > 0 else -1
         is_sharp_move = price_change >= 0.012 and abs(vol_z) >= 1.0
 
-        # --- SETUP 1: LIQUIDATION SQUEEZE ---
-        # Compressed price + overcrowded positioning + liquidation activity starting.
-        # This fires BEFORE the move happens (coiled spring).
-        is_compressed = compression >= 0.50
-        is_oi_crowded = oi_pct >= 0.80
-        is_funding_extreme = abs(funding_level) >= 0.0004
-        is_liq_active = abs(liq_z) >= 1.0
+        # --- SETUP 1: SQUEEZE SETUP ---
+        # Compression phase: waiting for the coiled spring to burst.
+        is_compressed = compression >= 0.50 or (price_change <= price_flat * 1.5)
+        is_oi_crowded = oi_pct >= 0.75
+        is_funding_skewed = abs(funding_level) >= 0.00015
 
-        if is_compressed and is_oi_crowded and is_funding_extreme and is_liq_active and price_change <= price_flat:
-            return "Squeeze"
+        if is_compressed and is_oi_crowded and is_funding_skewed:
+            return "Squeeze Setup"
 
         # --- SETUP 2: TRAP (Mean Reversion / Fake Breakout) ---
         # Sharp move where the DRIVER is liquidation, not genuine taker demand.
-        # Key distinction: liq_pressure confirms forced buying/selling on same side as move,
+        # This will be updated in future phases. Currently preserved to prevent breakage.
         # while taker_delta does NOT confirm the move direction.
         is_liq_driven = liq_pressure * price_dir > 0.10
         is_taker_absent = taker_delta * price_dir <= 0
@@ -761,10 +759,10 @@ class MarketInterpreterEngine:
             clarity_confidence = 0.85
             action = "ENTER"
             action_rationale = "Trap detected: liquidation-driven move without taker confirmation. Initiating mean reversion."
-        elif state_label == "Squeeze":
-            clarity_confidence = 0.80
+        elif state_label == "Squeeze Setup":
+            clarity_confidence = 0.85
             action = "ENTER"
-            action_rationale = "Squeeze detected: compressed price + overcrowded positioning + active liquidations. Initiating squeeze trade."
+            action_rationale = "Squeeze formulation active: high OI + compressed structure + heavy funding skew."
         elif distribution_risk["active"]:
             action = "WAIT"
             action_rationale = "Prepare for breakdown, avoid long until price reclaims strength or breakout validation returns."

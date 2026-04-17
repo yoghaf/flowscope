@@ -633,7 +633,22 @@ def _evaluate_trade_bucket(
             liq_z = _current_metric(service, "liq_z_score", trade.symbol, trade.timeframe) or 0.0
             vol_z = _current_metric(service, "volume_z", trade.symbol, trade.timeframe) or 0.0
             wick = _current_metric(service, "wick_ratio", trade.symbol, trade.timeframe) or 0.0
-            if (liq_z < 0 and vol_z < -0.5) or wick > 0.6:
+            
+            atr = _current_metric(service, "atr", trade.symbol, trade.timeframe) or 0.0
+            trail_hit = False
+            if atr > 0:
+                recent_low = _current_metric(service, "recent_low", trade.symbol, trade.timeframe) or bucket.low_price
+                recent_high = _current_metric(service, "recent_high", trade.symbol, trade.timeframe) or bucket.high_price
+                trail_stop = recent_low - (1.0 * atr * price) if direction > 0 else recent_high + (1.0 * atr * price)
+                fixed_inv = trade.invalidation_price or trail_stop
+                trail_stop = max(trail_stop, fixed_inv) if direction > 0 else min(trail_stop, fixed_inv)
+                trail_hit = (direction > 0 and low_price <= trail_stop) or (direction < 0 and high_price >= trail_stop)
+                
+            if trail_hit:
+                exit_price = trail_stop
+                trade.result = "win" if trade.pnl_pct > 0 else "loss"
+                trade.close_reason = "Dynamic Trail Stop"
+            elif (liq_z < 0 and vol_z < -0.5) or wick > 0.6:
                 exit_price = price
                 trade.result = "win" if trade.pnl_pct > 0 else "loss"
                 trade.close_reason = "Volatility Exhaust Exit"
