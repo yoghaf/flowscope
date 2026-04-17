@@ -251,26 +251,34 @@ async def load_bucket_history(
     *,
     limit_per_symbol: int,
 ) -> dict[str, dict[str, list[TimeframeBucket]]]:
-    statement = (
-        select(MarketDataBucket)
-        .where(MarketDataBucket.timeframe.in_(DEFAULT_TIMEFRAMES))
-        .order_by(MarketDataBucket.symbol.asc(), MarketDataBucket.timeframe.asc(), MarketDataBucket.bucket_start.asc())
-    )
-    if symbols:
-        statement = statement.where(MarketDataBucket.symbol.in_(sorted(symbols)))
-
-    async with database.session_factory() as session:
-        result = await session.scalars(statement)
-        rows = list(result)
-
     grouped: dict[str, dict[str, list[TimeframeBucket]]] = defaultdict(lambda: defaultdict(list))
-    for row in rows:
-        grouped[row.symbol][row.timeframe].append(TimeframeBucket.from_record(row))
-
-    if limit_per_symbol > 0:
-        for symbol, by_tf in grouped.items():
-            for timeframe, buckets in list(by_tf.items()):
-                by_tf[timeframe] = buckets[-limit_per_symbol:]
+    
+    async with database.session_factory() as session:
+        # First get the list of symbols if not provided
+        target_symbols = symbols
+        if not target_symbols:
+            result = await session.execute(select(MarketDataBucket.symbol).distinct())
+            target_symbols = {row[0] for row in result.all()}
+            
+        # For each symbol and timeframe, fetch only the limited number of rows
+        for symbol in target_symbols:
+            for timeframe in DEFAULT_TIMEFRAMES:
+                statement = (
+                    select(MarketDataBucket)
+                    .where(MarketDataBucket.symbol == symbol, MarketDataBucket.timeframe == timeframe)
+                    .order_by(MarketDataBucket.bucket_start.desc())
+                )
+                if limit_per_symbol > 0:
+                    statement = statement.limit(limit_per_symbol)
+                    
+                result = await session.scalars(statement)
+                rows = list(result)
+                # Reverse back to ascending order since we fetched descending to get the latest
+                rows.reverse()
+                
+                if rows:
+                    for row in rows:
+                        grouped[symbol][timeframe].append(TimeframeBucket.from_record(row))
 
     return {symbol: dict(by_tf) for symbol, by_tf in grouped.items()}
 
