@@ -7,8 +7,8 @@ import time
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-UTC = timezone.utc, timedelta
+from datetime import datetime, timezone, timedelta
+UTC = timezone.utc
 from pathlib import Path
 import sys
 from typing import Any

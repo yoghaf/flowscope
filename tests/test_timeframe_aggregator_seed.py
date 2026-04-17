@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-UTC = timezone.utc, timedelta
+from datetime import datetime, timezone, timedelta
+UTC = timezone.utc
 
 from backend.services.timeframe_aggregator import TimeframeAggregateStore, TimeframeBucket
 
