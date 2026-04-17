@@ -264,21 +264,22 @@ async def load_bucket_history(
         for symbol in target_symbols:
             for timeframe in DEFAULT_TIMEFRAMES:
                 statement = (
-                    select(MarketDataBucket)
+                    select(MarketDataBucket.__table__)
                     .where(MarketDataBucket.symbol == symbol, MarketDataBucket.timeframe == timeframe)
                     .order_by(MarketDataBucket.bucket_start.desc())
                 )
                 if limit_per_symbol > 0:
                     statement = statement.limit(limit_per_symbol)
                     
-                result = await session.scalars(statement)
-                rows = list(result)
+                result = await session.execute(statement)
+                rows = result.mappings().all()
+                
                 # Reverse back to ascending order since we fetched descending to get the latest
-                rows.reverse()
+                rows = list(reversed(rows))
                 
                 if rows:
                     for row in rows:
-                        grouped[symbol][timeframe].append(TimeframeBucket.from_record(row))
+                        grouped[symbol][timeframe].append(TimeframeBucket.from_record(dict(row)))
 
     return {symbol: dict(by_tf) for symbol, by_tf in grouped.items()}
 
