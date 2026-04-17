@@ -122,7 +122,7 @@ class ExecutionEngine:
         # ============================================================
 
         # --- ROUTE 1: SQUEEZE ---
-        if state_label == "Squeeze Setup" or (market_interpretation.state == "Compression" and "Squeeze" in positioning.decision):
+        if state_label in {"Squeeze Setup", "Squeeze"} or (market_interpretation.state == "Compression" and "Squeeze" in positioning.decision):
             setup_type: SetupType = "Squeeze"
             # Direction: squeeze AGAINST the overcrowded side
             if funding_level > 0:

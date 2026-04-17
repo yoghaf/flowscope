@@ -762,10 +762,10 @@ class MarketInterpreterEngine:
             clarity_confidence = 0.85
             action = "ENTER"
             action_rationale = "Trap detected: liquidation-driven move without taker confirmation. Initiating mean reversion."
-        elif state_label == "Squeeze Setup":
+        elif state_label in {"Squeeze Setup", "Squeeze"}:
             clarity_confidence = 0.85
             action = "ENTER"
-            action_rationale = "Squeeze formulation active: high OI + compressed structure + heavy funding skew."
+            action_rationale = "Squeeze triggered: volume spike and taker flow confirm the squeezed positioning."
         elif distribution_risk["active"]:
             action = "WAIT"
             action_rationale = "Prepare for breakdown, avoid long until price reclaims strength or breakout validation returns."
