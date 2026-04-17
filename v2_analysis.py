@@ -168,8 +168,8 @@ for t in chronological_trades:
     # Fortunately, duration is in the block. We approximate closed time via duration.
     # Wait, v2_analysis.py doesn't have closed_at parsed yet!
     # Let's mock a 2-hour duration for simulation purposes if closed_at not available.
-    import timedelta
-    t_close = t['time'] + datetime.timedelta(hours=2) 
+    from datetime import timedelta
+    t_close = t['time'] + timedelta(hours=2) 
     
     pm.check_day(t['time'])
     pm.clean_closed_trades(t['time'])
