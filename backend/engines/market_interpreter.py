@@ -552,6 +552,7 @@ class MarketInterpreterEngine:
         control: MarketControl,
         oi_intent: OiIntent,
         positioning: PositioningAssessment,
+        metrics: FlowMetrics,
         timeframe: str,
         flow_alignment: float,
         conflict_score: float,
