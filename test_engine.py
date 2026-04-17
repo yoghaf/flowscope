@@ -1,4 +1,5 @@
-from datetime import datetime, UTC
+from datetime import datetime, timezone
+UTC = timezone.utc
 from backend.services.timeframe_aggregator import TimeframeBucket
 from backend.engines.flow_engine import HistoryPoint
 

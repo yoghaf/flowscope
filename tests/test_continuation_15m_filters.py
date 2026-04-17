@@ -17,7 +17,8 @@ def make_service() -> SignalService:
 
 
 def make_bucket() -> TimeframeBucket:
-    from datetime import UTC, datetime, timedelta
+    from datetime import datetime, timezone
+UTC = timezone.utc, timedelta
 
     bucket_end = datetime(2026, 4, 3, 5, 15, tzinfo=UTC)
     return TimeframeBucket(
@@ -60,7 +61,8 @@ def make_previous_bucket(
     open_price: float = 0.8688,
     close_price: float = 0.8624,
 ) -> TimeframeBucket:
-    from datetime import UTC, datetime, timedelta
+    from datetime import datetime, timezone
+UTC = timezone.utc, timedelta
 
     bucket_end = datetime(2026, 4, 3, 5, 0, tzinfo=UTC)
     return TimeframeBucket(
@@ -103,7 +105,8 @@ def make_1h_bucket(
     open_price: float = 1.0000,
     close_price: float = 1.0220,
 ) -> TimeframeBucket:
-    from datetime import UTC, datetime, timedelta
+    from datetime import datetime, timezone
+UTC = timezone.utc, timedelta
 
     bucket_end = datetime(2026, 4, 3, 10, 0, tzinfo=UTC)
     return TimeframeBucket(
@@ -146,7 +149,8 @@ def make_previous_1h_bucket(
     open_price: float = 1.0180,
     close_price: float = 0.9940,
 ) -> TimeframeBucket:
-    from datetime import UTC, datetime, timedelta
+    from datetime import datetime, timezone
+UTC = timezone.utc, timedelta
 
     bucket_end = datetime(2026, 4, 3, 9, 0, tzinfo=UTC)
     return TimeframeBucket(

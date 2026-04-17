@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timezone
+UTC = timezone.utc, timedelta
 from types import SimpleNamespace
 
 from backend.engines.execution_engine import ExecutionPlan

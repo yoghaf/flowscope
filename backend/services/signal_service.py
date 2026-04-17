@@ -7,7 +7,8 @@ import math
 import random
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timezone
+UTC = timezone.utc, timedelta
 from typing import Any
 
 from backend.config import Settings, TIMEFRAME_PROFILES

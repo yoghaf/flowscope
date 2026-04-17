@@ -3,7 +3,8 @@ from __future__ import annotations
 import csv
 import html
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from io import StringIO
 
 from backend.database import DatabaseManager

@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timezone
+UTC = timezone.utc, timedelta
 import logging
 import math
 from typing import Any
