@@ -49,8 +49,8 @@ def parse_autopsy(filepath, is_win):
         except Exception as e:
             pass
 
-parse_autopsy('1_wins_anatomy.md', True)
-parse_autopsy('2_losses_anatomy.md', False)
+parse_autopsy('trade_autopsies/1_wins_anatomy.md', True)
+parse_autopsy('trade_autopsies/2_losses_anatomy.md', False)
 
 print(f"Parsed {len(trades)} trades.")
 
