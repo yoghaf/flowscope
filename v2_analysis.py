@@ -199,6 +199,9 @@ for t in chronological_trades:
     setup_multiplier = 1.0
     if scen_label == "weak_propulsion":
         setup_multiplier *= 0.5
+    elif scen_label == "mixed_signals":
+        setup_multiplier *= 0.6
+        
     if t['setup'] == "Squeeze":
         setup_multiplier *= 1.25 # Mocking Squeeze avg multiplier
     elif t['setup'] == "Trap":

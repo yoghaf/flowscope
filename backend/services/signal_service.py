@@ -162,6 +162,7 @@ class SignalService:
             timeframe: {}
             for timeframe in TIMEFRAME_ORDER
         }
+        self.squeeze_memory: dict[tuple[str, str], int] = {}
         self.state = self.states_by_timeframe["1h"]
         self.history: dict[str, deque[HistoryPoint]] = defaultdict(
             lambda: deque(maxlen=settings.history_retention_points)
@@ -976,6 +977,11 @@ class SignalService:
 
             profile = TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])
             higher_tf_trend, higher_tf_control = self._higher_timeframe_context(symbol, timeframe, updated_states)
+            
+            # Retrieve Squeeze state memory
+            cache_key = (symbol, timeframe)
+            squeeze_memory_active = self.squeeze_memory.get(cache_key, 0) > 0
+
             market_interpretation = self.market_interpreter.evaluate(
                 bucket=bucket,
                 metrics=flow_metrics,
@@ -985,7 +991,15 @@ class SignalService:
                 state_assessment=state_assessment,
                 higher_timeframe_trend=higher_tf_trend,
                 higher_timeframe_control=higher_tf_control,
+                squeeze_memory_active=squeeze_memory_active,
             )
+            
+            # Update cache lifetime
+            if market_interpretation.state_label == "Squeeze Setup":
+                self.squeeze_memory[cache_key] = 3 # Exists for current + 2 future buckets
+            elif squeeze_memory_active:
+                self.squeeze_memory[cache_key] -= 1
+
             positioning.debug_trace["market_interpretation"] = market_interpretation.to_dict()
             positioning = self._with_reliability(positioning, market_interpretation.clarity_confidence)
             if market_interpretation.action == "NO TRADE":
@@ -1177,6 +1191,9 @@ class SignalService:
             if execution is not None:
                 if scenario.label == "weak_propulsion":
                     execution.position_size_multiplier *= 0.5
+                elif scenario.label == "mixed_signals":
+                    execution.position_size_multiplier *= 0.6
+                    
                 execution.position_size_multiplier *= min(1.0, max(0.0, market_interpretation.flow_alignment + 0.15))
                 # Apply Portfolio Global multiplier
                 global_multiplier = self.portfolio_manager.get_global_size_multiplier()

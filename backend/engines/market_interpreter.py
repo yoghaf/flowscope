@@ -552,10 +552,10 @@ class MarketInterpreterEngine:
         control: MarketControl,
         oi_intent: OiIntent,
         positioning: PositioningAssessment,
-        metrics: FlowMetrics,
         timeframe: str,
         flow_alignment: float,
         conflict_score: float,
+        squeeze_memory_active: bool = False,
     ) -> str:
         """Classification-based setup router.
 
@@ -595,22 +595,22 @@ class MarketInterpreterEngine:
 
         # --- SETUP 2: TRAP (Mean Reversion / Fake Breakout) ---
         # Sharp move where the DRIVER is liquidation, not genuine taker demand.
-        # This will be updated in future phases. Currently preserved to prevent breakage.
-        # while taker_delta does NOT confirm the move direction.
         is_liq_driven = liq_pressure * price_dir > 0.10
         is_taker_absent = taker_delta * price_dir <= 0
-        
-        # Micro-confirmation: must show a stall (wick rejection) or severe taker divergence
         micro_confirmed = wick_ratio >= 0.40 or (taker_delta * price_dir) <= -0.10
 
         if is_sharp_move and is_liq_driven and is_taker_absent and micro_confirmed:
             return "Trap"
 
-        # --- SETUP 3: TREND CONTINUATION (Real Breakout) ---
-        # Sharp move where the DRIVER is genuine taker flow + fresh OI commitment.
+        # --- SETUP 1B: SQUEEZE TRIGGER ---
         is_taker_real = taker_delta * price_dir > 0
         is_oi_fresh = abs(oi_delta_z) >= 0.6 and oi_intent == "Position Building"
 
+        if squeeze_memory_active and is_sharp_move and is_taker_real and is_oi_fresh:
+            return "Squeeze"
+
+        # --- SETUP 3: TREND CONTINUATION (Real Breakout) ---
+        # Sharp move where the DRIVER is genuine taker flow + fresh OI commitment.
         if is_sharp_move and is_taker_real and is_oi_fresh:
             return "Trend continuation"
 
@@ -661,6 +661,7 @@ class MarketInterpreterEngine:
         state_assessment: StateAssessment,
         higher_timeframe_trend: TrendDirection = "Neutral",
         higher_timeframe_control: MarketControl = "Neutral",
+        squeeze_memory_active: bool = False,
     ) -> MarketInterpretationAssessment:
         profile = TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])
         trend, control, structure_label, structure_shift, structure_strength = self._market_control(
@@ -712,6 +713,7 @@ class MarketInterpreterEngine:
             timeframe=timeframe,
             flow_alignment=flow_alignment,
             conflict_score=conflict_score,
+            squeeze_memory_active=squeeze_memory_active,
         )
         breakout_valid = self._breakout_valid(
             trend=trend,
