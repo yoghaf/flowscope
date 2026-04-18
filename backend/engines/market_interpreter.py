@@ -587,9 +587,9 @@ class MarketInterpreterEngine:
 
         # --- SETUP 1: SQUEEZE SETUP ---
         # Compression phase: waiting for the coiled spring to burst.
-        is_compressed = compression >= 0.50 or (price_change <= price_flat * 1.5)
-        is_oi_crowded = oi_pct >= 0.75
-        is_funding_skewed = abs(funding_level) >= 0.00015
+        is_compressed = compression >= 0.40 or (price_change <= price_flat * 1.5)
+        is_oi_crowded = oi_pct >= 0.65
+        is_funding_skewed = abs(funding_level) >= 0.00005
 
         if is_compressed and is_oi_crowded and is_funding_skewed:
             return "Squeeze Setup"
