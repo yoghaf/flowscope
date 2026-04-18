@@ -53,6 +53,102 @@ function metricTone(value: number | null | undefined): string {
   return numericValue >= 0 ? "font-semibold text-emerald-400" : "font-semibold text-red-400";
 }
 
+const BAR_COLORS: Record<string, string> = {
+  emerald: "bg-emerald-500",
+  red: "bg-red-500",
+  amber: "bg-amber-500",
+  blue: "bg-blue-500",
+  purple: "bg-purple-500",
+  slate: "bg-slate-500",
+};
+
+function MetricRow({
+  label,
+  value,
+  format,
+  colorize,
+  barColor,
+}: {
+  label: string;
+  value: number | boolean | null | undefined;
+  format: "percent" | "decimal" | "bar" | "zscore" | "ratio" | "price" | "funding" | "boolean";
+  colorize?: boolean;
+  barColor?: string;
+}) {
+  const num = format === "boolean" ? null : toNumberOrNull(value as number | null | undefined);
+
+  if (format === "boolean") {
+    const boolVal = value === true || value === 1;
+    return (
+      <div className="flex items-center justify-between">
+        <span className="text-muted-foreground">{label}</span>
+        <span className={`font-semibold ${boolVal ? "text-red-400" : "text-emerald-400"}`}>
+          {boolVal ? "⚠ YES" : "NO"}
+        </span>
+      </div>
+    );
+  }
+
+  if (num === null) {
+    return (
+      <div className="flex items-center justify-between">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-semibold text-muted-foreground">--</span>
+      </div>
+    );
+  }
+
+  const tone = colorize
+    ? num >= 0
+      ? "font-semibold text-emerald-400"
+      : "font-semibold text-red-400"
+    : "font-semibold text-foreground";
+
+  if (format === "bar") {
+    const pct = Math.min(100, Math.max(0, num * 100));
+    const bg = BAR_COLORS[barColor ?? "blue"] ?? BAR_COLORS.blue;
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">{label}</span>
+          <span className="font-semibold text-foreground">{(num * 100).toFixed(1)}%</span>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+          <div className={`h-full rounded-full ${bg} transition-all`} style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    );
+  }
+
+  let display: string;
+  switch (format) {
+    case "percent":
+      display = `${(num * 100).toFixed(3)}%`;
+      break;
+    case "funding":
+      display = `${(num * 100).toFixed(5)}%`;
+      break;
+    case "zscore":
+      display = `z ${num.toFixed(3)}`;
+      break;
+    case "ratio":
+      display = num.toFixed(4);
+      break;
+    case "price":
+      display = formatPrice(num);
+      break;
+    default:
+      display = num.toFixed(4);
+  }
+
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={tone}>{display}</span>
+    </div>
+  );
+}
+
 export default function CoinDetailPage({ symbol }: { symbol: string }) {
   const searchParams = useSearchParams();
   const timeframeParam = searchParams.get("timeframe") as Timeframe | null;
@@ -502,6 +598,189 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
                   <p>If higher timeframe control flips against this setup, the directional read should be reassessed.</p>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-card/50 p-6 backdrop-blur-xl transition-all hover:border-white/20">
+        <h3 className="mb-5 text-lg font-semibold text-foreground">Flow Metrics Deep Dive</h3>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {/* ── Price & Momentum ── */}
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Price &amp; Momentum</p>
+            <div className="space-y-3 text-sm">
+              <MetricRow
+                label="Price Change"
+                value={toNumberOrNull(coin.flow_metrics[`price_change_${timeframeParam}` as keyof FlowMetrics])}
+                format="percent"
+                colorize
+              />
+              <MetricRow
+                label="Market Pressure"
+                value={toNumberOrNull(coin.flow_metrics[`market_pressure_${timeframeParam}` as keyof FlowMetrics])}
+                format="decimal"
+                colorize
+              />
+              <MetricRow
+                label="Compression Score"
+                value={toNumberOrNull(coin.flow_metrics[`compression_score_${timeframeParam}` as keyof FlowMetrics])}
+                format="bar"
+                barColor="blue"
+              />
+              <MetricRow
+                label="ATR"
+                value={toNumberOrNull(coin.flow_metrics[`atr_${timeframeParam}` as keyof FlowMetrics])}
+                format="decimal"
+              />
+              <MetricRow
+                label="Wick Ratio"
+                value={toNumberOrNull(coin.flow_metrics[`wick_ratio_${timeframeParam}` as keyof FlowMetrics])}
+                format="bar"
+                barColor={
+                  (toNumberOrNull(coin.flow_metrics[`wick_ratio_${timeframeParam}` as keyof FlowMetrics]) ?? 0) >= 0.4
+                    ? "amber"
+                    : "slate"
+                }
+              />
+            </div>
+          </div>
+
+          {/* ── Taker & Positioning ── */}
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Taker &amp; Positioning</p>
+            <div className="space-y-3 text-sm">
+              <MetricRow
+                label="Taker Buy/Sell Ratio"
+                value={toNumberOrNull(coin.flow_metrics[`taker_buy_sell_ratio_level_${timeframeParam}` as keyof FlowMetrics])}
+                format="ratio"
+              />
+              <MetricRow
+                label="Taker Delta"
+                value={toNumberOrNull(coin.flow_metrics[`taker_buy_sell_ratio_delta_${timeframeParam}` as keyof FlowMetrics])}
+                format="decimal"
+                colorize
+              />
+              <MetricRow
+                label="L/S Ratio Level"
+                value={toNumberOrNull(coin.flow_metrics[`long_short_ratio_level_${timeframeParam}` as keyof FlowMetrics])}
+                format="ratio"
+              />
+              <MetricRow
+                label="L/S Ratio Delta"
+                value={toNumberOrNull(coin.flow_metrics[`long_short_ratio_delta_${timeframeParam}` as keyof FlowMetrics])}
+                format="decimal"
+                colorize
+              />
+            </div>
+          </div>
+
+          {/* ── OI Detail ── */}
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Open Interest Detail</p>
+            <div className="space-y-3 text-sm">
+              <MetricRow
+                label="OI Percentile"
+                value={toNumberOrNull(coin.flow_metrics[`oi_percentile_${timeframeParam}` as keyof FlowMetrics])}
+                format="bar"
+                barColor={
+                  (toNumberOrNull(coin.flow_metrics[`oi_percentile_${timeframeParam}` as keyof FlowMetrics]) ?? 0) >= 0.75
+                    ? "red"
+                    : (toNumberOrNull(coin.flow_metrics[`oi_percentile_${timeframeParam}` as keyof FlowMetrics]) ?? 0) >= 0.5
+                      ? "amber"
+                      : "emerald"
+                }
+              />
+              <MetricRow
+                label="OI Delta Z-Score"
+                value={toNumberOrNull(coin.flow_metrics[`oi_delta_z_${timeframeParam}` as keyof FlowMetrics])}
+                format="zscore"
+                colorize
+              />
+              <MetricRow
+                label="OI Delta"
+                value={toNumberOrNull(coin.flow_metrics[`oi_delta_${timeframeParam}` as keyof FlowMetrics])}
+                format="decimal"
+                colorize
+              />
+            </div>
+          </div>
+
+          {/* ── Liquidation ── */}
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Liquidation Metrics</p>
+            <div className="space-y-3 text-sm">
+              <MetricRow
+                label="Liq Pressure"
+                value={toNumberOrNull(coin.flow_metrics[`liq_pressure_${timeframeParam}` as keyof FlowMetrics])}
+                format="decimal"
+                colorize
+              />
+              <MetricRow
+                label="Liq Z-Score"
+                value={toNumberOrNull(coin.flow_metrics[`liq_z_score_${timeframeParam}` as keyof FlowMetrics])}
+                format="zscore"
+              />
+              <MetricRow
+                label="Liq Delta"
+                value={toNumberOrNull(coin.flow_metrics[`liq_delta_${timeframeParam}` as keyof FlowMetrics])}
+                format="decimal"
+                colorize
+              />
+            </div>
+          </div>
+
+          {/* ── Funding Detail ── */}
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Funding Detail</p>
+            <div className="space-y-3 text-sm">
+              <MetricRow
+                label="Funding Level"
+                value={toNumberOrNull(coin.flow_metrics[`funding_level_${timeframeParam}` as keyof FlowMetrics])}
+                format="funding"
+                colorize
+              />
+              <MetricRow
+                label="Funding Trend"
+                value={toNumberOrNull(coin.flow_metrics[`funding_trend_${timeframeParam}` as keyof FlowMetrics])}
+                format="funding"
+                colorize
+              />
+              <MetricRow
+                label="Funding Extreme"
+                value={coin.flow_metrics[`funding_extreme_${timeframeParam}` as keyof FlowMetrics] as unknown as number}
+                format="boolean"
+              />
+            </div>
+          </div>
+
+          {/* ── Alignment Scores ── */}
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Alignment Scores</p>
+            <div className="space-y-3 text-sm">
+              <MetricRow
+                label="Flow Alignment"
+                value={marketInterpretation.flow_alignment}
+                format="bar"
+                barColor={marketInterpretation.flow_alignment >= 0.7 ? "emerald" : marketInterpretation.flow_alignment >= 0.5 ? "amber" : "red"}
+              />
+              <MetricRow
+                label="Trend Alignment"
+                value={marketInterpretation.trend_alignment}
+                format="bar"
+                barColor={marketInterpretation.trend_alignment >= 0.7 ? "emerald" : marketInterpretation.trend_alignment >= 0.5 ? "amber" : "red"}
+              />
+              <MetricRow
+                label="Structure Strength"
+                value={marketInterpretation.structure_strength}
+                format="bar"
+                barColor={marketInterpretation.structure_strength >= 0.7 ? "emerald" : marketInterpretation.structure_strength >= 0.5 ? "amber" : "red"}
+              />
+              <MetricRow
+                label="Range Mid"
+                value={toNumberOrNull(coin.flow_metrics[`range_mid_${timeframeParam}` as keyof FlowMetrics])}
+                format="price"
+              />
             </div>
           </div>
         </div>
