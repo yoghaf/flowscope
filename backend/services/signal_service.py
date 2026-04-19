@@ -996,9 +996,27 @@ class SignalService:
 
             if squeeze_setup_detected:
                 self.squeeze_memory[cache_key] = 3
+                # DIAGNOSTIC
+                if not hasattr(self, '_sqz_arm_count'):
+                    self._sqz_arm_count = 0
+                self._sqz_arm_count += 1
+                if self._sqz_arm_count <= 5:
+                    print(f"[SQZ-ARM] {symbol} {timeframe} comp={compression:.3f} oi_pct={oi_pct:.3f} fund={funding_lvl:.6f} price_chg={price_chg:.4f}")
             elif squeeze_memory_active:
                 self.squeeze_memory[cache_key] -= 1
                 squeeze_memory_active = self.squeeze_memory[cache_key] > 0
+
+            # DIAGNOSTIC: log when memory is active and check breakout proximity
+            if squeeze_memory_active:
+                if not hasattr(self, '_sqz_mem_count'):
+                    self._sqz_mem_count = 0
+                self._sqz_mem_count += 1
+                vol_z = getattr(flow_metrics, f"volume_z_{timeframe}", 0.0) or 0.0
+                oi_delta_z = getattr(flow_metrics, f"oi_delta_z_{timeframe}", 0.0) or 0.0
+                liq_prs = getattr(flow_metrics, f"liq_pressure_{timeframe}", 0.0) or 0.0
+                is_sharp = price_chg >= 0.012 and abs(vol_z) >= 1.0
+                if self._sqz_mem_count <= 10:
+                    print(f"[SQZ-MEM] {symbol} {timeframe} sharp={'Y' if is_sharp else 'N'} pchg={price_chg:.4f} vz={vol_z:.2f} oi_dz={oi_delta_z:.2f} liq={liq_prs:.3f} ttl={self.squeeze_memory.get(cache_key, 0)}")
 
             market_interpretation = self.market_interpreter.evaluate(
                 bucket=bucket,
@@ -1011,6 +1029,13 @@ class SignalService:
                 higher_timeframe_control=higher_tf_control,
                 squeeze_memory_active=squeeze_memory_active,
             )
+
+            # DIAGNOSTIC: check if Squeeze was classified
+            if market_interpretation.state == "Squeeze":
+                if not hasattr(self, '_sqz_fire_count'):
+                    self._sqz_fire_count = 0
+                self._sqz_fire_count += 1
+                print(f"[SQZ-FIRE!] {symbol} {timeframe} state={market_interpretation.state} action={market_interpretation.action}")
 
             positioning.debug_trace["market_interpretation"] = market_interpretation.to_dict()
             positioning = self._with_reliability(positioning, market_interpretation.clarity_confidence)
