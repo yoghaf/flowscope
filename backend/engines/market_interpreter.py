@@ -587,10 +587,12 @@ class MarketInterpreterEngine:
 
         # --- SETUP 1: SQUEEZE TRIGGER ---
         # Only fires when memory cache was armed by signal_service and breakout occurs.
+        # Squeeze = forced liquidation cascade. OI may be CLOSING (not building).
         is_taker_real = taker_delta * price_dir > 0
-        is_oi_fresh = abs(oi_delta_z) >= 0.6 and oi_intent == "Position Building"
+        is_oi_moving = abs(oi_delta_z) >= 0.5  # OI is reacting, either closing or building
+        is_liq_cascade = abs(liq_pressure) >= 0.15  # Liquidation pressure confirms squeeze
 
-        if squeeze_memory_active and is_sharp_move and is_taker_real and is_oi_fresh:
+        if squeeze_memory_active and is_sharp_move and is_taker_real and (is_oi_moving or is_liq_cascade):
             return "Squeeze"
 
         # --- SETUP 2: TRAP (Mean Reversion / Fake Breakout) ---
