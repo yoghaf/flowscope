@@ -995,7 +995,7 @@ class SignalService:
             squeeze_setup_detected = is_compressed and is_oi_crowded and is_funding_skewed
 
             if squeeze_setup_detected:
-                self.squeeze_memory[cache_key] = 3
+                self.squeeze_memory[cache_key] = 16
             elif squeeze_memory_active:
                 self.squeeze_memory[cache_key] -= 1
                 squeeze_memory_active = self.squeeze_memory[cache_key] > 0
@@ -1204,7 +1204,7 @@ class SignalService:
                 if scenario.label == "weak_propulsion":
                     execution.position_size_multiplier *= 0.5
                 elif scenario.label == "mixed_signals":
-                    execution.position_size_multiplier *= 0.6
+                    execution.position_size_multiplier *= 0.5
                     
                 execution.position_size_multiplier *= min(1.0, max(0.0, market_interpretation.flow_alignment + 0.15))
                 # Apply Portfolio Global multiplier
@@ -1302,6 +1302,7 @@ class SignalService:
                 bucket=bucket,
                 action=action,
                 execution=execution,
+                flow_metrics=flow_metrics,
             )
 
             signal = self._signal_type_from_output(positioning, state_assessment)
@@ -4709,40 +4710,64 @@ class SignalService:
             return action, False
 
         pending = self.pending_followthrough.get(key)
-        current_candidate = {
-            "bucket_start": bucket.bucket_start,
-            "timestamp": bucket.last_timestamp,
-            "close_price": bucket.close_price,
-            "breakout_entry": execution.entry_min,
-            "bias": action.bias,
-            "setup_type": action.setup_type,
-        }
-
-        if pending is None or pending["bucket_start"] == bucket.bucket_start:
-            self.pending_followthrough[key] = current_candidate
+        
+        # 1. First time seeing this breakout signal: Enqueue it into pending_followthrough
+        if pending is None or pending["bias"] != action.bias or pending["setup_type"] != action.setup_type:
+            self.pending_followthrough[key] = {
+                "bucket_start": bucket.bucket_start,
+                "timestamp": bucket.last_timestamp,
+                "close_price": bucket.close_price,
+                "breakout_entry": execution.entry_min,
+                "bias": action.bias,
+                "setup_type": action.setup_type,
+                "buckets_waited": 0,
+            }
+            # Put action in "Ready" status so execution Engine pauses
             return self._action_with_status(action, "Ready"), True
 
-        if pending["bias"] != action.bias or pending["setup_type"] != action.setup_type:
-            self.pending_followthrough[key] = current_candidate
-            return self._action_with_status(action, "Ready"), True
-
-        close_buffer = self.settings.breakout_close_confirmation_buffer
+        # 2. Update waited buckets
+        pending["buckets_waited"] += 1
+        
+        # 3. Check for Retrace (-0.5% discount)
+        retrace_pct = 0.0
         if direction > 0:
-            continues = (
-                bucket.close_price > float(pending["close_price"])
-                and bucket.close_price >= float(pending["breakout_entry"]) * (1.0 + close_buffer)
-            )
+            # Bullish bias -> look for price dropping below breakout
+            retrace_pct = (bucket.low_price - pending["breakout_entry"]) / max(pending["breakout_entry"], 1e-9)
         else:
-            continues = (
-                bucket.close_price < float(pending["close_price"])
-                and bucket.close_price <= float(pending["breakout_entry"]) * (1.0 - close_buffer)
-            )
+            # Bearish bias -> look for price rising above breakout
+            retrace_pct = (pending["breakout_entry"] - bucket.high_price) / max(pending["breakout_entry"], 1e-9)
 
-        self.pending_followthrough.pop(key, None)
-        if continues:
-            return action, False
+        # Target: -0.5% (meaning it dropped at least 0.5% in favor of better entry)
+        if retrace_pct <= -0.005:
+            # Pullback Achieved! Proceed with Full Trade
+            self.pending_followthrough.pop(key, None)
+            return action, False  # Action stays Triggered
 
-        self.pending_followthrough[key] = current_candidate
+        # 4. No Pullback. Have we waited too long? (Max 4 buckets = 1 Hour on 15m)
+        if pending["buckets_waited"] >= 4:
+            self.pending_followthrough.pop(key, None)
+            
+            # Hybrid Fallback Check: Is the trend too strong that it refused to dip?
+            is_strong = False
+            if flow_metrics:
+                taker = getattr(flow_metrics, f"taker_delta_{timeframe}", 0.0)
+                oi_z = getattr(flow_metrics, f"oi_delta_z_{timeframe}", 0.0)
+                vol_z = getattr(flow_metrics, f"volume_z_{timeframe}", 0.0)
+                
+                taker_strong = (taker * direction) > 0.10
+                oi_rising = oi_z > 0.50
+                vol_high = vol_z > 0.50
+                is_strong = taker_strong and oi_rising and vol_high
+
+            if is_strong:
+                # Still enter, but with 0.5x penalty to manage FOMO risk
+                execution.position_size_multiplier *= 0.5
+                return action, False
+            else:
+                # Weak momentum, throw it away
+                return self._action_with_status(action, "Rejected"), False
+            
+        # 5. Still waiting for pullback, haven't hit limit
         return self._action_with_status(action, "Ready"), True
 
     @staticmethod
