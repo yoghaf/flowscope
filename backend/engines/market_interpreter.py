@@ -585,14 +585,13 @@ class MarketInterpreterEngine:
         price_dir = 1 if price_change_raw > 0 else -1
         is_sharp_move = price_change >= 0.012 and abs(vol_z) >= 1.0
 
-        # --- SETUP 1: SQUEEZE SETUP ---
-        # Compression phase: waiting for the coiled spring to burst.
-        is_compressed = compression >= 0.40 or (price_change <= price_flat * 1.5)
-        is_oi_crowded = oi_pct >= 0.65
-        is_funding_skewed = abs(funding_level) >= 0.00005
+        # --- SETUP 1: SQUEEZE TRIGGER ---
+        # Only fires when memory cache was armed by signal_service and breakout occurs.
+        is_taker_real = taker_delta * price_dir > 0
+        is_oi_fresh = abs(oi_delta_z) >= 0.6 and oi_intent == "Position Building"
 
-        if is_compressed and is_oi_crowded and is_funding_skewed:
-            return "Squeeze Setup"
+        if squeeze_memory_active and is_sharp_move and is_taker_real and is_oi_fresh:
+            return "Squeeze"
 
         # --- SETUP 2: TRAP (Mean Reversion / Fake Breakout) ---
         # Sharp move where the DRIVER is liquidation, not genuine taker demand.
@@ -602,13 +601,6 @@ class MarketInterpreterEngine:
 
         if is_sharp_move and is_liq_driven and is_taker_absent and micro_confirmed:
             return "Trap"
-
-        # --- SETUP 1B: SQUEEZE TRIGGER ---
-        is_taker_real = taker_delta * price_dir > 0
-        is_oi_fresh = abs(oi_delta_z) >= 0.6 and oi_intent == "Position Building"
-
-        if squeeze_memory_active and is_sharp_move and is_taker_real and is_oi_fresh:
-            return "Squeeze"
 
         # --- SETUP 3: TREND CONTINUATION (Real Breakout) ---
         # Sharp move where the DRIVER is genuine taker flow + fresh OI commitment.
@@ -762,10 +754,10 @@ class MarketInterpreterEngine:
             clarity_confidence = 0.85
             action = "ENTER"
             action_rationale = "Trap detected: liquidation-driven move without taker confirmation. Initiating mean reversion."
-        elif state_label in {"Squeeze Setup", "Squeeze"}:
+        elif state_label == "Squeeze":
             clarity_confidence = 0.85
             action = "ENTER"
-            action_rationale = "Squeeze triggered: volume spike and taker flow confirm the squeezed positioning."
+            action_rationale = "Squeeze triggered: memory-cached setup confirmed by breakout with taker flow and OI expansion."
         elif distribution_risk["active"]:
             action = "WAIT"
             action_rationale = "Prepare for breakdown, avoid long until price reclaims strength or breakout validation returns."

@@ -978,9 +978,27 @@ class SignalService:
             profile = TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])
             higher_tf_trend, higher_tf_control = self._higher_timeframe_context(symbol, timeframe, updated_states)
             
-            # Retrieve Squeeze state memory
+            # --- Squeeze Memory Cache: arm independently from classification ---
             cache_key = (symbol, timeframe)
             squeeze_memory_active = self.squeeze_memory.get(cache_key, 0) > 0
+
+            # Check squeeze setup conditions directly from flow metrics
+            compression = getattr(flow_metrics, f"compression_score_{timeframe}", 0.0) or 0.0
+            oi_pct = getattr(flow_metrics, f"oi_percentile_{timeframe}", 0.0) or 0.0
+            funding_lvl = getattr(flow_metrics, f"funding_level_{timeframe}", 0.0) or 0.0
+            price_chg = abs(getattr(flow_metrics, f"price_change_{timeframe}", 0.0) or 0.0)
+            price_flat_threshold = float(profile.get("price_flat", 0.005))
+
+            is_compressed = compression >= 0.40 or (price_chg <= price_flat_threshold * 1.5)
+            is_oi_crowded = oi_pct >= 0.65
+            is_funding_skewed = abs(funding_lvl) >= 0.00005
+            squeeze_setup_detected = is_compressed and is_oi_crowded and is_funding_skewed
+
+            if squeeze_setup_detected:
+                self.squeeze_memory[cache_key] = 3
+            elif squeeze_memory_active:
+                self.squeeze_memory[cache_key] -= 1
+                squeeze_memory_active = self.squeeze_memory[cache_key] > 0
 
             market_interpretation = self.market_interpreter.evaluate(
                 bucket=bucket,
@@ -993,12 +1011,6 @@ class SignalService:
                 higher_timeframe_control=higher_tf_control,
                 squeeze_memory_active=squeeze_memory_active,
             )
-            
-            # Update cache lifetime
-            if market_interpretation.state == "Squeeze Setup":
-                self.squeeze_memory[cache_key] = 3 # Exists for current + 2 future buckets
-            elif squeeze_memory_active:
-                self.squeeze_memory[cache_key] -= 1
 
             positioning.debug_trace["market_interpretation"] = market_interpretation.to_dict()
             positioning = self._with_reliability(positioning, market_interpretation.clarity_confidence)
