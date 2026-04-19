@@ -606,6 +606,7 @@ class MarketInterpreterEngine:
 
         # --- SETUP 3: TREND CONTINUATION (Real Breakout) ---
         # Sharp move where the DRIVER is genuine taker flow + fresh OI commitment.
+        is_oi_fresh = abs(oi_delta_z) >= 0.6 and oi_intent == "Position Building"
         if is_sharp_move and is_taker_real and is_oi_fresh:
             return "Trend continuation"
 
