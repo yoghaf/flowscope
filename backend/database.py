@@ -346,6 +346,24 @@ class DatabaseManager:
             result = await session.execute(statement)
             return result.scalar_one_or_none()
 
+    async def has_any_open_trade_for_symbol(
+        self,
+        *,
+        symbol: str,
+    ) -> bool:
+        if not self.enabled:
+            return False
+
+        statement = (
+            select(TradeSignal.id)
+            .where(TradeSignal.symbol == symbol)
+            .where(TradeSignal.result == "open")
+            .limit(1)
+        )
+        async with self.session_factory() as session:
+            result = await session.execute(statement)
+            return result.first() is not None
+
     async def has_trade_signal_event(
         self,
         *,

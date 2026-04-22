@@ -70,10 +70,7 @@ logger = logging.getLogger(__name__)
 TIMEFRAME_RANK = {timeframe: index for index, timeframe in enumerate(TIMEFRAME_ORDER)}
 DEFAULT_USER_ID = "local"
 DEFAULT_SIGNAL_TYPES: tuple[SignalType, ...] = (
-    "Accumulation",
-    "Breakout Watch",
-    "Short Squeeze",
-    "Long Squeeze",
+    "Continuation",
 )
 MAX_ALERTS_PER_USER = 1000
 FEATURE_CONSISTENCY_TOLERANCE = 1e-9
@@ -2843,6 +2840,16 @@ class SignalService:
             symbol=symbol,
             timeframe=timeframe,
         )
+        if existing_trade is None:
+            # Check for cross-timeframe duplicates
+            has_any_trade = await self.database.has_any_open_trade_for_symbol(symbol=symbol)
+            if has_any_trade:
+                logger.info(
+                    "Skipping cross-timeframe duplicate entry for symbol=%s timeframe=%s",
+                    symbol,
+                    timeframe,
+                )
+                return
         if existing_trade is not None:
             if existing_trade.bias != action.bias:
                 logger.info(

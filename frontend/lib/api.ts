@@ -78,6 +78,14 @@ async function fetchBlob(
 }
 
 export const api = {
+  getLiveSignals(query: { status?: "all" | "open" | "closed"; scope?: "all" | "active"; strategy?: string; limit?: number }): Promise<SignalsResponse> {
+    return fetchJson<SignalsResponse>("/signals/live", {
+      status: query.status ?? "all",
+      scope: query.scope ?? "active",
+      strategy: query.strategy ?? "v2_balanced",
+      limit: query.limit ?? 50,
+    });
+  },
   getDashboard(query: { symbol: string; timeframe: Timeframe; snapshotId: string }): Promise<DashboardResponse> {
     return fetchJson<DashboardResponse>("/dashboard", {
       symbol: query.symbol,
@@ -122,13 +130,15 @@ export const api = {
     timeframe?: Timeframe | "ALL";
     setupType?: string;
     scope?: "active" | "all";
+    strategy?: string;
     capitalPerTrade: number;
   }): Promise<PerformanceTradeTableResponse> {
     return fetchJson<PerformanceTradeTableResponse>("/performance/report/data", {
       symbol: query.symbol ?? "ALL",
       timeframe: query.timeframe ?? "ALL",
       setup_type: query.setupType,
-      scope: query.scope ?? "all",
+      scope: query.scope ?? "active",
+      strategy: query.strategy ?? "v2_balanced",
       capital_per_trade: query.capitalPerTrade,
     });
   },
@@ -136,6 +146,7 @@ export const api = {
     symbol?: string;
     timeframe?: Timeframe | "ALL";
     setupType?: string;
+    strategy?: string;
     capitalPerTrade: number;
     format?: "html" | "csv";
   }): Promise<Blob> {
@@ -143,6 +154,7 @@ export const api = {
       symbol: query.symbol ?? "ALL",
       timeframe: query.timeframe ?? "ALL",
       setup_type: query.setupType,
+      strategy: query.strategy ?? "v2_balanced",
       capital_per_trade: query.capitalPerTrade,
       format: query.format ?? "html",
     });

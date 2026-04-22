@@ -51,6 +51,7 @@ class TradeEvaluator:
             close_reason = getattr(trade, "close_reason", None)
             entry_features = dict(getattr(trade, "entry_features", None) or {})
             tp1_pnl_pct = self._feature_float(entry_features.get("tp1_pnl_pct"))
+            strategy_version = entry_features.get("strategy_version", "v1")
             entry_flow_alignment = getattr(trade, "entry_flow_alignment", None)
             setup_type = getattr(trade, "setup_type", None)
 
@@ -144,7 +145,7 @@ class TradeEvaluator:
                             else "Partial TP1"
                         )
 
-                if exit_price is None and entry_touched_at is not None:
+                if exit_price is None and entry_touched_at is not None and strategy_version != "v2_balanced":
                     elapsed_since_entry = bucket.last_timestamp - entry_touched_at
                     fail_fast_window = timeframe_delta * max(self.settings.fail_fast_max_candles, 1)
                     if elapsed_since_entry >= fail_fast_window:
@@ -161,8 +162,8 @@ class TradeEvaluator:
                             result = "loss"
                             close_reason = "Fail-Fast Exit"
 
-                # Stale trade exit: close at market after 6 candles without TP1
-                if exit_price is None and not tp1_hit and entry_touched_at is not None:
+                # Stale trade exit: close at market after 6 candles without TP1 (V1 ONLY)
+                if exit_price is None and not tp1_hit and entry_touched_at is not None and strategy_version != "v2_balanced":
                     stale_window = timeframe_delta * 6
                     elapsed_since_entry = bucket.last_timestamp - entry_touched_at
                     if elapsed_since_entry >= stale_window and pnl_pct < 0:

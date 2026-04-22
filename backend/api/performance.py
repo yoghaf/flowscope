@@ -29,6 +29,7 @@ async def get_performance_report_data(
     timeframe: str = Query("ALL", pattern="^(15m|1h|4h|24h|ALL)$"),
     setup_type: str | None = Query(None),
     scope: str = Query("active", pattern="^(active|all)$"),
+    strategy: str = Query("v2_balanced"),
     capital_per_trade: float = Query(100.0, gt=0),
 ) -> PerformanceTradeTableResponse:
     performance_engine = request.app.state.signal_service.performance_engine
@@ -37,6 +38,7 @@ async def get_performance_report_data(
         timeframe=timeframe,
         setup_type=setup_type,
         scope=scope,
+        strategy=strategy,
         capital_per_trade=capital_per_trade,
     )
 

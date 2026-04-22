@@ -11,6 +11,7 @@ SignalType = Literal[
     "Breakout Watch",
     "Short Squeeze",
     "Long Squeeze",
+    "Continuation",
     "Neutral",
 ]
 DataStatus = Literal["VALID", "NO_DATA", "INSUFFICIENT_HISTORY"]
