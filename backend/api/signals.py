@@ -10,6 +10,94 @@ from fastapi.responses import JSONResponse
 router = APIRouter(tags=["signals"])
 
 
+@router.get("/signals/live")
+async def get_live_signals(
+    request: Request,
+    status: str = Query("all", pattern="^(all|open|closed)$"),
+    scope: str = Query("active", pattern="^(active|all)$"),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict[str, Any]:
+    """Return live trade signals with equity simulation."""
+    db = request.app.state.db
+    settings = request.app.state.signal_service.settings
+    trades = await db.list_trade_signals()
+
+    active_tag = getattr(settings, "trade_signals_active_tag", None)
+    active_since = getattr(settings, "trade_signals_active_since", None)
+    if scope == "active":
+        if active_tag:
+            trades = [t for t in trades if getattr(t, "engine_tag", None) == active_tag]
+        elif active_since is not None:
+            trades = [t for t in trades if t.created_at and t.created_at >= active_since]
+
+    if status == "open":
+        trades = [t for t in trades if t.result == "open"]
+    elif status == "closed":
+        trades = [t for t in trades if t.result in ("win", "loss", "breakeven", "timeout")]
+
+    # Sort newest first
+    trades.sort(key=lambda t: t.created_at, reverse=True)
+    trades = trades[:limit]
+
+    serialized = []
+    for t in trades:
+        entry = t.entry_features if isinstance(t.entry_features, dict) else {}
+        insights = entry.get("insights", [])
+
+        serialized.append({
+            "id": t.id,
+            "symbol": t.symbol,
+            "timeframe": t.timeframe,
+            "bias": t.bias,
+            "setup_type": t.setup_type,
+            "status": t.status,
+            "result": t.result,
+            "market_regime": t.market_regime,
+            "volatility_regime": t.volatility_regime,
+            "entry_price": t.entry_price,
+            "invalidation_price": t.invalidation_price,
+            "target_price_1": t.target_price_1,
+            "target_price_2": t.target_price_2,
+            "risk_level": t.risk_level,
+            "quality_score": t.quality_score,
+            "confidence": round(t.confidence * 100, 1),
+            "pnl_pct": round(t.pnl_pct, 2),
+            "max_drawdown_pct": round(t.max_drawdown_pct, 2),
+            "max_profit_pct": round(t.max_profit_pct, 2),
+            "tp1_hit": t.tp1_hit,
+            "engine_tag": getattr(t, "engine_tag", None),
+            "insights": insights,
+            "strategy_version": entry.get("strategy_version", "unknown"),
+            "position_size_multiplier": round(float(entry.get("position_size_multiplier", 1.0) or 1.0), 4),
+            "confidence_score": round(float(entry.get("confidence_score", 0.0) or 0.0), 4),
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "closed_at": t.closed_at.isoformat() if t.closed_at else None,
+            "close_reason": t.close_reason,
+        })
+
+    # Summary stats
+    closed = [t for t in trades if t.result in ("win", "loss")]
+    wins = sum(1 for t in closed if t.result == "win")
+    losses = sum(1 for t in closed if t.result == "loss")
+    winrate = (wins / len(closed) * 100) if closed else 0
+
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "scope": scope,
+        "active_tag": active_tag if scope == "active" and active_tag else None,
+        "active_since": active_since.isoformat() if scope == "active" and active_since is not None else None,
+        "total": len(serialized),
+        "summary": {
+            "total_closed": len(closed),
+            "wins": wins,
+            "losses": losses,
+            "winrate": round(winrate, 1),
+            "open_trades": sum(1 for t in trades if t.result == "open"),
+        },
+        "signals": serialized,
+    }
+
+
 @router.get("/signals/{trade_id}")
 async def get_signal_detail(
     request: Request,
@@ -110,92 +198,4 @@ async def get_signal_detail(
         "entry_touched_at": trade.entry_touched_at.isoformat() if trade.entry_touched_at else None,
         "closed_at": trade.closed_at.isoformat() if trade.closed_at else None,
         "updated_at": trade.updated_at.isoformat() if trade.updated_at else None,
-    }
-
-
-@router.get("/signals/live")
-async def get_live_signals(
-    request: Request,
-    status: str = Query("all", pattern="^(all|open|closed)$"),
-    scope: str = Query("active", pattern="^(active|all)$"),
-    limit: int = Query(50, ge=1, le=200),
-) -> dict[str, Any]:
-    """Return live trade signals with equity simulation."""
-    db = request.app.state.db
-    settings = request.app.state.signal_service.settings
-    trades = await db.list_trade_signals()
-
-    active_tag = getattr(settings, "trade_signals_active_tag", None)
-    active_since = getattr(settings, "trade_signals_active_since", None)
-    if scope == "active":
-        if active_tag:
-            trades = [t for t in trades if getattr(t, "engine_tag", None) == active_tag]
-        elif active_since is not None:
-            trades = [t for t in trades if t.created_at and t.created_at >= active_since]
-
-    if status == "open":
-        trades = [t for t in trades if t.result == "open"]
-    elif status == "closed":
-        trades = [t for t in trades if t.result in ("win", "loss", "breakeven", "timeout")]
-
-    # Sort newest first
-    trades.sort(key=lambda t: t.created_at, reverse=True)
-    trades = trades[:limit]
-
-    serialized = []
-    for t in trades:
-        entry = t.entry_features if isinstance(t.entry_features, dict) else {}
-        insights = entry.get("insights", [])
-
-        serialized.append({
-            "id": t.id,
-            "symbol": t.symbol,
-            "timeframe": t.timeframe,
-            "bias": t.bias,
-            "setup_type": t.setup_type,
-            "status": t.status,
-            "result": t.result,
-            "market_regime": t.market_regime,
-            "volatility_regime": t.volatility_regime,
-            "entry_price": t.entry_price,
-            "invalidation_price": t.invalidation_price,
-            "target_price_1": t.target_price_1,
-            "target_price_2": t.target_price_2,
-            "risk_level": t.risk_level,
-            "quality_score": t.quality_score,
-            "confidence": round(t.confidence * 100, 1),
-            "pnl_pct": round(t.pnl_pct, 2),
-            "max_drawdown_pct": round(t.max_drawdown_pct, 2),
-            "max_profit_pct": round(t.max_profit_pct, 2),
-            "tp1_hit": t.tp1_hit,
-            "engine_tag": getattr(t, "engine_tag", None),
-            "insights": insights,
-            "strategy_version": entry.get("strategy_version", "unknown"),
-            "position_size_multiplier": round(float(entry.get("position_size_multiplier", 1.0) or 1.0), 4),
-            "confidence_score": round(float(entry.get("confidence_score", 0.0) or 0.0), 4),
-            "created_at": t.created_at.isoformat() if t.created_at else None,
-            "closed_at": t.closed_at.isoformat() if t.closed_at else None,
-            "close_reason": t.close_reason,
-        })
-
-    # Summary stats
-    closed = [t for t in trades if t.result in ("win", "loss")]
-    wins = sum(1 for t in closed if t.result == "win")
-    losses = sum(1 for t in closed if t.result == "loss")
-    winrate = (wins / len(closed) * 100) if closed else 0
-
-    return {
-        "generated_at": datetime.now(UTC).isoformat(),
-        "scope": scope,
-        "active_tag": active_tag if scope == "active" and active_tag else None,
-        "active_since": active_since.isoformat() if scope == "active" and active_since is not None else None,
-        "total": len(serialized),
-        "summary": {
-            "total_closed": len(closed),
-            "wins": wins,
-            "losses": losses,
-            "winrate": round(winrate, 1),
-            "open_trades": sum(1 for t in trades if t.result == "open"),
-        },
-        "signals": serialized,
     }
