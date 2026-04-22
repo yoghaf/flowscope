@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, ChevronDown, Download, Filter } from "lucide-react";
+import { Bell, Check, ChevronDown, Download, Filter, Layers } from "lucide-react";
 
 import SignalBadge from "@/app/components/SignalBadge";
 import { api } from "@/lib/api";
@@ -19,6 +19,7 @@ const FILTER_OPTIONS: Array<{ value: SignalType; label: string }> = [
   { value: "Long Squeeze", label: "Long Squeeze" },
   { value: "Neutral", label: "Neutral" },
 ];
+const STRATEGY_OPTIONS = ["All", "v2_balanced"] as const;
 
 export default function AlertsPage() {
   const queryClient = useQueryClient();
@@ -40,6 +41,7 @@ export default function AlertsPage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [telegramMessage, setTelegramMessage] = useState<string | null>(null);
   const [testingTelegram, setTestingTelegram] = useState(false);
+  const [strategyFilter, setStrategyFilter] = useState<string>("All");
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["alerts", userId, timeframeFilters.join(",")],
@@ -346,6 +348,23 @@ export default function AlertsPage() {
                   </div>
                 ) : null}
               </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Layers className="h-4 w-4 text-muted-foreground" />
+              <label className="text-sm font-medium text-muted-foreground">Strategy:</label>
+              <select
+                id="strategy-filter"
+                value={strategyFilter}
+                onChange={(e) => setStrategyFilter(e.target.value)}
+                className="min-w-[150px] rounded-xl border border-white/10 bg-[#0B0F14] px-4 py-2 font-medium text-foreground transition-all hover:border-primary/40 focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/50"
+              >
+                {STRATEGY_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt === "All" ? "All Versions" : opt}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 

@@ -121,12 +121,14 @@ export const api = {
     symbol?: string;
     timeframe?: Timeframe | "ALL";
     setupType?: string;
+    scope?: "active" | "all";
     capitalPerTrade: number;
   }): Promise<PerformanceTradeTableResponse> {
     return fetchJson<PerformanceTradeTableResponse>("/performance/report/data", {
       symbol: query.symbol ?? "ALL",
       timeframe: query.timeframe ?? "ALL",
       setup_type: query.setupType,
+      scope: query.scope ?? "all",
       capital_per_trade: query.capitalPerTrade,
     });
   },

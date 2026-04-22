@@ -216,6 +216,7 @@ export default function PerformancePage() {
       api.getPerformanceReportData({
         symbol: "ALL",
         timeframe: "ALL",
+        scope: "all",
         capitalPerTrade: parsedCapital,
       }),
     staleTime: 60_000,
