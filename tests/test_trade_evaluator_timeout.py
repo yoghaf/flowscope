@@ -275,7 +275,7 @@ def test_trade_evaluator_checks_stop_after_entry_even_without_retouching_entry()
 def test_trade_evaluator_fail_fast_exits_small_loss_when_flow_drops() -> None:
     async def run() -> None:
         entry_touch_time = datetime(2026, 3, 30, 0, 0, 0, tzinfo=UTC)
-        review_bucket_time = datetime(2026, 3, 30, 0, 45, 0, tzinfo=UTC)
+        review_bucket_time = datetime(2026, 3, 30, 1, 0, 0, tzinfo=UTC)
         trade = SimpleNamespace(
             id=4,
             symbol="ARIAUSDT",
@@ -331,3 +331,129 @@ def test_trade_evaluator_fail_fast_exits_small_loss_when_flow_drops() -> None:
         assert payload["closed_at"] == review_bucket_time
 
     asyncio.run(run())
+
+
+def test_trade_evaluator_continuation_trail_updates_and_logs_trade_analytics() -> None:
+    async def run() -> None:
+        entry_touch_time = datetime(2026, 3, 30, 0, 0, 0, tzinfo=UTC)
+        tp1_bucket_time = datetime(2026, 3, 30, 0, 15, 0, tzinfo=UTC)
+        trail_update_time = datetime(2026, 3, 30, 0, 30, 0, tzinfo=UTC)
+        trail_exit_time = datetime(2026, 3, 30, 0, 45, 0, tzinfo=UTC)
+        trade = SimpleNamespace(
+            id=5,
+            symbol="ARIAUSDT",
+            timeframe="15m",
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Triggered",
+            result="open",
+            timestamp=entry_touch_time - timedelta(minutes=15),
+            updated_at=entry_touch_time,
+            entry_price=100.0,
+            invalidation_price=95.0,
+            target_price_1=105.0,
+            target_price_2=110.0,
+            tp1_hit=False,
+            trailing_stop_price=95.0,
+            pnl_pct=0.0,
+            max_profit_pct=0.0,
+            max_drawdown_pct=0.0,
+            entry_touched_at=entry_touch_time,
+            entry_flow_alignment=0.80,
+            closed_at=None,
+            close_reason=None,
+            entry_notification_sent_at=None,
+            last_scale_in_at=None,
+            entry_features={"atr_15m": 0.01},
+        )
+        buckets = [
+            make_bucket(
+                tp1_bucket_time,
+                timeframe="15m",
+                open_price=100.2,
+                high_price=105.6,
+                low_price=100.4,
+                close_price=104.8,
+            ),
+            make_bucket(
+                trail_update_time,
+                timeframe="15m",
+                open_price=104.8,
+                high_price=106.2,
+                low_price=103.8,
+                close_price=105.2,
+            ),
+            make_bucket(
+                trail_exit_time,
+                timeframe="15m",
+                open_price=105.0,
+                high_price=105.4,
+                low_price=102.9,
+                close_price=103.1,
+            ),
+        ]
+        database = FakeDatabase(trade, buckets=buckets)
+        signal_service = FakeSignalService(buckets, price=103.1, flow_alignment=0.78)
+        settings = Settings(entry_touch_timeout_buckets=2)
+
+        evaluator = TradeEvaluator(settings, database, signal_service)
+        await evaluator.evaluate()
+
+        assert len(database.updates) == 1
+        _, payload = database.updates[0]
+        assert payload["result"] == "win"
+        assert payload["close_reason"] == "Continuation Trail Stop"
+        assert payload["tp1_hit"] is True
+        assert payload["trailing_stop_price"] > trade.entry_price
+        assert payload["entry_features"]["tp1_pnl_pct"] == 5.0
+        assert payload["entry_features"]["mae_pct"] == 0.0
+        assert payload["entry_features"]["mfe_pct"] == 5.2
+        assert payload["entry_features"]["mfe_r"] == 1.04
+        assert payload["entry_features"]["realized_r"] > 0.79
+        assert payload["entry_features"]["entry_efficiency"] == 1.0
+
+    asyncio.run(run())
+
+
+def test_continuation_trailing_buffer_respects_bucket_mfe_distribution() -> None:
+    evaluator = TradeEvaluator(Settings(), FakeDatabase(SimpleNamespace(id=1)), FakeSignalService([], price=1.0))
+
+    loose_multiplier = evaluator._continuation_trailing_buffer_multiplier(
+        entry_features={
+            "decision_volatility_regime": "Medium",
+            "structure_strength": 0.82,
+            "continuation_bucket_avg_mfe_r": 2.10,
+        }
+    )
+    tight_multiplier = evaluator._continuation_trailing_buffer_multiplier(
+        entry_features={
+            "decision_volatility_regime": "Medium",
+            "structure_strength": 0.82,
+            "continuation_bucket_avg_mfe_r": 0.80,
+        }
+    )
+
+    assert loose_multiplier > tight_multiplier
+
+
+def test_continuation_trailing_buffer_widens_for_elite_history_ready() -> None:
+    evaluator = TradeEvaluator(Settings(), FakeDatabase(SimpleNamespace(id=1)), FakeSignalService([], price=1.0))
+
+    elite_multiplier = evaluator._continuation_trailing_buffer_multiplier(
+        entry_features={
+            "decision_volatility_regime": "Medium",
+            "structure_strength": 0.82,
+            "continuation_elite_boost_active": True,
+            "continuation_history_ready": True,
+        }
+    )
+    baseline_multiplier = evaluator._continuation_trailing_buffer_multiplier(
+        entry_features={
+            "decision_volatility_regime": "Medium",
+            "structure_strength": 0.82,
+            "continuation_elite_boost_active": False,
+            "continuation_history_ready": True,
+        }
+    )
+
+    assert elite_multiplier > baseline_multiplier

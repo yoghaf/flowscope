@@ -257,6 +257,16 @@ class ExecutionEngine:
             return "Breakout" if breakout_valid else "Breakout Watch"
         return "Accumulation Break" if breakout_valid else "Accumulation Watch"
 
+    @staticmethod
+    def _squeeze_strength(metrics: FlowMetrics, timeframe: str) -> float:
+        compression = max(0.0, min(getattr(metrics, f"compression_score_{timeframe}", 0.0), 1.0))
+        oi_pct = max(0.0, min(getattr(metrics, f"oi_percentile_{timeframe}", 0.0), 1.0))
+        funding = abs(getattr(metrics, f"funding_level_{timeframe}", 0.0))
+
+        base_strength = (compression + oi_pct) / 2.0
+        funding_bonus = 0.10 if funding >= 0.00003 else 0.0
+        return max(0.0, min(base_strength + funding_bonus, 1.0))
+
     def build_execution(
         self,
         action: ActionAssessment,
@@ -336,13 +346,9 @@ class ExecutionEngine:
         if action.setup_type == "Trap":
             size_multiplier = 0.5
         elif action.setup_type == "Squeeze":
-            comp = getattr(metrics, f"compression_score_{timeframe}", 0.0)
-            oi_pct = getattr(metrics, f"oi_percentile_{timeframe}", 0.0)
-            funding = abs(getattr(metrics, f"funding_level_{timeframe}", 0.0))
-            fund_score = min(1.0, funding / 0.00030)
-            sq_strength = (comp + oi_pct + fund_score) / 3.0
+            sq_strength = self._squeeze_strength(metrics, timeframe)
             base_size = 0.7 + (0.55 * sq_strength)
-            size_multiplier = round(max(0.7, min(1.25, base_size)), 2)
+            size_multiplier = round(max(0.7, min(1.25, base_size)) * 0.5, 2)
         else:
             size_multiplier = 1.0
 

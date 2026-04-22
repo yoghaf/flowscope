@@ -184,6 +184,26 @@ class SignalService:
         self._running = False
         self.ready_since: dict[tuple[str, str, str], datetime] = {}
         self.pending_followthrough: dict[tuple[str, str], dict[str, Any]] = {}
+        self.pending_squeeze: dict[tuple[str, str], dict[str, Any]] = {}
+        self.pending_squeeze_htf: dict[str, dict[str, Any]] = {}
+        self.continuation_feedback_history: dict[str, deque[dict[str, float | int | str]]] = defaultdict(
+            lambda: deque(maxlen=24)
+        )
+        self.continuation_cluster_history: dict[
+            tuple[str, str, str],
+            deque[dict[str, float | int | str]],
+        ] = defaultdict(lambda: deque(maxlen=settings.continuation_cluster_history_max_samples))
+        self.continuation_feedback_cache: dict[str, dict[str, float | int]] = {}
+        self.continuation_feedback_bucket_cache: dict[tuple[str, str], dict[str, float | int | str]] = {}
+        self.continuation_expectancy_segment_cache: dict[
+            tuple[str, str, str],
+            dict[str, float | int | str],
+        ] = {}
+        self.continuation_cluster_cache: dict[
+            tuple[str, str, str],
+            dict[str, float | int | str],
+        ] = {}
+        self.continuation_feedback_recorded_ids: set[int] = set()
         self.snapshot_cache: dict[str, AssetSnapshot] = {}
         self.snapshot_history: dict[tuple[str, str], deque[str]] = defaultdict(
             lambda: deque(maxlen=settings.history_retention_points)
@@ -225,6 +245,7 @@ class SignalService:
                     (item.setup_type, item.regime, item.volatility): item.expectancy
                     for item in self.performance_snapshot.conditions
                 }
+            await self._refresh_continuation_feedback_cache()
             self._schedule_task(self._snapshot_loop(), "snapshot_loop")
             self._schedule_task(self._ping_loop(), "ping_loop")
             if self.settings.realtime_price_stream_enabled:
@@ -564,6 +585,7 @@ class SignalService:
                         (item.setup_type, item.regime, item.volatility): item.expectancy
                         for item in self.performance_snapshot.conditions
                     }
+                await self._refresh_continuation_feedback_cache()
             except Exception as exc:
                 logger.warning("Trade evaluator failed: %s", exc)
             await asyncio.sleep(self.settings.trade_evaluator_interval_seconds)
@@ -982,17 +1004,50 @@ class SignalService:
             cache_key = (symbol, timeframe)
             squeeze_memory_active = self.squeeze_memory.get(cache_key, 0) > 0
 
-            # Check squeeze setup conditions directly from flow metrics
-            compression = getattr(flow_metrics, f"compression_score_{timeframe}", 0.0) or 0.0
-            oi_pct = getattr(flow_metrics, f"oi_percentile_{timeframe}", 0.0) or 0.0
-            funding_lvl = getattr(flow_metrics, f"funding_level_{timeframe}", 0.0) or 0.0
-            price_chg = abs(getattr(flow_metrics, f"price_change_{timeframe}", 0.0) or 0.0)
-            price_flat_threshold = float(profile.get("price_flat", 0.005))
+            local_squeeze_snapshot = self._squeeze_setup_snapshot(flow_metrics, timeframe)
+            squeeze_htf_context = (
+                self._sync_pending_squeeze_htf(
+                    symbol=symbol,
+                    flow_metrics=flow_metrics,
+                    now=now,
+                )
+                if timeframe == "15m"
+                else None
+            )
+            squeeze_snapshot = local_squeeze_snapshot
+            if squeeze_htf_context is not None:
+                squeeze_snapshot = {
+                    **local_squeeze_snapshot,
+                    "source_timeframe": "1h",
+                    "trigger_timeframe": timeframe,
+                    "htf_active": bool(squeeze_htf_context.get("active")),
+                    "htf_setup": bool(squeeze_htf_context.get("setup")),
+                    "htf_near_setup": bool(squeeze_htf_context.get("near_setup")),
+                    "htf_bias": str(squeeze_htf_context.get("bias", "Neutral")),
+                    "htf_strength": round(float(squeeze_htf_context.get("strength", 0.0)), 4),
+                    "htf_candles_elapsed": int(squeeze_htf_context.get("candles_elapsed", 0)),
+                }
 
-            is_compressed = compression >= 0.40 or (price_chg <= price_flat_threshold * 1.5)
-            is_oi_crowded = oi_pct >= 0.65
-            is_funding_skewed = abs(funding_lvl) >= 0.00005
-            squeeze_setup_detected = is_compressed and is_oi_crowded and is_funding_skewed
+            if not hasattr(self, "near_squeeze_counter"):
+                self.near_squeeze_counter = 0
+
+            positioning.debug_trace["squeeze_setup"] = squeeze_snapshot
+            if squeeze_htf_context is not None:
+                positioning.debug_trace["squeeze_setup_htf"] = squeeze_htf_context
+
+            if timeframe == "15m":
+                near_squeeze_detected = bool(squeeze_htf_context.get("near_setup")) if squeeze_htf_context is not None else False
+            else:
+                near_squeeze_detected = bool(squeeze_snapshot["near_setup"])
+            if near_squeeze_detected:
+                self.near_squeeze_counter += 1
+
+            if timeframe == "15m":
+                squeeze_setup_detected = bool(squeeze_htf_context.get("active")) if squeeze_htf_context is not None else False
+            elif timeframe == "1h":
+                squeeze_setup_detected = False
+            else:
+                squeeze_setup_detected = bool(squeeze_snapshot["setup"])
 
             if squeeze_setup_detected:
                 self.squeeze_memory[cache_key] = 16
@@ -1000,97 +1055,80 @@ class SignalService:
                 self.squeeze_memory[cache_key] -= 1
                 squeeze_memory_active = self.squeeze_memory[cache_key] > 0
 
-            market_interpretation = self.market_interpreter.evaluate(
-                bucket=bucket,
-                metrics=flow_metrics,
+            squeeze_confirmation_pending = False
+            squeeze_confirmation_confirmed = False
+            pending_squeeze_active = False
+
+            pending_squeeze, action, market_interpretation, squeeze_confirmation_pending, squeeze_confirmation_confirmed, pending_squeeze_reject_reason = self._resolve_pending_squeeze(
+                symbol=symbol,
                 timeframe=timeframe,
-                history=history,
-                positioning=positioning,
-                state_assessment=state_assessment,
+                bucket=bucket,
+                flow_metrics=flow_metrics,
                 higher_timeframe_trend=higher_tf_trend,
                 higher_timeframe_control=higher_tf_control,
-                squeeze_memory_active=squeeze_memory_active,
             )
-
-            positioning.debug_trace["market_interpretation"] = market_interpretation.to_dict()
-            positioning = self._with_reliability(positioning, market_interpretation.clarity_confidence)
-            if market_interpretation.action == "NO TRADE":
-                self._clear_ready_states(symbol, timeframe)
-                updated_states[timeframe] = self._mark_state_with_status(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    bucket=bucket,
-                    flow_metrics=flow_metrics,
-                    now=now,
-                    reason="interpreter_no_trade",
-                    signal_status="NO_SIGNAL",
-                    data_status="VALID",
-                    market_state=state_assessment.state,
-                    state_confidence=state_assessment.confidence,
-                    state_probabilities=state_assessment.probabilities,
-                    score=self._signal_score(
-                        positioning=positioning,
-                        state_assessment=state_assessment,
-                        sharpness=sharpness,
-                    ),
-                    position_intent=positioning.intent,
-                    oi_intensity=positioning.oi_intensity,
-                    position_quality=positioning.position_quality,
-                    decision_type=positioning.decision,
-                    reliability_score=positioning.reliability_score,
-                    priority_multiplier=positioning.priority_multiplier,
-                    market_interpretation=market_interpretation.to_dict(),
-                    previous_state=previous_state,
-                )
-                self.last_timeframe_update[(symbol, timeframe)] = now
-                continue
-            action: ActionAssessment | None = self.execution_engine.build_action(
-                positioning=positioning,
-                state=state_assessment,
-                metrics=flow_metrics,
-                timeframe=timeframe,
-                bucket=bucket,
-                profile=profile,
-                market_interpretation=market_interpretation,
-            )
-            if action is None:
-                positioning = self._fallback_positioning_from_state(
-                    state_assessment=state_assessment,
-                    bucket=bucket,
-                    metrics=flow_metrics,
-                    timeframe=timeframe,
-                    reason="action_none",
-                )
-                if positioning is None:
+            if pending_squeeze is not None:
+                pending_squeeze_active = True
+                positioning.debug_trace["pending_squeeze"] = pending_squeeze
+                positioning.debug_trace["market_interpretation"] = market_interpretation.to_dict()
+                positioning = self._with_reliability(positioning, market_interpretation.clarity_confidence)
+                if pending_squeeze_reject_reason is not None and action is not None:
                     self._clear_ready_states(symbol, timeframe)
+                    interpretation_payload = market_interpretation.to_dict()
+                    interpretation_payload["entry_filters"] = {
+                        "passed": False,
+                        "stage": "squeeze_confirmation",
+                        "reasons": [pending_squeeze_reject_reason],
+                    }
                     updated_states[timeframe] = self._mark_state_with_status(
                         symbol=symbol,
                         timeframe=timeframe,
                         bucket=bucket,
                         flow_metrics=flow_metrics,
                         now=now,
-                        reason="action_none",
+                        reason=pending_squeeze_reject_reason,
                         signal_status="NO_SIGNAL",
                         data_status="VALID",
                         market_state=state_assessment.state,
                         state_confidence=state_assessment.confidence,
                         state_probabilities=state_assessment.probabilities,
-                        score=self._activity_score(flow_metrics, timeframe, profile),
-                        market_interpretation=market_interpretation.to_dict(),
+                        score=self._signal_score(
+                            positioning=positioning,
+                            state_assessment=state_assessment,
+                            sharpness=sharpness,
+                        ),
+                        position_intent=positioning.intent,
+                        oi_intensity=positioning.oi_intensity,
+                        position_quality=positioning.position_quality,
+                        decision_type=positioning.decision,
+                        reliability_score=positioning.reliability_score,
+                        priority_multiplier=positioning.priority_multiplier,
+                        action_bias=action.bias,
+                        action_status=action.status,
+                        action_confidence_label=action.confidence_label,
+                        action_opportunity_score=action.opportunity_score,
+                        setup_type=action.setup_type,
+                        market_interpretation=interpretation_payload,
                         previous_state=previous_state,
                     )
                     self.last_timeframe_update[(symbol, timeframe)] = now
                     continue
-                action = self.execution_engine.build_action(
-                    positioning=positioning,
-                    state=state_assessment,
+            else:
+                market_interpretation = self.market_interpreter.evaluate(
+                    bucket=bucket,
                     metrics=flow_metrics,
                     timeframe=timeframe,
-                    bucket=bucket,
-                    profile=profile,
-                    market_interpretation=market_interpretation,
+                    history=history,
+                    positioning=positioning,
+                    state_assessment=state_assessment,
+                    higher_timeframe_trend=higher_tf_trend,
+                    higher_timeframe_control=higher_tf_control,
+                    squeeze_memory_active=squeeze_memory_active,
                 )
-                if action is None:
+
+                positioning.debug_trace["market_interpretation"] = market_interpretation.to_dict()
+                positioning = self._with_reliability(positioning, market_interpretation.clarity_confidence)
+                if market_interpretation.action == "NO TRADE":
                     self._clear_ready_states(symbol, timeframe)
                     updated_states[timeframe] = self._mark_state_with_status(
                         symbol=symbol,
@@ -1098,7 +1136,7 @@ class SignalService:
                         bucket=bucket,
                         flow_metrics=flow_metrics,
                         now=now,
-                        reason="action_none",
+                        reason="interpreter_no_trade",
                         signal_status="NO_SIGNAL",
                         data_status="VALID",
                         market_state=state_assessment.state,
@@ -1120,6 +1158,98 @@ class SignalService:
                     )
                     self.last_timeframe_update[(symbol, timeframe)] = now
                     continue
+                action = self.execution_engine.build_action(
+                    positioning=positioning,
+                    state=state_assessment,
+                    metrics=flow_metrics,
+                    timeframe=timeframe,
+                    bucket=bucket,
+                    profile=profile,
+                    market_interpretation=market_interpretation,
+                )
+                if action is None:
+                    positioning = self._fallback_positioning_from_state(
+                        state_assessment=state_assessment,
+                        bucket=bucket,
+                        metrics=flow_metrics,
+                        timeframe=timeframe,
+                        reason="action_none",
+                    )
+                    if positioning is None:
+                        self._clear_ready_states(symbol, timeframe)
+                        updated_states[timeframe] = self._mark_state_with_status(
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            bucket=bucket,
+                            flow_metrics=flow_metrics,
+                            now=now,
+                            reason="action_none",
+                            signal_status="NO_SIGNAL",
+                            data_status="VALID",
+                            market_state=state_assessment.state,
+                            state_confidence=state_assessment.confidence,
+                            state_probabilities=state_assessment.probabilities,
+                            score=self._activity_score(flow_metrics, timeframe, profile),
+                            market_interpretation=market_interpretation.to_dict(),
+                            previous_state=previous_state,
+                        )
+                        self.last_timeframe_update[(symbol, timeframe)] = now
+                        continue
+                    action = self.execution_engine.build_action(
+                        positioning=positioning,
+                        state=state_assessment,
+                        metrics=flow_metrics,
+                        timeframe=timeframe,
+                        bucket=bucket,
+                        profile=profile,
+                        market_interpretation=market_interpretation,
+                    )
+                    if action is None:
+                        self._clear_ready_states(symbol, timeframe)
+                        updated_states[timeframe] = self._mark_state_with_status(
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            bucket=bucket,
+                            flow_metrics=flow_metrics,
+                            now=now,
+                            reason="action_none",
+                            signal_status="NO_SIGNAL",
+                            data_status="VALID",
+                            market_state=state_assessment.state,
+                            state_confidence=state_assessment.confidence,
+                            state_probabilities=state_assessment.probabilities,
+                            score=self._signal_score(
+                                positioning=positioning,
+                                state_assessment=state_assessment,
+                                sharpness=sharpness,
+                            ),
+                            position_intent=positioning.intent,
+                            oi_intensity=positioning.oi_intensity,
+                            position_quality=positioning.position_quality,
+                            decision_type=positioning.decision,
+                            reliability_score=positioning.reliability_score,
+                            priority_multiplier=positioning.priority_multiplier,
+                            market_interpretation=market_interpretation.to_dict(),
+                            previous_state=previous_state,
+                        )
+                        self.last_timeframe_update[(symbol, timeframe)] = now
+                        continue
+
+            if (
+                not pending_squeeze_active
+                and timeframe == "15m"
+                and squeeze_htf_context is not None
+                and bool(squeeze_htf_context.get("active"))
+                and action.setup_type == "Squeeze"
+                and str(squeeze_htf_context.get("bias", "Neutral")) in {"Bullish", "Bearish"}
+                and action.bias != str(squeeze_htf_context["bias"])
+            ):
+                positioning.debug_trace["squeeze_bias_override"] = {
+                    "from": action.bias,
+                    "to": str(squeeze_htf_context["bias"]),
+                    "source_timeframe": "1h",
+                }
+                action = self._action_with_bias(action, str(squeeze_htf_context["bias"]))
 
             scenario = self.context_bridge.assess(
                 flow_metrics=flow_metrics,
@@ -1146,6 +1276,8 @@ class SignalService:
                         flow_metrics=flow_metrics,
                         timeframe=timeframe,
                         clarity_confidence=market_interpretation.clarity_confidence,
+                        market_interpretation=market_interpretation,
+                        scenario_score=scenario.score,
                         state_name=state_assessment.state,
                     )
                 )
@@ -1200,16 +1332,28 @@ class SignalService:
                 confidence=positioning.reliability_score,
             )
             
-            if execution is not None:
-                if scenario.label == "weak_propulsion":
-                    execution.position_size_multiplier *= 0.5
-                elif scenario.label == "mixed_signals":
-                    execution.position_size_multiplier *= 0.5
-                    
-                execution.position_size_multiplier *= min(1.0, max(0.0, market_interpretation.flow_alignment + 0.15))
-                # Apply Portfolio Global multiplier
-                global_multiplier = self.portfolio_manager.get_global_size_multiplier()
-                execution.position_size_multiplier *= global_multiplier
+            continuation_feedback_profile = self._apply_execution_size_modifiers(
+                execution=execution,
+                scenario_label=scenario.label,
+                state_name=state_assessment.state,
+                scenario_score=scenario.score,
+                flow_alignment=market_interpretation.flow_alignment,
+                action=action,
+                market_interpretation=market_interpretation,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+            )
+            continuation_exit_profile = self._apply_continuation_exit_modifiers(
+                execution=execution,
+                action=action,
+                market_interpretation=market_interpretation,
+                scenario_score=scenario.score,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+            )
+            if pending_squeeze_active and squeeze_confirmation_pending and execution is not None:
+                execution.entry_type = "Squeeze Watch"
+                execution.breakout_valid = False
 
             post_action_filter_reasons: list[str] = []
             post_action_filter_reasons.extend(
@@ -1286,6 +1430,18 @@ class SignalService:
                 execution=execution,
                 timeframe=timeframe,
             )
+            if not pending_squeeze_active:
+                action, squeeze_confirmation_pending = self._arm_pending_squeeze(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    bucket=bucket,
+                    action=action,
+                    execution=execution,
+                    market_interpretation=market_interpretation,
+                )
+            if squeeze_confirmation_pending and execution is not None:
+                execution.entry_type = "Squeeze Watch"
+                execution.breakout_valid = False
             action, pullback_acceptance_pending = self._apply_continuation_pullback_acceptance_gate(
                 symbol=symbol,
                 timeframe=timeframe,
@@ -1383,14 +1539,18 @@ class SignalService:
                     "entry_filters": {
                         "passed": True,
                         "stage": (
-                            "pullback_acceptance"
+                            "squeeze_confirmation"
+                            if squeeze_confirmation_pending
+                            else "pullback_acceptance"
                             if pullback_acceptance_pending
                             else "follow_through"
                             if followthrough_pending
                             else "pass"
                         ),
                         "reasons": (
-                            ["awaiting_pullback_acceptance"]
+                            ["awaiting_squeeze_confirmation"]
+                            if squeeze_confirmation_pending
+                            else ["awaiting_pullback_acceptance"]
                             if pullback_acceptance_pending
                             else ["awaiting_follow_through"]
                             if followthrough_pending
@@ -2732,6 +2892,95 @@ class SignalService:
         execution_entry_type = getattr(execution, "entry_type", None)
         if execution_entry_type:
             features["entry_type"] = execution_entry_type
+        features["position_size_multiplier"] = round(float(getattr(execution, "position_size_multiplier", 1.0) or 1.0), 4)
+        features["strategy_version"] = getattr(self.settings, "strategy_version", "v2_balanced")
+        _flow_align = float(features.get("flow_alignment") or market_interpretation.flow_alignment or 0.0)
+        _struct_str = float(features.get("structure_strength") or market_interpretation.structure_strength or 0.0)
+        _clarity = float(features.get("clarity_confidence") or clarity_confidence or 0.0)
+        features["confidence_score"] = round(
+            max(0.0, min(1.0, 0.30 * _flow_align + 0.50 * _struct_str + 0.20 * _clarity)),
+            4,
+        )
+
+        logger.info(
+            "signal_generated version=%s confidence=%.4f size=%.4f symbol=%s timeframe=%s setup=%s",
+            features["strategy_version"],
+            clarity_confidence,
+            features["position_size_multiplier"],
+            symbol,
+            timeframe,
+            action.setup_type,
+        )
+        if action.setup_type == "Continuation" and entry_price is not None and execution.invalidation is not None:
+            features["decision_volatility_regime"] = str(features.get("decision_volatility_regime") or volatility)
+            risk_per_unit = abs(entry_price - execution.invalidation)
+            if risk_per_unit > VALUE_EPSILON:
+                if execution.target_1 is not None:
+                    features["planned_tp1_r"] = round(abs(execution.target_1 - entry_price) / risk_per_unit, 4)
+                if execution.target_2 is not None:
+                    features["planned_tp2_r"] = round(abs(execution.target_2 - entry_price) / risk_per_unit, 4)
+            expectancy_profile = self._continuation_expectancy_profile(
+                timeframe=timeframe,
+                clarity_confidence=float(features.get("clarity_confidence") or clarity_confidence or 0.0),
+                flow_alignment=float(features.get("flow_alignment") or market_interpretation.flow_alignment or 0.0),
+                structure_strength=float(features.get("structure_strength") or market_interpretation.structure_strength or 0.0),
+                scenario_label=str(features.get("scenario_label") or ""),
+                state_name=str(features.get("state") or ""),
+                scenario_score=float(features.get("scenario_score") or 0.0),
+                flow_metrics=flow_metrics,
+            )
+            features["continuation_feedback_size_multiplier"] = round(float(expectancy_profile.get("size_multiplier", 1.0) or 1.0), 4)
+            features["continuation_feedback_entry_efficiency"] = round(float(expectancy_profile.get("avg_entry_efficiency", 0.0) or 0.0), 4)
+            features["continuation_feedback_mae_r"] = round(float(expectancy_profile.get("avg_mae_r", 0.0) or 0.0), 4)
+            features["continuation_feedback_mfe_r"] = round(float(expectancy_profile.get("avg_mfe_r", 0.0) or 0.0), 4)
+            features["continuation_feedback_loss_streak"] = int(expectancy_profile.get("recent_loss_streak", 0) or 0)
+            features["continuation_history_count"] = int(expectancy_profile.get("history_count", 0) or 0)
+            features["continuation_history_ready"] = bool(int(expectancy_profile.get("history_ready", 0) or 0))
+            features["continuation_confidence_score"] = round(float(expectancy_profile.get("confidence_score", 0.0) or 0.0), 4)
+            features["continuation_live_confidence_score"] = round(
+                float(expectancy_profile.get("live_confidence_score", 0.0) or 0.0),
+                4,
+            )
+            features["continuation_live_confidence_multiplier"] = round(
+                float(expectancy_profile.get("live_confidence_multiplier", 1.0) or 1.0),
+                4,
+            )
+            features["continuation_quality_score"] = round(float(expectancy_profile.get("quality_score", 0.0) or 0.0), 4)
+            features["continuation_quality_size_multiplier"] = round(
+                float(expectancy_profile.get("quality_size_multiplier", 1.0) or 1.0),
+                4,
+            )
+            features["continuation_quality_ready"] = bool(int(expectancy_profile.get("quality_ready", 0) or 0))
+            features["continuation_confidence_bucket"] = str(expectancy_profile.get("confidence_bucket", "low") or "low")
+            features["continuation_bucket_sample_count"] = int(expectancy_profile.get("bucket_sample_count", 0) or 0)
+            features["continuation_bucket_avg_realized_r"] = round(float(expectancy_profile.get("bucket_avg_realized_r", 0.0) or 0.0), 4)
+            features["continuation_bucket_winrate"] = round(float(expectancy_profile.get("bucket_winrate", 0.0) or 0.0), 4)
+            features["continuation_bucket_avg_mfe_r"] = round(float(expectancy_profile.get("bucket_avg_mfe_r", 0.0) or 0.0), 4)
+            features["continuation_bucket_avg_mae_r"] = round(float(expectancy_profile.get("bucket_avg_mae_r", 0.0) or 0.0), 4)
+            features["continuation_bucket_size_multiplier"] = round(float(expectancy_profile.get("bucket_size_multiplier", 1.0) or 1.0), 4)
+            features["continuation_bucket_expectancy_multiplier"] = round(float(expectancy_profile.get("bucket_expectancy_multiplier", 1.0) or 1.0), 4)
+            features["continuation_segment_sample_count"] = int(expectancy_profile.get("segment_sample_count", 0) or 0)
+            features["continuation_segment_avg_realized_r"] = round(float(expectancy_profile.get("segment_avg_realized_r", 0.0) or 0.0), 4)
+            features["continuation_segment_winrate"] = round(float(expectancy_profile.get("segment_winrate", 0.0) or 0.0), 4)
+            features["continuation_segment_regime"] = str(expectancy_profile.get("segment_regime", regime) or regime)
+            features["continuation_segment_size_multiplier"] = round(float(expectancy_profile.get("segment_size_multiplier", 1.0) or 1.0), 4)
+            features["continuation_kill_zone_active"] = bool(int(expectancy_profile.get("kill_zone_active", 0) or 0))
+            features["continuation_elite_boost_active"] = bool(int(expectancy_profile.get("elite_boost_active", 0) or 0))
+            features["continuation_cluster_context"] = str(expectancy_profile.get("cluster_context", "Unknown") or "Unknown")
+            features["continuation_cluster_volatility"] = str(expectancy_profile.get("cluster_volatility", "Unknown") or "Unknown")
+            features["continuation_cluster_sample_count"] = int(expectancy_profile.get("cluster_sample_count", 0) or 0)
+            features["continuation_cluster_avg_realized_r"] = round(
+                float(expectancy_profile.get("cluster_avg_realized_r", 0.0) or 0.0),
+                4,
+            )
+            features["continuation_cluster_winrate"] = round(float(expectancy_profile.get("cluster_winrate", 0.0) or 0.0), 4)
+            features["continuation_cluster_size_multiplier"] = round(
+                float(expectancy_profile.get("cluster_size_multiplier", 1.0) or 1.0),
+                4,
+            )
+            features["continuation_cluster_penalty_active"] = bool(
+                int(expectancy_profile.get("cluster_penalty_active", 0) or 0)
+            )
 
         payload = {
             "symbol": symbol,
@@ -3626,6 +3875,12 @@ class SignalService:
             body.append(f"{quality_emoji} Kualitas: <b>{quality}</b> | Risiko: <b>{risk_level}</b>")
             body.append("")
 
+        # --- Strategy Info ---
+        strategy_version = getattr(self.settings, "strategy_version", "v2_balanced")
+        size_multiplier = getattr(state.execution, "position_size_multiplier", 1.0) if state.execution else 1.0
+        body.append(f"📐 Size: <b>{size_multiplier:.2f}x</b> | Strategy: <code>{self.telegram_notifier.escape(strategy_version)}</code>")
+        body.append("")
+
         body.append(f"🔗 <a href='{detail_url}'>Buka Chart FlowScope</a>")
 
         return "\n".join(body)
@@ -3841,6 +4096,68 @@ class SignalService:
             "volume": 0.0,
             "compression": 0.0,
             "funding": 0.0,
+        }
+
+    @staticmethod
+    def _squeeze_setup_snapshot(
+        metrics: FlowMetrics,
+        timeframe: str,
+    ) -> dict[str, float | bool | str]:
+        profile = TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])
+        compression = SignalService._metric_or_zero(getattr(metrics, f"compression_score_{timeframe}", 0.0))
+        oi_pct = SignalService._metric_or_zero(getattr(metrics, f"oi_percentile_{timeframe}", 0.0))
+        funding_level = SignalService._metric_or_zero(getattr(metrics, f"funding_level_{timeframe}", 0.0))
+        ls_delta = SignalService._metric_or_zero(getattr(metrics, f"long_short_ratio_delta_{timeframe}", 0.0))
+
+        # compression_score is inverted in this repo: 1.0 means the range is the tightest.
+        # Phase 6's "compression < 0.55" intent therefore maps to compression_score >= 0.45.
+        compression_gate = 0.45
+        oi_gate = 0.55
+        near_compression_gate = max(compression_gate - 0.10, 0.20)
+        near_oi_gate = max(oi_gate - 0.10, 0.45)
+        imbalance_gate = max(float(profile.get("ls_delta", 0.03)), 0.01)
+        funding_bias_gate = 0.00003
+
+        ls_imbalance = abs(ls_delta) >= imbalance_gate
+        funding_bias = abs(funding_level) >= funding_bias_gate
+        imbalance = ls_imbalance or funding_bias
+        imbalance_source = (
+            "funding+ls_delta"
+            if funding_bias and ls_imbalance
+            else "funding"
+            if funding_bias
+            else "ls_delta"
+            if ls_imbalance
+            else "none"
+        )
+        bias = (
+            "Bearish"
+            if funding_bias and funding_level > 0
+            else "Bullish"
+            if funding_bias and funding_level < 0
+            else "Bearish"
+            if ls_imbalance and ls_delta > 0
+            else "Bullish"
+            if ls_imbalance and ls_delta < 0
+            else "Neutral"
+        )
+
+        funding_bonus = 0.10 if funding_bias else 0.0
+        base_strength = (compression + oi_pct) / 2.0
+        squeeze_strength = max(0.0, min(base_strength + funding_bonus, 1.0))
+
+        return {
+            "compression": round(compression, 4),
+            "oi_percentile": round(oi_pct, 4),
+            "funding_level": round(funding_level, 8),
+            "ls_delta": round(ls_delta, 4),
+            "imbalance": imbalance,
+            "imbalance_source": imbalance_source,
+            "bias": bias,
+            "setup": compression >= compression_gate and oi_pct > oi_gate and imbalance,
+            "near_setup": compression >= near_compression_gate and oi_pct > near_oi_gate and imbalance,
+            "funding_bonus": round(funding_bonus, 4),
+            "strength": round(squeeze_strength, 4),
         }
 
     @staticmethod
@@ -4150,6 +4467,950 @@ class SignalService:
         if isinstance(pending_followthrough, dict):
             pending_followthrough.pop((symbol, timeframe), None)
 
+    def _clear_pending_squeeze(self, symbol: str, timeframe: str) -> None:
+        pending_squeeze = getattr(self, "pending_squeeze", None)
+        if isinstance(pending_squeeze, dict):
+            pending_squeeze.pop((symbol, timeframe), None)
+
+    def _clear_pending_squeeze_htf(self, symbol: str) -> None:
+        pending_squeeze_htf = getattr(self, "pending_squeeze_htf", None)
+        if isinstance(pending_squeeze_htf, dict):
+            pending_squeeze_htf.pop(symbol, None)
+
+    def _apply_execution_size_modifiers(
+        self,
+        *,
+        execution: ExecutionPlan | None,
+        scenario_label: str,
+        state_name: str = "",
+        scenario_score: float = 0.0,
+        flow_alignment: float,
+        action: ActionAssessment,
+        market_interpretation: MarketInterpretationAssessment,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+    ) -> dict[str, float | int]:
+        profile = self._continuation_feedback_profile(timeframe=timeframe)
+        if execution is None:
+            return profile
+        if scenario_label == "weak_propulsion":
+            execution.position_size_multiplier *= 0.5
+        elif scenario_label == "mixed_signals":
+            execution.position_size_multiplier *= 0.5
+
+        execution.position_size_multiplier *= min(1.0, max(0.0, flow_alignment + 0.15))
+        if action.setup_type == "Continuation":
+            expectancy_profile = self._continuation_expectancy_profile(
+                timeframe=timeframe,
+                clarity_confidence=market_interpretation.clarity_confidence,
+                flow_alignment=market_interpretation.flow_alignment,
+                structure_strength=market_interpretation.structure_strength,
+                scenario_label=scenario_label,
+                state_name=state_name,
+                scenario_score=scenario_score,
+                flow_metrics=flow_metrics,
+            )
+            execution.position_size_multiplier *= self._continuation_size_multiplier(
+                flow_alignment=market_interpretation.flow_alignment,
+                structure_strength=market_interpretation.structure_strength,
+                clarity_confidence=market_interpretation.clarity_confidence,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                feedback_profile=expectancy_profile,
+                bucket_size_multiplier=float(expectancy_profile.get("bucket_size_multiplier", 1.0) or 1.0),
+                expectancy_multiplier=float(expectancy_profile.get("bucket_expectancy_multiplier", 1.0) or 1.0),
+                segment_size_multiplier=float(expectancy_profile.get("segment_size_multiplier", 1.0) or 1.0),
+            )
+            profile = expectancy_profile
+        execution.position_size_multiplier *= self.portfolio_manager.get_global_size_multiplier()
+        execution.position_size_multiplier = round(max(0.1, execution.position_size_multiplier), 4)
+        return profile
+
+    def _continuation_size_multiplier(
+        self,
+        *,
+        flow_alignment: float,
+        structure_strength: float,
+        clarity_confidence: float,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        feedback_profile: dict[str, float | int] | None = None,
+        bucket_size_multiplier: float = 1.0,
+        expectancy_multiplier: float = 1.0,
+        segment_size_multiplier: float = 1.0,
+    ) -> float:
+        live_confidence_multiplier = self._continuation_live_confidence_multiplier(
+            flow_alignment=flow_alignment,
+            structure_strength=structure_strength,
+            clarity_confidence=clarity_confidence,
+        )
+        multiplier = live_confidence_multiplier
+        volatility = self._volatility_regime(flow_metrics, timeframe)
+        if volatility == "Low":
+            multiplier *= self.settings.continuation_dynamic_size_low_vol_penalty
+        elif volatility == "High":
+            multiplier *= self.settings.continuation_dynamic_size_high_vol_penalty
+
+        profile = feedback_profile or self._continuation_feedback_profile(timeframe=timeframe)
+        experimental_ready = bool(int(profile.get("history_ready", 0) or 0))
+        multiplier *= float(profile.get("size_multiplier", 1.0) or 1.0)
+        if experimental_ready:
+            multiplier *= max(0.4, min(1.5, bucket_size_multiplier))
+            multiplier *= max(0.85, min(1.15, expectancy_multiplier))
+            multiplier *= max(0.3, min(1.0, segment_size_multiplier))
+        return max(
+            self.settings.continuation_dynamic_size_min,
+            min(self.settings.continuation_dynamic_size_max, round(multiplier, 4)),
+        )
+
+    def _continuation_live_confidence_multiplier(
+        self,
+        *,
+        flow_alignment: float,
+        structure_strength: float,
+        clarity_confidence: float,
+    ) -> float:
+        confidence_score = self._continuation_live_confidence_score(
+            flow_alignment=flow_alignment,
+            structure_strength=structure_strength,
+            clarity_confidence=clarity_confidence,
+        )
+        multiplier = self.settings.continuation_dynamic_size_min + (
+            0.65 * math.pow(max(0.0, min(confidence_score, 1.0)), self.settings.continuation_live_confidence_power)
+        )
+        if confidence_score < self.settings.continuation_live_confidence_low_penalty_threshold:
+            multiplier *= self.settings.continuation_live_confidence_low_penalty_multiplier
+        if confidence_score > self.settings.continuation_live_confidence_elite_threshold:
+            multiplier *= self.settings.continuation_live_confidence_elite_boost
+        return round(
+            max(
+                self.settings.continuation_dynamic_size_min,
+                min(self.settings.continuation_dynamic_size_max, multiplier),
+            ),
+            4,
+        )
+
+    def _continuation_live_confidence_score(
+        self,
+        *,
+        flow_alignment: float,
+        structure_strength: float,
+        clarity_confidence: float,
+    ) -> float:
+        confidence_score = (
+            (max(0.0, min(flow_alignment, 1.0)) * self.settings.continuation_live_confidence_flow_weight)
+            + (max(0.0, min(structure_strength, 1.0)) * self.settings.continuation_live_confidence_structure_weight)
+            + (max(0.0, min(clarity_confidence, 1.0)) * self.settings.continuation_live_confidence_clarity_weight)
+        )
+        return round(max(0.0, min(confidence_score, 1.0)), 4)
+
+    def _continuation_feedback_profile(self, *, timeframe: str) -> dict[str, float | int]:
+        cache = getattr(self, "continuation_feedback_cache", None)
+        if isinstance(cache, dict) and timeframe in cache:
+            return dict(cache[timeframe])
+        return {
+            "sample_count": 0,
+            "avg_entry_efficiency": 0.0,
+            "avg_mae_r": 0.0,
+            "avg_mfe_r": 0.0,
+            "quality_score": 0.0,
+            "quality_size_multiplier": 1.0,
+            "quality_ready": 0,
+            "recent_loss_streak": 0,
+            "size_multiplier": 1.0,
+        }
+
+    def _continuation_quality_score(
+        self,
+        *,
+        entry_efficiency: float,
+        mae_r: float,
+        mfe_r: float,
+    ) -> float:
+        efficiency_component = max(0.0, min(float(entry_efficiency or 0.0), 1.0))
+        mae_component = 1.0 - max(
+            0.0,
+            min(
+                float(mae_r or 0.0) / max(self.settings.continuation_quality_mae_normalizer, VALUE_EPSILON),
+                1.0,
+            ),
+        )
+        mfe_component = max(
+            0.0,
+            min(
+                float(mfe_r or 0.0) / max(self.settings.continuation_quality_mfe_normalizer, VALUE_EPSILON),
+                1.0,
+            ),
+        )
+        quality_score = (
+            efficiency_component * self.settings.continuation_quality_efficiency_weight
+            + mae_component * self.settings.continuation_quality_mae_weight
+            + mfe_component * self.settings.continuation_quality_mfe_weight
+        )
+        return round(max(0.0, min(quality_score, 1.0)), 4)
+
+    def _continuation_quality_size_multiplier(
+        self,
+        *,
+        sample_count: int,
+        quality_norm: float,
+    ) -> float:
+        if sample_count < self.settings.continuation_quality_min_samples:
+            return 1.0
+        if quality_norm > self.settings.continuation_quality_high_threshold:
+            return self.settings.continuation_quality_high_multiplier
+        elif quality_norm < self.settings.continuation_quality_low_threshold:
+            return self.settings.continuation_quality_low_multiplier
+        return 1.0
+
+    def _continuation_confidence_score(
+        self,
+        *,
+        clarity_confidence: float,
+        scenario_score: float,
+    ) -> float:
+        clarity = max(0.0, min(float(clarity_confidence or 0.0), 1.0))
+        scenario_component = self._feedback_float(scenario_score)
+        if scenario_component is None or scenario_component <= VALUE_EPSILON:
+            scenario_component = clarity
+        scenario_component = max(0.0, min(float(scenario_component), 1.0))
+        return round((clarity * 0.55) + (scenario_component * 0.45), 4)
+
+    def _continuation_confidence_bucket(self, *, confidence_score: float) -> str:
+        if confidence_score >= self.settings.continuation_confidence_bucket_elite_min:
+            return "elite"
+        if confidence_score >= self.settings.continuation_confidence_bucket_high_min:
+            return "high"
+        if confidence_score >= self.settings.continuation_confidence_bucket_medium_min:
+            return "medium"
+        return "low"
+
+    def _continuation_bucket_size_multiplier(self, *, confidence_bucket: str) -> float:
+        if confidence_bucket == "elite":
+            return self.settings.continuation_confidence_bucket_elite_size_multiplier
+        if confidence_bucket == "high":
+            return self.settings.continuation_confidence_bucket_high_size_multiplier
+        if confidence_bucket == "medium":
+            return self.settings.continuation_confidence_bucket_medium_size_multiplier
+        return self.settings.continuation_confidence_bucket_low_size_multiplier
+
+    def _continuation_bucket_profile(
+        self,
+        *,
+        timeframe: str,
+        confidence_bucket: str,
+    ) -> dict[str, float | int | str]:
+        cache = getattr(self, "continuation_feedback_bucket_cache", None)
+        key = (timeframe, confidence_bucket)
+        if isinstance(cache, dict) and key in cache:
+            return dict(cache[key])
+        return {
+            "sample_count": 0,
+            "winrate": 0.0,
+            "avg_realized_r": 0.0,
+            "avg_entry_efficiency": 0.0,
+            "avg_mae_r": 0.0,
+            "avg_mfe_r": 0.0,
+            "timeframe": timeframe,
+            "confidence_bucket": confidence_bucket,
+        }
+
+    def _continuation_segment_profile(
+        self,
+        *,
+        timeframe: str,
+        confidence_bucket: str,
+        regime: str,
+    ) -> dict[str, float | int | str]:
+        cache = getattr(self, "continuation_expectancy_segment_cache", None)
+        key = (timeframe, confidence_bucket, regime)
+        if isinstance(cache, dict) and key in cache:
+            return dict(cache[key])
+        return {
+            "sample_count": 0,
+            "winrate": 0.0,
+            "avg_realized_r": 0.0,
+            "avg_entry_efficiency": 0.0,
+            "avg_mae_r": 0.0,
+            "avg_mfe_r": 0.0,
+            "timeframe": timeframe,
+            "confidence_bucket": confidence_bucket,
+            "regime": regime,
+        }
+
+    @staticmethod
+    def _continuation_cluster_context(
+        *,
+        scenario_label: str,
+        state_name: str,
+    ) -> str:
+        parts: list[str] = []
+        scenario = scenario_label.strip()
+        state = state_name.strip()
+        if scenario:
+            parts.append(scenario)
+        if state:
+            parts.append(state)
+        return "|".join(parts) if parts else "Unknown"
+
+    def _continuation_cluster_profile(
+        self,
+        *,
+        timeframe: str,
+        cluster_context: str,
+        volatility: str,
+    ) -> dict[str, float | int | str]:
+        cache = getattr(self, "continuation_cluster_cache", None)
+        key = (timeframe, cluster_context, volatility)
+        if isinstance(cache, dict) and key in cache:
+            return dict(cache[key])
+        return {
+            "sample_count": 0,
+            "winrate": 0.0,
+            "avg_realized_r": 0.0,
+            "avg_entry_efficiency": 0.0,
+            "avg_mae_r": 0.0,
+            "avg_mfe_r": 0.0,
+            "timeframe": timeframe,
+            "cluster_context": cluster_context,
+            "volatility": volatility,
+        }
+
+    def _continuation_cluster_size_multiplier(
+        self,
+        *,
+        cluster_profile: dict[str, float | int | str],
+    ) -> float:
+        sample_count = int(cluster_profile.get("sample_count", 0) or 0)
+        if sample_count < self.settings.continuation_cluster_penalty_min_samples:
+            return 1.0
+
+        avg_realized_r = float(cluster_profile.get("avg_realized_r", 0.0) or 0.0)
+        winrate = float(cluster_profile.get("winrate", 0.0) or 0.0)
+        if avg_realized_r >= 0.0 or winrate > self.settings.continuation_cluster_bad_max_winrate:
+            return 1.0
+        if (
+            winrate <= self.settings.continuation_cluster_severe_max_winrate
+            and avg_realized_r <= self.settings.continuation_cluster_severe_max_avg_r
+        ):
+            return self.settings.continuation_cluster_severe_penalty_multiplier
+        return self.settings.continuation_cluster_penalty_multiplier
+
+    def _continuation_bucket_expectancy_multiplier(
+        self,
+        *,
+        bucket_profile: dict[str, float | int | str],
+        history_ready: bool,
+    ) -> float:
+        if not history_ready:
+            return 1.0
+        sample_count = int(bucket_profile.get("sample_count", 0) or 0)
+        if sample_count <= 0:
+            return 1.0
+        avg_realized_r = float(bucket_profile.get("avg_realized_r", 0.0) or 0.0)
+        if avg_realized_r >= self.settings.continuation_expectancy_bucket_positive_avg_r:
+            return self.settings.continuation_expectancy_bucket_boost_multiplier
+        if avg_realized_r <= self.settings.continuation_expectancy_bucket_negative_avg_r:
+            return self.settings.continuation_expectancy_bucket_reduce_multiplier
+        return 1.0
+
+    def _continuation_kill_zone_active(
+        self,
+        *,
+        segment_profile: dict[str, float | int | str],
+    ) -> bool:
+        sample_count = int(segment_profile.get("sample_count", 0) or 0)
+        if sample_count < self.settings.continuation_expectancy_killzone_min_samples:
+            return False
+        avg_realized_r = float(segment_profile.get("avg_realized_r", 0.0) or 0.0)
+        winrate = float(segment_profile.get("winrate", 0.0) or 0.0)
+        return (
+            avg_realized_r <= self.settings.continuation_expectancy_killzone_max_avg_r
+            and winrate <= self.settings.continuation_expectancy_killzone_max_winrate
+        )
+
+    def _continuation_expectancy_profile(
+        self,
+        *,
+        timeframe: str,
+        clarity_confidence: float,
+        flow_alignment: float,
+        structure_strength: float,
+        scenario_label: str,
+        state_name: str,
+        scenario_score: float,
+        flow_metrics: FlowMetrics,
+    ) -> dict[str, float | int | str]:
+        profile = self._continuation_feedback_profile(timeframe=timeframe)
+        history_count = int(profile.get("sample_count", 0) or 0)
+        history_ready = history_count >= self.settings.continuation_history_ready_min_samples
+        confidence_score = self._continuation_confidence_score(
+            clarity_confidence=clarity_confidence,
+            scenario_score=scenario_score,
+        )
+        confidence_bucket = self._continuation_confidence_bucket(confidence_score=confidence_score)
+        regime = self._market_regime(flow_metrics, timeframe)
+        bucket_profile = self._continuation_bucket_profile(
+            timeframe=timeframe,
+            confidence_bucket=confidence_bucket,
+        )
+        segment_profile = self._continuation_segment_profile(
+            timeframe=timeframe,
+            confidence_bucket=confidence_bucket,
+            regime=regime,
+        )
+        cluster_context = self._continuation_cluster_context(
+            scenario_label=scenario_label,
+            state_name=state_name,
+        )
+        cluster_volatility = self._volatility_regime(flow_metrics, timeframe)
+        cluster_profile = self._continuation_cluster_profile(
+            timeframe=timeframe,
+            cluster_context=cluster_context,
+            volatility=cluster_volatility,
+        )
+        cluster_size_multiplier = self._continuation_cluster_size_multiplier(
+            cluster_profile=cluster_profile,
+        )
+        bucket_size_multiplier = (
+            self._continuation_bucket_size_multiplier(confidence_bucket=confidence_bucket)
+            if history_ready
+            else 1.0
+        )
+        expectancy_multiplier = self._continuation_bucket_expectancy_multiplier(
+            bucket_profile=bucket_profile,
+            history_ready=history_ready,
+        )
+        kill_zone_active = (
+            self._continuation_kill_zone_active(segment_profile=segment_profile)
+            if history_ready
+            else False
+        )
+        segment_size_multiplier = (
+            self.settings.continuation_expectancy_killzone_size_multiplier
+            if kill_zone_active
+            else 1.0
+        )
+        merged = dict(profile)
+        merged.update(
+            {
+                "history_count": history_count,
+                "history_ready": int(history_ready),
+                "confidence_score": confidence_score,
+                "live_confidence_score": self._continuation_live_confidence_score(
+                    flow_alignment=flow_alignment,
+                    structure_strength=structure_strength,
+                    clarity_confidence=clarity_confidence,
+                ),
+                "live_confidence_multiplier": self._continuation_live_confidence_multiplier(
+                    flow_alignment=flow_alignment,
+                    structure_strength=structure_strength,
+                    clarity_confidence=clarity_confidence,
+                ),
+                "quality_score": round(float(profile.get("quality_score", 0.0) or 0.0), 4),
+                "quality_size_multiplier": round(float(profile.get("quality_size_multiplier", 1.0) or 1.0), 4),
+                "quality_ready": int(profile.get("quality_ready", 0) or 0),
+                "confidence_bucket": confidence_bucket,
+                "bucket_size_multiplier": round(bucket_size_multiplier, 4),
+                "bucket_sample_count": int(bucket_profile.get("sample_count", 0) or 0),
+                "bucket_expectancy_multiplier": round(expectancy_multiplier, 4),
+                "bucket_avg_realized_r": round(float(bucket_profile.get("avg_realized_r", 0.0) or 0.0), 4),
+                "bucket_winrate": round(float(bucket_profile.get("winrate", 0.0) or 0.0), 4),
+                "bucket_avg_mfe_r": round(float(bucket_profile.get("avg_mfe_r", 0.0) or 0.0), 4),
+                "bucket_avg_mae_r": round(float(bucket_profile.get("avg_mae_r", 0.0) or 0.0), 4),
+                "segment_sample_count": int(segment_profile.get("sample_count", 0) or 0),
+                "segment_avg_realized_r": round(float(segment_profile.get("avg_realized_r", 0.0) or 0.0), 4),
+                "segment_winrate": round(float(segment_profile.get("winrate", 0.0) or 0.0), 4),
+                "segment_regime": regime,
+                "segment_size_multiplier": round(segment_size_multiplier, 4),
+                "cluster_context": cluster_context,
+                "cluster_volatility": cluster_volatility,
+                "cluster_sample_count": int(cluster_profile.get("sample_count", 0) or 0),
+                "cluster_avg_realized_r": round(float(cluster_profile.get("avg_realized_r", 0.0) or 0.0), 4),
+                "cluster_winrate": round(float(cluster_profile.get("winrate", 0.0) or 0.0), 4),
+                "cluster_size_multiplier": round(cluster_size_multiplier, 4),
+                "cluster_penalty_active": int(cluster_size_multiplier < 0.9999),
+                "kill_zone_active": int(kill_zone_active),
+                "elite_boost_active": int(history_ready and confidence_bucket == "elite"),
+            }
+        )
+        return merged
+
+    def _continuation_exit_profile(
+        self,
+        *,
+        market_interpretation: MarketInterpretationAssessment,
+        scenario_score: float,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+    ) -> dict[str, float | int]:
+        profile = self._continuation_feedback_profile(timeframe=timeframe)
+        expectancy_profile = self._continuation_expectancy_profile(
+            timeframe=timeframe,
+            clarity_confidence=market_interpretation.clarity_confidence,
+            flow_alignment=market_interpretation.flow_alignment,
+            structure_strength=market_interpretation.structure_strength,
+            scenario_label="",
+            state_name="",
+            scenario_score=scenario_score,
+            flow_metrics=flow_metrics,
+        )
+        volatility = self._volatility_regime(flow_metrics, timeframe)
+        tp1_multiple = 1.0
+        structure_strength = max(0.0, min(market_interpretation.structure_strength, 1.0))
+        if structure_strength >= 0.85:
+            tp1_multiple += 0.12
+        elif structure_strength >= 0.75:
+            tp1_multiple += 0.06
+        elif structure_strength <= 0.58:
+            tp1_multiple -= 0.08
+
+        if volatility == "Low":
+            tp1_multiple += 0.05
+        elif volatility == "High":
+            tp1_multiple -= 0.08
+
+        avg_entry_efficiency = float(profile.get("avg_entry_efficiency", 0.0) or 0.0)
+        recent_loss_streak = int(profile.get("recent_loss_streak", 0) or 0)
+        if avg_entry_efficiency >= self.settings.continuation_feedback_boost_efficiency:
+            tp1_multiple += 0.05
+        elif avg_entry_efficiency <= self.settings.continuation_feedback_penalty_efficiency or recent_loss_streak >= 2:
+            tp1_multiple -= 0.05
+
+        trailing_multiplier = self.settings.continuation_trailing_atr_buffer
+        if volatility == "High":
+            trailing_multiplier *= self.settings.continuation_trailing_high_vol_multiplier
+        elif volatility == "Low":
+            trailing_multiplier *= self.settings.continuation_trailing_low_vol_multiplier
+        trailing_multiplier *= 0.9 + (structure_strength * 0.25)
+
+        history_ready = bool(int(expectancy_profile.get("history_ready", 0) or 0))
+        confidence_bucket = str(expectancy_profile.get("confidence_bucket", "low") or "low")
+        elite_boost_active = history_ready and confidence_bucket == "elite"
+        if elite_boost_active:
+            tp1_multiple += self.settings.continuation_elite_tp1_boost_r
+            trailing_multiplier *= self.settings.continuation_elite_trailing_boost_multiplier
+
+        return {
+            "tp1_r_multiple": round(
+                max(self.settings.continuation_dynamic_tp1_min_r, min(self.settings.continuation_dynamic_tp1_max_r, tp1_multiple)),
+                4,
+            ),
+            "trailing_atr_multiplier": round(max(0.35, trailing_multiplier), 4),
+            "feedback_entry_efficiency": round(avg_entry_efficiency, 4),
+            "feedback_mae_r": round(float(profile.get("avg_mae_r", 0.0) or 0.0), 4),
+            "feedback_mfe_r": round(float(profile.get("avg_mfe_r", 0.0) or 0.0), 4),
+            "feedback_loss_streak": recent_loss_streak,
+            "feedback_size_multiplier": round(float(profile.get("size_multiplier", 1.0) or 1.0), 4),
+            "history_ready": int(history_ready),
+            "history_count": int(expectancy_profile.get("history_count", 0) or 0),
+            "confidence_bucket": confidence_bucket,
+            "elite_boost_active": int(elite_boost_active),
+        }
+
+    def _apply_continuation_exit_modifiers(
+        self,
+        *,
+        execution: ExecutionPlan | None,
+        action: ActionAssessment,
+        market_interpretation: MarketInterpretationAssessment,
+        scenario_score: float = 0.0,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+    ) -> dict[str, float | int]:
+        profile = self._continuation_exit_profile(
+            market_interpretation=market_interpretation,
+            scenario_score=scenario_score,
+            flow_metrics=flow_metrics,
+            timeframe=timeframe,
+        )
+        if execution is None or action.setup_type != "Continuation":
+            return profile
+
+        if execution.entry_min is None or execution.invalidation is None:
+            return profile
+
+        risk = abs(execution.entry_min - execution.invalidation)
+        if risk <= VALUE_EPSILON:
+            return profile
+
+        direction = 1 if action.bias == "Bullish" else -1
+        tp1_multiple = float(profile["tp1_r_multiple"])
+        execution.target_1 = execution.entry_min + (direction * risk * tp1_multiple)
+        if execution.target_2 is not None:
+            if direction > 0:
+                execution.target_2 = max(execution.target_2, execution.target_1)
+            else:
+                execution.target_2 = min(execution.target_2, execution.target_1)
+        if execution.target is not None and execution.target_2 is not None:
+            execution.target = execution.target_2
+        return profile
+
+    def _trade_in_feedback_scope(self, trade: object) -> bool:
+        active_tag = getattr(self.settings, "trade_signals_active_tag", None)
+        if isinstance(active_tag, str) and active_tag.strip():
+            return getattr(trade, "engine_tag", None) == active_tag
+        active_since = getattr(self.settings, "trade_signals_active_since", None)
+        created_at = getattr(trade, "created_at", None)
+        if active_since is not None and created_at is not None:
+            return created_at >= active_since
+        return True
+
+    @staticmethod
+    def _feedback_float(value: object) -> float | None:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _rebuild_continuation_feedback_cache(self) -> None:
+        history = getattr(self, "continuation_feedback_history", None)
+        if not isinstance(history, dict):
+            self.continuation_feedback_cache = {}
+            self.continuation_feedback_bucket_cache = {}
+            self.continuation_expectancy_segment_cache = {}
+            self.continuation_cluster_cache = {}
+            return
+
+        cache: dict[str, dict[str, float | int]] = {}
+        bucket_groups: dict[tuple[str, str], list[dict[str, float | int | str]]] = defaultdict(list)
+        segment_groups: dict[tuple[str, str, str], list[dict[str, float | int | str]]] = defaultdict(list)
+        
+        all_valid_qualities = []
+        for timeframe, samples in history.items():
+            for sample in samples:
+                mae_r = float(sample.get("mae_r", 0.0) or 0.0)
+                mfe_r = float(sample.get("mfe_r", 0.0) or 0.0)
+                if mae_r == 0.0 and mfe_r == 0.0:
+                    continue
+                q = self._continuation_quality_score(
+                    entry_efficiency=float(sample.get("entry_efficiency", 0.0) or 0.0),
+                    mae_r=mae_r,
+                    mfe_r=mfe_r,
+                )
+                all_valid_qualities.append(q)
+                
+        global_mean = sum(all_valid_qualities) / len(all_valid_qualities) if all_valid_qualities else 0.5
+        global_variance = sum((q - global_mean) ** 2 for q in all_valid_qualities) / len(all_valid_qualities) if len(all_valid_qualities) > 1 else 0.0
+        global_std = math.sqrt(global_variance)
+        if global_std < 1e-6:
+            global_std = 0.1
+
+        for timeframe, samples in history.items():
+            sample_list = list(samples)
+            if not sample_list:
+                continue
+                
+            valid_samples = []
+            for sample in sample_list:
+                mae_r = float(sample.get("mae_r", 0.0) or 0.0)
+                mfe_r = float(sample.get("mfe_r", 0.0) or 0.0)
+                if mae_r == 0.0 and mfe_r == 0.0:
+                    continue
+                valid_samples.append(sample)
+                
+            sample_count = len(valid_samples)
+            if sample_count == 0:
+                continue
+
+            avg_entry_efficiency = sum(float(sample.get("entry_efficiency", 0.0) or 0.0) for sample in valid_samples) / sample_count
+            avg_mae_r = sum(float(sample.get("mae_r", 0.0) or 0.0) for sample in valid_samples) / sample_count
+            avg_mfe_r = sum(float(sample.get("mfe_r", 0.0) or 0.0) for sample in valid_samples) / sample_count
+            avg_realized_r = sum(float(sample.get("realized_r", 0.0) or 0.0) for sample in valid_samples) / sample_count
+            
+            recent_loss_streak = 0
+            for sample in reversed(valid_samples):
+                if str(sample.get("result")) == "loss":
+                    recent_loss_streak += 1
+                    continue
+                break
+
+            if sample_count < self.settings.continuation_quality_min_samples:
+                quality_score = self._continuation_quality_score(
+                    entry_efficiency=avg_entry_efficiency,
+                    mae_r=avg_mae_r,
+                    mfe_r=avg_mfe_r,
+                )
+                quality_size_multiplier = 1.0
+            else:
+                tf_qualities = [
+                    self._continuation_quality_score(
+                        entry_efficiency=float(sample.get("entry_efficiency", 0.0) or 0.0),
+                        mae_r=float(sample.get("mae_r", 0.0) or 0.0),
+                        mfe_r=float(sample.get("mfe_r", 0.0) or 0.0),
+                    )
+                    for sample in valid_samples
+                ]
+                tf_quality = sum(tf_qualities) / len(tf_qualities)
+                quality_score = tf_quality
+                
+                quality_norm = (tf_quality - global_mean) / global_std
+                
+                quality_size_multiplier = self._continuation_quality_size_multiplier(
+                    sample_count=sample_count,
+                    quality_norm=quality_norm,
+                )
+
+            cache[timeframe] = {
+                "sample_count": sample_count,
+                "avg_entry_efficiency": round(avg_entry_efficiency, 4),
+                "avg_mae_r": round(avg_mae_r, 4),
+                "avg_mfe_r": round(avg_mfe_r, 4),
+                "avg_realized_r": round(avg_realized_r, 4),
+                "quality_score": round(quality_score, 4),
+                "quality_size_multiplier": round(quality_size_multiplier, 4),
+                "quality_ready": int(sample_count >= self.settings.continuation_quality_min_samples),
+                "recent_loss_streak": recent_loss_streak,
+                "size_multiplier": round(quality_size_multiplier, 4),
+            }
+            for sample in valid_samples:
+                confidence_bucket = str(sample.get("confidence_bucket", "low") or "low")
+                regime = str(sample.get("regime", "Unknown") or "Unknown")
+                bucket_groups[(timeframe, confidence_bucket)].append(sample)
+                segment_groups[(timeframe, confidence_bucket, regime)].append(sample)
+
+        cluster_history = getattr(self, "continuation_cluster_history", None)
+        cluster_cache: dict[tuple[str, str, str], dict[str, float | int | str]] = {}
+        if isinstance(cluster_history, dict):
+            for key, samples in cluster_history.items():
+                sample_list = list(samples)
+                if not sample_list:
+                    continue
+                cluster_cache[key] = self._build_continuation_sample_profile(
+                    samples=sample_list,
+                    timeframe=key[0],
+                    confidence_bucket="cluster",
+                    cluster_context=key[1],
+                    volatility=key[2],
+                )
+
+        self.continuation_feedback_cache = cache
+        self.continuation_feedback_bucket_cache = {
+            key: self._build_continuation_sample_profile(
+                samples=sample_list,
+                timeframe=key[0],
+                confidence_bucket=key[1],
+            )
+            for key, sample_list in bucket_groups.items()
+        }
+        self.continuation_expectancy_segment_cache = {
+            key: self._build_continuation_sample_profile(
+                samples=sample_list,
+                timeframe=key[0],
+                confidence_bucket=key[1],
+                regime=key[2],
+            )
+            for key, sample_list in segment_groups.items()
+        }
+        self.continuation_cluster_cache = cluster_cache
+
+    def _build_continuation_sample_profile(
+        self,
+        *,
+        samples: list[dict[str, float | int | str]],
+        timeframe: str,
+        confidence_bucket: str,
+        regime: str | None = None,
+        cluster_context: str | None = None,
+        volatility: str | None = None,
+    ) -> dict[str, float | int | str]:
+        sample_count = len(samples)
+        if sample_count <= 0:
+            return {
+                "sample_count": 0,
+                "winrate": 0.0,
+                "avg_realized_r": 0.0,
+                "avg_entry_efficiency": 0.0,
+                "avg_mae_r": 0.0,
+                "avg_mfe_r": 0.0,
+                "timeframe": timeframe,
+                "confidence_bucket": confidence_bucket,
+                "regime": regime or "Unknown",
+                "cluster_context": cluster_context or "Unknown",
+                "volatility": volatility or "Unknown",
+            }
+        wins = sum(1 for sample in samples if str(sample.get("result")) == "win")
+        return {
+            "sample_count": sample_count,
+            "winrate": round(wins / sample_count, 4),
+            "avg_realized_r": round(
+                sum(float(sample.get("realized_r", 0.0) or 0.0) for sample in samples) / sample_count,
+                4,
+            ),
+            "avg_entry_efficiency": round(
+                sum(float(sample.get("entry_efficiency", 0.0) or 0.0) for sample in samples) / sample_count,
+                4,
+            ),
+            "avg_mae_r": round(
+                sum(float(sample.get("mae_r", 0.0) or 0.0) for sample in samples) / sample_count,
+                4,
+            ),
+            "avg_mfe_r": round(
+                sum(float(sample.get("mfe_r", 0.0) or 0.0) for sample in samples) / sample_count,
+                4,
+            ),
+            "timeframe": timeframe,
+            "confidence_bucket": confidence_bucket,
+            "regime": regime or "Unknown",
+            "cluster_context": cluster_context or "Unknown",
+            "volatility": volatility or "Unknown",
+        }
+
+    def record_continuation_feedback_trade(self, trade: object) -> None:
+        if getattr(trade, "setup_type", None) != "Continuation":
+            return
+        if getattr(trade, "result", None) not in {"win", "loss", "breakeven"}:
+            return
+        if not self._trade_in_feedback_scope(trade):
+            return
+
+        trade_id = getattr(trade, "id", None)
+        recorded_ids = getattr(self, "continuation_feedback_recorded_ids", None)
+        if isinstance(recorded_ids, set) and trade_id in recorded_ids:
+            return
+
+        entry_features = getattr(trade, "entry_features", None)
+        if not isinstance(entry_features, dict):
+            return
+        entry_efficiency = self._feedback_float(entry_features.get("entry_efficiency"))
+        mae_r = self._feedback_float(entry_features.get("mae_r"))
+        mfe_r = self._feedback_float(entry_features.get("mfe_r"))
+        realized_r = self._feedback_float(entry_features.get("realized_r"))
+        if entry_efficiency is None or mae_r is None or mfe_r is None or realized_r is None:
+            return
+
+        timeframe = str(getattr(trade, "timeframe", "unknown"))
+        history = getattr(self, "continuation_feedback_history", None)
+        if not isinstance(history, dict):
+            self.continuation_feedback_history = defaultdict(lambda: deque(maxlen=24))
+            history = self.continuation_feedback_history
+        cluster_history = getattr(self, "continuation_cluster_history", None)
+        if not isinstance(cluster_history, dict):
+            self.continuation_cluster_history = defaultdict(
+                lambda: deque(maxlen=self.settings.continuation_cluster_history_max_samples)
+            )
+            cluster_history = self.continuation_cluster_history
+
+        state_name = str(getattr(trade, "state", None) or entry_features.get("state") or "")
+        scenario_label = str(entry_features.get("scenario_label") or "")
+        volatility = str(
+            entry_features.get("decision_volatility_regime")
+            or getattr(trade, "volatility_regime", None)
+            or "Unknown"
+        )
+        sample = {
+            "result": str(getattr(trade, "result", "open")),
+            "entry_efficiency": entry_efficiency,
+            "mae_r": mae_r,
+            "mfe_r": mfe_r,
+            "realized_r": realized_r,
+            "confidence_score": self._feedback_float(entry_features.get("continuation_confidence_score")) or 0.0,
+            "confidence_bucket": str(entry_features.get("continuation_confidence_bucket") or "low"),
+            "regime": str(entry_features.get("decision_market_regime") or getattr(trade, "market_regime", None) or "Unknown"),
+            "volatility": volatility,
+            "scenario_label": scenario_label or "Unknown",
+            "state": state_name or "Unknown",
+        }
+        history[timeframe].append(sample)
+        cluster_context = self._continuation_cluster_context(
+            scenario_label=scenario_label,
+            state_name=state_name,
+        )
+        cluster_history[(timeframe, cluster_context, volatility)].append(dict(sample))
+        if isinstance(recorded_ids, set) and trade_id is not None:
+            recorded_ids.add(int(trade_id))
+        self._rebuild_continuation_feedback_cache()
+
+    async def _refresh_continuation_feedback_cache(self) -> None:
+        if not hasattr(self.database, "list_trade_signals"):
+            return
+        try:
+            trades = await self.database.list_trade_signals()
+        except Exception:
+            return
+
+        history: dict[str, deque[dict[str, float | int | str]]] = defaultdict(lambda: deque(maxlen=24))
+        cluster_history: dict[
+            tuple[str, str, str],
+            deque[dict[str, float | int | str]],
+        ] = defaultdict(lambda: deque(maxlen=self.settings.continuation_cluster_history_max_samples))
+        recorded_ids: set[int] = set()
+        closed_continuation = [
+            trade
+            for trade in trades
+            if getattr(trade, "setup_type", None) == "Continuation"
+            and getattr(trade, "result", None) in {"win", "loss", "breakeven"}
+            and self._trade_in_feedback_scope(trade)
+        ]
+        closed_continuation.sort(
+            key=lambda trade: getattr(trade, "closed_at", None) or getattr(trade, "updated_at", None) or getattr(trade, "created_at", None),
+        )
+        for trade in closed_continuation:
+            entry_features = getattr(trade, "entry_features", None)
+            if not isinstance(entry_features, dict):
+                continue
+            entry_efficiency = self._feedback_float(entry_features.get("entry_efficiency"))
+            mae_r = self._feedback_float(entry_features.get("mae_r"))
+            mfe_r = self._feedback_float(entry_features.get("mfe_r"))
+            realized_r = self._feedback_float(entry_features.get("realized_r"))
+            if entry_efficiency is None or mae_r is None or mfe_r is None or realized_r is None:
+                continue
+            timeframe = str(getattr(trade, "timeframe", "unknown"))
+            state_name = str(getattr(trade, "state", None) or entry_features.get("state") or "")
+            scenario_label = str(entry_features.get("scenario_label") or "")
+            volatility = str(
+                entry_features.get("decision_volatility_regime")
+                or getattr(trade, "volatility_regime", None)
+                or "Unknown"
+            )
+            sample = {
+                "result": str(getattr(trade, "result", "open")),
+                "entry_efficiency": entry_efficiency,
+                "mae_r": mae_r,
+                "mfe_r": mfe_r,
+                "realized_r": realized_r,
+                "confidence_score": self._feedback_float(entry_features.get("continuation_confidence_score")) or 0.0,
+                "confidence_bucket": str(entry_features.get("continuation_confidence_bucket") or "low"),
+                "regime": str(entry_features.get("decision_market_regime") or getattr(trade, "market_regime", None) or "Unknown"),
+                "volatility": volatility,
+                "scenario_label": scenario_label or "Unknown",
+                "state": state_name or "Unknown",
+            }
+            history[timeframe].append(sample)
+            cluster_context = self._continuation_cluster_context(
+                scenario_label=scenario_label,
+                state_name=state_name,
+            )
+            cluster_history[(timeframe, cluster_context, volatility)].append(dict(sample))
+            trade_id = getattr(trade, "id", None)
+            if isinstance(trade_id, int):
+                recorded_ids.add(trade_id)
+
+        self.continuation_feedback_history = history
+        self.continuation_cluster_history = cluster_history
+        self.continuation_feedback_recorded_ids = recorded_ids
+        self._rebuild_continuation_feedback_cache()
+
+    def _is_continuation_choppy_regime(
+        self,
+        *,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        regime: str,
+        volatility: str,
+    ) -> bool:
+        compression = self._metric_or_zero(getattr(flow_metrics, f"compression_score_{timeframe}", 0.0))
+        price_change = abs(self._metric_or_zero(getattr(flow_metrics, f"price_change_{timeframe}", 0.0)))
+        taker_delta = abs(self._metric_or_zero(getattr(flow_metrics, f"taker_buy_sell_ratio_delta_{timeframe}", 0.0)))
+        if regime == "Ranging" and volatility == "Low":
+            return True
+        return (
+            regime != "Trending"
+            and compression >= self.settings.continuation_choppy_min_compression
+            and price_change <= self.settings.continuation_choppy_max_abs_price_change
+            and taker_delta <= self.settings.continuation_choppy_max_abs_taker_delta
+        )
+
     def _global_btc_trend(self) -> str:
         """Determines global market trend by inspecting BTCUSDT HTF state."""
         try:
@@ -4175,6 +5436,8 @@ class SignalService:
         flow_metrics: FlowMetrics,
         timeframe: str,
         clarity_confidence: float,
+        market_interpretation: MarketInterpretationAssessment | None = None,
+        scenario_score: float = 0.0,
         state_name: str | None = None,
     ) -> list[str]:
         reasons: list[str] = []
@@ -4214,7 +5477,13 @@ class SignalService:
             pass
         if clarity_confidence < 0.35:
             reasons.append("clarity_below_threshold")
-            
+        if action.setup_type == "Continuation" and self._is_continuation_choppy_regime(
+            flow_metrics=flow_metrics,
+            timeframe=timeframe,
+            regime=regime,
+            volatility=volatility,
+        ):
+            reasons.append("continuation_choppy_regime")
         if action.bias == "Bearish":
             if not self.settings.entry_filter_allow_shorts:
                 # Dynamic context: only allow logic-defying short blocks if BTC is not Bearish
@@ -4465,6 +5734,26 @@ class SignalService:
         buffer = self.settings.breakout_close_confirmation_buffer
 
         reasons: list[str] = []
+        if action.setup_type == "Squeeze":
+            profile = TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])
+            taker_delta = SignalService._metric_or_zero(getattr(flow_metrics, f"taker_buy_sell_ratio_delta_{timeframe}", 0.0))
+            oi_change = SignalService._metric_or_zero(getattr(flow_metrics, f"oi_change_{timeframe}", 0.0))
+            wick_ratio = SignalService._metric_or_zero(getattr(flow_metrics, f"wick_ratio_{timeframe}", 0.0))
+            taker_threshold = max(float(profile.get("taker_ratio", 0.02)) * 10.0, 0.20)
+            aligned_taker = direction * taker_delta
+
+            if aligned_taker <= 0:
+                reasons.append("squeeze_taker_not_aligned")
+            elif aligned_taker <= taker_threshold:
+                reasons.append("squeeze_taker_below_threshold")
+
+            # Interpret positive OI delta as breakout-aligned OI expansion in the trade direction.
+            if oi_change * direction <= 0:
+                reasons.append("squeeze_oi_not_confirmed")
+
+            if wick_ratio > 0.4:
+                reasons.append("squeeze_breakout_high_wick")
+
         if action.setup_type == "Breakout" and regime == "Ranging":
             reasons.append("breakout_requires_trending_regime")
         if direction > 0 and close_price < breakout_entry * (1.0 + buffer):
@@ -4488,6 +5777,15 @@ class SignalService:
         if not reasons:
             return reasons
         if (
+            action.setup_type == "Squeeze"
+            and action.status == "Triggered"
+            and execution is not None
+            and execution.entry_type == "Squeeze Trigger"
+        ):
+            reasons = [reason for reason in reasons if reason != "breakout_close_not_confirmed"]
+            if not reasons:
+                return []
+        if (
             timeframe == "1h"
             and action.setup_type == "Continuation"
             and action.bias == "Bullish"
@@ -4505,6 +5803,16 @@ class SignalService:
             bias=action.bias,
             setup_type=action.setup_type,
             status=status,
+            confidence_label=action.confidence_label,
+            opportunity_score=action.opportunity_score,
+        )
+
+    @staticmethod
+    def _action_with_bias(action: ActionAssessment, bias: str) -> ActionAssessment:
+        return ActionAssessment(
+            bias=bias,
+            setup_type=action.setup_type,
+            status=action.status,
             confidence_label=action.confidence_label,
             opportunity_score=action.opportunity_score,
         )
@@ -4688,6 +5996,317 @@ class SignalService:
         features["decision_status"] = action.status
         return features
 
+    def _sync_pending_squeeze_htf(
+        self,
+        *,
+        symbol: str,
+        flow_metrics: FlowMetrics,
+        now: datetime,
+    ) -> dict[str, Any] | None:
+        detector_timeframe = "1h"
+        trigger_timeframe = "15m"
+        expiry_candles = 8
+        htf_bucket = self.aggregate_store.latest_bucket(
+            symbol,
+            detector_timeframe,
+            closed_only=detector_timeframe in self.closed_timeframes,
+            now=now,
+        )
+        htf_snapshot = self._squeeze_setup_snapshot(flow_metrics, detector_timeframe)
+
+        pending_squeeze_htf = getattr(self, "pending_squeeze_htf", None)
+        if not isinstance(pending_squeeze_htf, dict):
+            self.pending_squeeze_htf = {}
+            pending_squeeze_htf = self.pending_squeeze_htf
+
+        existing = pending_squeeze_htf.get(symbol)
+        if (
+            htf_bucket is not None
+            and bool(htf_snapshot.get("setup"))
+            and htf_snapshot.get("bias") in {"Bullish", "Bearish"}
+        ):
+            direction = 1 if htf_snapshot["bias"] == "Bullish" else -1
+            pending_squeeze_htf[symbol] = {
+                "symbol": symbol,
+                "detector_timeframe": detector_timeframe,
+                "trigger_timeframe": trigger_timeframe,
+                "bias": str(htf_snapshot["bias"]),
+                "direction": direction,
+                "strength": float(htf_snapshot["strength"]),
+                "compression": float(htf_snapshot["compression"]),
+                "oi_percentile": float(htf_snapshot["oi_percentile"]),
+                "imbalance_source": str(htf_snapshot["imbalance_source"]),
+                "timestamp": htf_bucket.last_timestamp,
+                "bucket_start": htf_bucket.bucket_start,
+                "expiry_candles": expiry_candles,
+            }
+            return {
+                **pending_squeeze_htf[symbol],
+                "candles_elapsed": 0,
+                "setup": True,
+                "near_setup": bool(htf_snapshot.get("near_setup")),
+                "active": True,
+            }
+
+        if existing is None:
+            if htf_bucket is not None and bool(htf_snapshot.get("near_setup")):
+                near_bias = htf_snapshot.get("bias")
+                near_direction = 1 if near_bias == "Bullish" else -1 if near_bias == "Bearish" else 0
+                return {
+                    "symbol": symbol,
+                    "detector_timeframe": detector_timeframe,
+                    "trigger_timeframe": trigger_timeframe,
+                    "bias": str(near_bias),
+                    "direction": near_direction,
+                    "strength": float(htf_snapshot["strength"]),
+                    "compression": float(htf_snapshot["compression"]),
+                    "oi_percentile": float(htf_snapshot["oi_percentile"]),
+                    "imbalance_source": str(htf_snapshot["imbalance_source"]),
+                    "timestamp": htf_bucket.last_timestamp,
+                    "bucket_start": htf_bucket.bucket_start,
+                    "expiry_candles": expiry_candles,
+                    "candles_elapsed": 0,
+                    "setup": False,
+                    "near_setup": True,
+                    "active": False,
+                }
+            return None
+
+        reference_bucket_start = htf_bucket.bucket_start if htf_bucket is not None else existing["bucket_start"]
+        bucket_seconds = max(TIMEFRAME_DELTAS[detector_timeframe].total_seconds(), 1.0)
+        elapsed_seconds = max(0.0, (reference_bucket_start - existing["bucket_start"]).total_seconds())
+        candles_elapsed = int(round(elapsed_seconds / bucket_seconds))
+        if candles_elapsed > int(existing.get("expiry_candles", expiry_candles)):
+            self._clear_pending_squeeze_htf(symbol)
+            return None
+
+        return {
+            **existing,
+            "candles_elapsed": candles_elapsed,
+            "setup": True,
+            "near_setup": bool(htf_snapshot.get("near_setup")) if htf_bucket is not None else True,
+            "active": True,
+        }
+
+    def _pending_squeeze_market_interpretation(
+        self,
+        *,
+        pending: dict[str, Any],
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        higher_timeframe_trend: str,
+        higher_timeframe_control: str,
+        state_label: str,
+        action: str,
+        rationale: str,
+        warnings: list[str] | None = None,
+    ) -> MarketInterpretationAssessment:
+        direction = int(pending["direction"])
+        trend = "Bullish" if direction > 0 else "Bearish"
+        control = "Buyer Dominant" if direction > 0 else "Seller Dominant"
+        oi_change = SignalService._metric_or_zero(getattr(flow_metrics, f"oi_change_{timeframe}", 0.0))
+        structure_strength = max(float(pending["strength"]), 0.55)
+        flow_alignment = max(float(pending["strength"]), 0.55)
+        trend_alignment = 1.0 if higher_timeframe_trend in {"Neutral", trend} else 0.35
+        conflict_score = 0.10 if trend_alignment >= 1.0 else 0.30
+        clarity_confidence = max(float(pending["strength"]), 0.68 if action == "ENTER" else 0.62)
+
+        recent_high = SignalService._metric_or_zero(getattr(flow_metrics, f"recent_high_{timeframe}", 0.0))
+        recent_low = SignalService._metric_or_zero(getattr(flow_metrics, f"recent_low_{timeframe}", 0.0))
+        range_mid = SignalService._metric_or_zero(getattr(flow_metrics, f"range_mid_{timeframe}", 0.0))
+
+        return MarketInterpretationAssessment(
+            trend=trend,
+            control=control,
+            state=state_label,
+            oi_intent=MarketInterpreterEngine._oi_intent(oi_change),
+            structure_label="Persisted squeeze breakout",
+            structure_shift="Awaiting confirmation" if action != "ENTER" else "Confirmed squeeze continuation",
+            recent_high=recent_high if recent_high > 0 else None,
+            recent_low=recent_low if recent_low > 0 else None,
+            range_mid=range_mid if range_mid > 0 else None,
+            higher_timeframe_trend=higher_timeframe_trend,
+            higher_timeframe_alignment=MarketInterpreterEngine._higher_timeframe_alignment(trend, higher_timeframe_trend),
+            counter_trend=higher_timeframe_trend not in {"Neutral", trend},
+            action=action,
+            action_rationale=rationale,
+            interpretation="Squeeze state persisted from the original breakout candle.",
+            trap_risk=0.12 if action == "ENTER" else 0.18,
+            conflict_score=conflict_score,
+            structure_strength=structure_strength,
+            flow_alignment=flow_alignment,
+            trend_alignment=trend_alignment,
+            clarity_confidence=clarity_confidence,
+            risk_notes=[],
+            warnings=list(warnings or []),
+            self_critique="Pending squeeze state overrides re-classification until confirmation resolves.",
+        )
+
+    def _resolve_pending_squeeze(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        bucket: TimeframeBucket,
+        flow_metrics: FlowMetrics,
+        higher_timeframe_trend: str,
+        higher_timeframe_control: str,
+    ) -> tuple[dict[str, Any] | None, ActionAssessment | None, MarketInterpretationAssessment | None, bool, bool, str | None]:
+        pending_squeeze = getattr(self, "pending_squeeze", None)
+        if not isinstance(pending_squeeze, dict):
+            self.pending_squeeze = {}
+            return None, None, None, False, False, None
+
+        key = (symbol, timeframe)
+        pending = pending_squeeze.get(key)
+        if pending is None:
+            return None, None, None, False, False, None
+
+        bucket_seconds = max(TIMEFRAME_DELTAS.get(timeframe, timedelta(minutes=60)).total_seconds(), 1.0)
+        elapsed_seconds = max(0.0, (bucket.bucket_start - pending["bucket_start"]).total_seconds())
+        candles_elapsed = int(round(elapsed_seconds / bucket_seconds))
+        pending_snapshot = {
+            **pending,
+            "candles_elapsed": candles_elapsed,
+        }
+        action_assessment = ActionAssessment(
+            bias=pending["bias"],
+            setup_type="Squeeze",
+            status="Ready",
+            confidence_label=pending["confidence_label"],
+            opportunity_score=float(pending["strength"]),
+        )
+
+        if candles_elapsed > int(pending.get("expiry_candles", 6)):
+            self.pending_squeeze.pop(key, None)
+            market_interpretation = self._pending_squeeze_market_interpretation(
+                pending=pending_snapshot,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                higher_timeframe_trend=higher_timeframe_trend,
+                higher_timeframe_control=higher_timeframe_control,
+                state_label="Squeeze Timeout",
+                action="WAIT",
+                rationale="Pending squeeze expired before confirmation arrived.",
+                warnings=["Squeeze confirmation timed out."],
+            )
+            return (
+                pending_snapshot,
+                self._action_with_status(action_assessment, "Rejected"),
+                market_interpretation,
+                False,
+                False,
+                "squeeze_confirmation_timed_out",
+            )
+
+        if candles_elapsed <= 0:
+            market_interpretation = self._pending_squeeze_market_interpretation(
+                pending=pending_snapshot,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                higher_timeframe_trend=higher_timeframe_trend,
+                higher_timeframe_control=higher_timeframe_control,
+                state_label="Squeeze Pending",
+                action="WAIT",
+                rationale="Persisted squeeze breakout is waiting for the next candle confirmation.",
+                warnings=["Awaiting squeeze confirmation."],
+            )
+            return (
+                pending_snapshot,
+                action_assessment,
+                market_interpretation,
+                True,
+                False,
+                None,
+            )
+
+        direction = int(pending["direction"])
+        breakout_price = float(pending["breakout_price"])
+        holds_outside_breakout_range = (
+            bucket.close_price >= breakout_price
+            if direction > 0
+            else bucket.close_price <= breakout_price
+        )
+
+        if holds_outside_breakout_range:
+            self.pending_squeeze.pop(key, None)
+            market_interpretation = self._pending_squeeze_market_interpretation(
+                pending=pending_snapshot,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                higher_timeframe_trend=higher_timeframe_trend,
+                higher_timeframe_control=higher_timeframe_control,
+                state_label="Squeeze",
+                action="ENTER",
+                rationale="Persisted squeeze breakout stayed outside the prior range long enough to confirm entry.",
+            )
+            return (
+                pending_snapshot,
+                self._action_with_status(action_assessment, "Triggered"),
+                market_interpretation,
+                False,
+                True,
+                None,
+            )
+
+        market_interpretation = self._pending_squeeze_market_interpretation(
+            pending=pending_snapshot,
+            flow_metrics=flow_metrics,
+            timeframe=timeframe,
+            higher_timeframe_trend=higher_timeframe_trend,
+            higher_timeframe_control=higher_timeframe_control,
+            state_label="Squeeze Pending",
+            action="WAIT",
+            rationale="Breakout has not held outside the prior range yet, so the squeeze stays pending until expiry.",
+            warnings=["Awaiting squeeze confirmation."],
+        )
+        return (
+            pending_snapshot,
+            action_assessment,
+            market_interpretation,
+            True,
+            False,
+            None,
+        )
+
+    def _arm_pending_squeeze(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        bucket: TimeframeBucket,
+        action: ActionAssessment,
+        execution: ExecutionPlan | None,
+        market_interpretation: MarketInterpretationAssessment,
+    ) -> tuple[ActionAssessment, bool]:
+        if action.setup_type != "Squeeze" or action.status != "Triggered":
+            return action, False
+        if execution is None or not execution.breakout_valid or execution.entry_min is None:
+            return action, False
+
+        direction = 1 if action.bias == "Bullish" else -1 if action.bias == "Bearish" else 0
+        if direction == 0:
+            self._clear_pending_squeeze(symbol, timeframe)
+            return action, False
+
+        breakout_size = abs(SignalService._metric_or_zero(getattr(bucket, "close_price", 0.0) - getattr(bucket, "open_price", 0.0))) / max(abs(bucket.open_price), 1e-9)
+        if breakout_size < 0.003:
+            self._clear_pending_squeeze(symbol, timeframe)
+            return self._action_with_status(action, "Rejected"), False
+
+        self.pending_squeeze[(symbol, timeframe)] = {
+            "symbol": symbol,
+            "direction": direction,
+            "bias": action.bias,
+            "breakout_price": float(execution.entry_min),
+            "timestamp": bucket.last_timestamp,
+            "bucket_start": bucket.bucket_start,
+            "strength": max(float(action.opportunity_score), float(market_interpretation.clarity_confidence)),
+            "confidence_label": action.confidence_label,
+            "expiry_candles": 6,
+        }
+        return self._action_with_status(action, "Ready"), True
+
     def _apply_followthrough_gate(
         self,
         *,
@@ -4696,8 +6315,11 @@ class SignalService:
         bucket: TimeframeBucket,
         action: ActionAssessment,
         execution: ExecutionPlan | None,
+        flow_metrics: FlowMetrics | None = None,
     ) -> tuple[ActionAssessment, bool]:
         if action.status != "Triggered" or execution is None or not execution.breakout_valid or execution.entry_min is None:
+            return action, False
+        if action.setup_type == "Squeeze":
             return action, False
 
         if not hasattr(self, "pending_followthrough") or not isinstance(self.pending_followthrough, dict):
@@ -4812,6 +6434,7 @@ class SignalService:
             self.ready_since.pop(key, None)
         if keep_state is None:
             self._clear_pending_followthrough(symbol, timeframe)
+            self._clear_pending_squeeze(symbol, timeframe)
 
     def _apply_signal_decay(
         self,

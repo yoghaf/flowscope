@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   Activity,
   TrendingUp,
@@ -17,6 +17,7 @@ import {
   Loader2,
   BarChart3,
   Brain,
+  Layers,
 } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -43,6 +44,9 @@ interface Signal {
   max_profit_pct: number;
   tp1_hit: boolean;
   insights: string[];
+  strategy_version: string;
+  position_size_multiplier: number;
+  confidence_score: number;
   created_at: string | null;
   closed_at: string | null;
   close_reason: string | null;
@@ -82,6 +86,7 @@ export default function SignalsPage() {
   const [data, setData] = useState<SignalsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "open" | "closed">("all");
+  const [versionFilter, setVersionFilter] = useState<string>("v2_balanced");
   const [error, setError] = useState<string | null>(null);
 
   const fetchSignals = useCallback(async () => {
@@ -107,6 +112,32 @@ export default function SignalsPage() {
     return () => clearInterval(interval);
   }, [fetchSignals]);
 
+  const availableVersions = useMemo(() => {
+    if (!data) return [];
+    const versions = new Set(data.signals.map((s) => s.strategy_version).filter(Boolean));
+    return Array.from(versions).sort();
+  }, [data]);
+
+  const filteredSignals = useMemo(() => {
+    if (!data) return [];
+    if (versionFilter === "All") return data.signals;
+    return data.signals.filter((s) => s.strategy_version === versionFilter);
+  }, [data, versionFilter]);
+
+  const filteredSummary = useMemo(() => {
+    const closed = filteredSignals.filter((s) => s.result === "win" || s.result === "loss");
+    const wins = closed.filter((s) => s.result === "win").length;
+    const losses = closed.filter((s) => s.result === "loss").length;
+    const winrate = closed.length > 0 ? (wins / closed.length) * 100 : 0;
+    return {
+      total_closed: closed.length,
+      wins,
+      losses,
+      winrate: Math.round(winrate * 10) / 10,
+      open_trades: filteredSignals.filter((s) => s.result === "open").length,
+    };
+  }, [filteredSignals]);
+
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -124,7 +155,8 @@ export default function SignalsPage() {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Status filter */}
           {(["all", "open", "closed"] as const).map((f) => (
             <button
               key={f}
@@ -139,6 +171,28 @@ export default function SignalsPage() {
               {f}
             </button>
           ))}
+
+          {/* Strategy version filter */}
+          <div className="ml-2 flex items-center gap-1.5">
+            <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+            <select
+              id="strategy-version-filter"
+              value={versionFilter}
+              onChange={(e) => setVersionFilter(e.target.value)}
+              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-foreground outline-none transition focus:border-violet-500/40 focus:bg-white/10"
+            >
+              <option value="All">All Versions</option>
+              {availableVersions.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+              {!availableVersions.includes("v2_balanced") && (
+                <option value="v2_balanced">v2_balanced</option>
+              )}
+            </select>
+          </div>
+
           <button
             id="refresh-signals"
             onClick={fetchSignals}
@@ -150,31 +204,31 @@ export default function SignalsPage() {
       </div>
 
       {/* Summary cards */}
-      {data?.summary && (
+      {data && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatCard
             icon={<Activity className="h-4 w-4" />}
             label="Open Trades"
-            value={data.summary.open_trades}
+            value={filteredSummary.open_trades}
             color="blue"
           />
           <StatCard
             icon={<CheckCircle2 className="h-4 w-4" />}
             label="Wins"
-            value={data.summary.wins}
+            value={filteredSummary.wins}
             color="emerald"
           />
           <StatCard
             icon={<XCircle className="h-4 w-4" />}
             label="Losses"
-            value={data.summary.losses}
+            value={filteredSummary.losses}
             color="rose"
           />
           <StatCard
             icon={<Target className="h-4 w-4" />}
             label="Winrate"
-            value={`${data.summary.winrate}%`}
-            color={data.summary.winrate >= 60 ? "emerald" : data.summary.winrate >= 50 ? "amber" : "rose"}
+            value={`${filteredSummary.winrate}%`}
+            color={filteredSummary.winrate >= 60 ? "emerald" : filteredSummary.winrate >= 50 ? "amber" : "rose"}
           />
         </div>
       )}
@@ -198,20 +252,22 @@ export default function SignalsPage() {
       )}
 
       {/* Empty state */}
-      {data && data.signals.length === 0 && (
+      {data && filteredSignals.length === 0 && (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-white/5 bg-card/50 py-20">
           <Zap className="h-12 w-12 text-muted-foreground/30" />
           <p className="mt-4 text-lg font-medium text-muted-foreground">No signals yet</p>
           <p className="mt-1 text-sm text-muted-foreground/60">
-            The V14 engine is monitoring 143 tokens. Signals will appear here when A-Grade setups are detected.
+            {versionFilter !== "All"
+              ? `No signals found for strategy "${versionFilter}". Try selecting "All Versions".`
+              : "The V14 engine is monitoring 143 tokens. Signals will appear here when A-Grade setups are detected."}
           </p>
         </div>
       )}
 
       {/* Signals list */}
-      {data && data.signals.length > 0 && (
+      {data && filteredSignals.length > 0 && (
         <div className="space-y-4">
-          {data.signals.map((signal) => (
+          {filteredSignals.map((signal) => (
             <SignalCard key={signal.id} signal={signal} />
           ))}
         </div>
@@ -255,6 +311,8 @@ function SignalCard({ signal }: { signal: Signal }) {
   const isBullish = signal.bias === "Bullish";
   const isOpen = signal.result === "open";
   const isWin = signal.result === "win";
+  const size = signal.position_size_multiplier;
+  const confScore = signal.confidence_score;
 
   const resultColors: Record<string, string> = {
     open: "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -269,6 +327,9 @@ function SignalCard({ signal }: { signal: Signal }) {
     B: "bg-amber-500/15 text-amber-400",
     C: "bg-slate-500/15 text-slate-400",
   };
+
+  const sizeColor = size >= 1.0 ? "text-emerald-400" : "text-slate-400";
+  const confColor = confScore >= 0.75 ? "text-emerald-400" : confScore >= 0.5 ? "text-amber-400" : "text-slate-400";
 
   return (
     <div
@@ -314,6 +375,11 @@ function SignalCard({ signal }: { signal: Signal }) {
                 >
                   {signal.result}
                 </span>
+                {signal.strategy_version && signal.strategy_version !== "unknown" && (
+                  <span className="rounded-lg bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-violet-400 border border-violet-500/20">
+                    {signal.strategy_version}
+                  </span>
+                )}
               </div>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {signal.setup_type} · {signal.timeframe} · {signal.market_regime} ·{" "}
@@ -321,12 +387,22 @@ function SignalCard({ signal }: { signal: Signal }) {
               </p>
             </div>
           </div>
-          <div className="text-right">
+          <div className="text-right space-y-1">
             <div className="flex items-center gap-1 text-sm font-semibold">
               <BarChart3 className="h-3.5 w-3.5 text-violet-400" />
               <span className="text-violet-400">{signal.confidence}%</span>
             </div>
             <p className="text-[10px] text-muted-foreground">Confidence</p>
+            <div className="flex items-center gap-2 text-[10px]">
+              <span className={`font-semibold ${sizeColor}`}>{size.toFixed(2)}x</span>
+              <span className="text-muted-foreground">Size</span>
+            </div>
+            {confScore > 0 && (
+              <div className="flex items-center gap-2 text-[10px]">
+                <span className={`font-semibold ${confColor}`}>{Math.round(confScore * 100)}%</span>
+                <span className="text-muted-foreground">Score</span>
+              </div>
+            )}
           </div>
         </div>
 

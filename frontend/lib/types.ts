@@ -461,6 +461,8 @@ export interface PerformanceTradeRow {
   max_profit_usd?: number | null;
   max_drawdown_pct?: number | null;
   max_drawdown_usd?: number | null;
+  strategy_version?: string | null;
+  position_size_multiplier?: number | null;
 }
 
 export interface PerformanceTradeTableResponse {

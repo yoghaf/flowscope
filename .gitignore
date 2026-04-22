@@ -16,3 +16,15 @@ coverage/
 flowscope.sql
 Thumbs.db
 .DS_Store
+
+# Data files — do not push
+*.sql
+phase*-report.csv
+phase*-summary.json
+phase*-after-report.csv
+phase*-after-summary.json
+phase*-before-report.csv
+phase*-before-summary.json
+replay-performance-report.csv
+replay-performance-summary.json
+trade_autopsies/

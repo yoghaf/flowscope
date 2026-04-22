@@ -9,10 +9,17 @@ from backend.services.signal_service import SignalService
 from backend.services.timeframe_aggregator import TimeframeBucket
 
 
+class StaticPortfolioManager:
+    @staticmethod
+    def get_global_size_multiplier() -> float:
+        return 1.0
+
+
 def make_service() -> SignalService:
     service = SignalService.__new__(SignalService)
     service.settings = Settings(demo_mode=False)
     service.context_bridge = ContextBridgeEngine()
+    service.portfolio_manager = StaticPortfolioManager()
     return service
 
 
@@ -97,6 +104,78 @@ def make_previous_bucket(
         short_liquidations_total=0.0,
         exchange_count_sum=1,
         sample_count=1,
+    )
+
+
+def expected_live_confidence_multiplier(
+    service: SignalService,
+    *,
+    flow_alignment: float,
+    structure_strength: float,
+    clarity_confidence: float,
+) -> float:
+    score = service._continuation_live_confidence_score(
+        flow_alignment=flow_alignment,
+        structure_strength=structure_strength,
+        clarity_confidence=clarity_confidence,
+    )
+    size = service.settings.continuation_dynamic_size_min + (
+        0.65 * (max(0.0, min(score, 1.0)) ** service.settings.continuation_live_confidence_power)
+    )
+    if score < service.settings.continuation_live_confidence_low_penalty_threshold:
+        size *= service.settings.continuation_live_confidence_low_penalty_multiplier
+    if score > service.settings.continuation_live_confidence_elite_threshold:
+        size *= service.settings.continuation_live_confidence_elite_boost
+    return round(
+        max(
+            service.settings.continuation_dynamic_size_min,
+            min(service.settings.continuation_dynamic_size_max, size),
+        ),
+        4,
+    )
+
+
+def expected_quality_score(
+    service: SignalService,
+    *,
+    entry_efficiency: float,
+    mae_r: float,
+    mfe_r: float,
+) -> float:
+    efficiency_component = (2.0 * max(0.0, min(entry_efficiency, 1.0))) - 1.0
+    mae_component = 1.0 - (
+        2.0
+        * max(
+            0.0,
+            min(
+                mae_r / service.settings.continuation_quality_mae_normalizer,
+                1.0,
+            ),
+        )
+    )
+    mfe_component = (
+        2.0
+        * max(
+            0.0,
+            min(
+                mfe_r / service.settings.continuation_quality_mfe_normalizer,
+                1.0,
+            ),
+        )
+    ) - 1.0
+    return round(
+        max(
+            -1.0,
+            min(
+                (
+                    efficiency_component * service.settings.continuation_quality_efficiency_weight
+                    + mae_component * service.settings.continuation_quality_mae_weight
+                    + mfe_component * service.settings.continuation_quality_mfe_weight
+                ),
+                1.0,
+            ),
+        ),
+        4,
     )
 
 
@@ -586,3 +665,826 @@ def test_1h_pullback_acceptance_waits_when_micro_pullback_is_still_falling() -> 
 
     assert action.status == "Ready"
     assert pending is True
+
+
+def test_continuation_dynamic_size_scales_with_confidence_and_volatility() -> None:
+    service = make_service()
+    action = ActionAssessment(
+        bias="Bullish",
+        setup_type="Continuation",
+        status="Triggered",
+        confidence_label="High",
+        opportunity_score=0.9,
+    )
+
+    strong_execution = make_execution()
+    service._apply_execution_size_modifiers(
+        execution=strong_execution,
+        scenario_label="efficient_build",
+        flow_alignment=0.86,
+        action=action,
+        market_interpretation=make_interpretation(
+            flow_alignment=0.86,
+            structure_strength=0.84,
+            clarity_confidence=0.82,
+        ),
+        flow_metrics=FlowMetrics(atr_15m=0.010, range_mid_15m=1.0),
+        timeframe="15m",
+    )
+
+    weak_execution = make_execution()
+    service._apply_execution_size_modifiers(
+        execution=weak_execution,
+        scenario_label="efficient_build",
+        flow_alignment=0.55,
+        action=action,
+        market_interpretation=make_interpretation(
+            flow_alignment=0.55,
+            structure_strength=0.55,
+            clarity_confidence=0.52,
+        ),
+        flow_metrics=FlowMetrics(atr_15m=0.0015, range_mid_15m=1.0),
+        timeframe="15m",
+    )
+
+    assert strong_execution.position_size_multiplier > 1.0
+    assert weak_execution.position_size_multiplier < 0.7
+    assert strong_execution.position_size_multiplier > weak_execution.position_size_multiplier
+
+
+def test_continuation_hard_filter_blocks_choppy_regime() -> None:
+    service = make_service()
+    reasons = service._entry_hard_filter_reasons(
+        action=ActionAssessment(
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Triggered",
+            confidence_label="High",
+            opportunity_score=0.82,
+        ),
+        flow_metrics=FlowMetrics(
+            price_change_15m=0.003,
+            atr_15m=0.0010,
+            compression_score_15m=0.70,
+            taker_buy_sell_ratio_delta_15m=0.01,
+        ),
+        timeframe="15m",
+        clarity_confidence=0.82,
+        state_name="Long Build-up",
+    )
+
+    assert "continuation_choppy_regime" in reasons
+
+
+def test_continuation_dynamic_tp1_expands_when_structure_and_feedback_are_strong() -> None:
+    service = make_service()
+    service.continuation_feedback_cache = {
+        "15m": {
+            "sample_count": 8,
+            "avg_entry_efficiency": 0.78,
+            "avg_mae_r": 0.32,
+            "avg_mfe_r": 1.48,
+            "recent_loss_streak": 0,
+            "size_multiplier": 1.05,
+        }
+    }
+    execution = make_execution(entry_min=1.0000, invalidation=0.9800, target_1=1.0200, target_2=1.0400)
+    profile = service._apply_continuation_exit_modifiers(
+        execution=execution,
+        action=ActionAssessment(
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Triggered",
+            confidence_label="High",
+            opportunity_score=0.92,
+        ),
+        market_interpretation=make_interpretation(
+            structure_strength=0.88,
+            clarity_confidence=0.84,
+        ),
+        flow_metrics=FlowMetrics(atr_15m=0.0020, range_mid_15m=1.0),
+        timeframe="15m",
+    )
+
+    assert profile["tp1_r_multiple"] > 1.1
+    assert execution.target_1 is not None
+    assert round((execution.target_1 - execution.entry_min) / (execution.entry_min - execution.invalidation), 4) == profile["tp1_r_multiple"]
+
+
+def test_continuation_feedback_penalizes_size_after_loss_streak() -> None:
+    service = make_service()
+    baseline_service = make_service()
+    action = ActionAssessment(
+        bias="Bullish",
+        setup_type="Continuation",
+        status="Triggered",
+        confidence_label="High",
+        opportunity_score=0.88,
+    )
+    service.continuation_feedback_cache = {
+        "15m": {
+            "sample_count": 7,
+            "avg_entry_efficiency": 0.44,
+            "avg_mae_r": 0.92,
+            "avg_mfe_r": 0.84,
+            "recent_loss_streak": 3,
+            "size_multiplier": 0.736,
+        }
+    }
+    execution = make_execution()
+    baseline_execution = make_execution()
+    feedback_profile = service._apply_execution_size_modifiers(
+        execution=execution,
+        scenario_label="efficient_build",
+        scenario_score=0.48,
+        flow_alignment=0.84,
+        action=action,
+        market_interpretation=make_interpretation(
+            flow_alignment=0.84,
+            structure_strength=0.83,
+            clarity_confidence=0.82,
+        ),
+        flow_metrics=FlowMetrics(atr_15m=0.008, range_mid_15m=1.0),
+        timeframe="15m",
+    )
+    baseline_service._apply_execution_size_modifiers(
+        execution=baseline_execution,
+        scenario_label="efficient_build",
+        scenario_score=0.48,
+        flow_alignment=0.84,
+        action=action,
+        market_interpretation=make_interpretation(
+            flow_alignment=0.84,
+            structure_strength=0.83,
+            clarity_confidence=0.82,
+        ),
+        flow_metrics=FlowMetrics(atr_15m=0.008, range_mid_15m=1.0),
+        timeframe="15m",
+    )
+
+    assert feedback_profile["recent_loss_streak"] == 3
+    assert execution.position_size_multiplier < baseline_execution.position_size_multiplier
+
+
+def test_continuation_expectancy_bucket_boosts_elite_size_scaling() -> None:
+    service = make_service()
+    control_service = make_service()
+    action = ActionAssessment(
+        bias="Bullish",
+        setup_type="Continuation",
+        status="Triggered",
+        confidence_label="High",
+        opportunity_score=0.93,
+    )
+    service.continuation_feedback_cache = {
+        "15m": {
+            "sample_count": 120,
+            "avg_entry_efficiency": 0.70,
+            "avg_mae_r": 0.36,
+            "avg_mfe_r": 1.42,
+            "avg_realized_r": 0.21,
+            "recent_loss_streak": 0,
+            "size_multiplier": 1.0,
+        }
+    }
+    control_service.continuation_feedback_cache = {
+        "15m": {
+            "sample_count": 99,
+            "avg_entry_efficiency": 0.70,
+            "avg_mae_r": 0.36,
+            "avg_mfe_r": 1.42,
+            "avg_realized_r": 0.21,
+            "recent_loss_streak": 0,
+            "size_multiplier": 1.0,
+        }
+    }
+    service.continuation_feedback_bucket_cache = {
+        ("15m", "elite"): {
+            "sample_count": 12,
+            "winrate": 0.61,
+            "avg_realized_r": 0.42,
+            "avg_entry_efficiency": 0.76,
+            "avg_mae_r": 0.29,
+            "avg_mfe_r": 1.92,
+            "timeframe": "15m",
+            "confidence_bucket": "elite",
+        }
+    }
+    execution = make_execution()
+    control_execution = make_execution()
+
+    profile = service._apply_execution_size_modifiers(
+        execution=execution,
+        scenario_label="efficient_build",
+        scenario_score=0.86,
+        flow_alignment=0.74,
+        action=action,
+        market_interpretation=make_interpretation(
+            flow_alignment=0.74,
+            structure_strength=0.82,
+            clarity_confidence=0.83,
+        ),
+        flow_metrics=FlowMetrics(atr_15m=0.010, range_mid_15m=1.0),
+        timeframe="15m",
+    )
+    control_service._apply_execution_size_modifiers(
+        execution=control_execution,
+        scenario_label="efficient_build",
+        scenario_score=0.86,
+        flow_alignment=0.74,
+        action=action,
+        market_interpretation=make_interpretation(
+            flow_alignment=0.74,
+            structure_strength=0.82,
+            clarity_confidence=0.83,
+        ),
+        flow_metrics=FlowMetrics(atr_15m=0.010, range_mid_15m=1.0),
+        timeframe="15m",
+    )
+
+    assert profile["confidence_bucket"] == "elite"
+    assert profile["history_ready"] == 1
+    assert profile["bucket_expectancy_multiplier"] > 1.0
+    assert execution.position_size_multiplier > control_execution.position_size_multiplier
+
+
+def test_continuation_bucket_scaling_waits_for_minimum_history() -> None:
+    service = make_service()
+    action = ActionAssessment(
+        bias="Bullish",
+        setup_type="Continuation",
+        status="Triggered",
+        confidence_label="High",
+        opportunity_score=0.93,
+    )
+    service.continuation_feedback_cache = {
+        "15m": {
+            "sample_count": 99,
+            "avg_entry_efficiency": 0.70,
+            "avg_mae_r": 0.36,
+            "avg_mfe_r": 1.42,
+            "avg_realized_r": 0.21,
+            "recent_loss_streak": 0,
+            "size_multiplier": 1.0,
+        }
+    }
+    execution = make_execution()
+
+    profile = service._apply_execution_size_modifiers(
+        execution=execution,
+        scenario_label="efficient_build",
+        scenario_score=0.86,
+        flow_alignment=0.74,
+        action=action,
+        market_interpretation=make_interpretation(
+            flow_alignment=0.74,
+            structure_strength=0.82,
+            clarity_confidence=0.83,
+        ),
+        flow_metrics=FlowMetrics(atr_15m=0.010, range_mid_15m=1.0),
+        timeframe="15m",
+    )
+
+    assert profile["confidence_bucket"] == "elite"
+    assert profile["history_ready"] == 0
+    assert profile["bucket_size_multiplier"] == 1.0
+    assert execution.position_size_multiplier < service.settings.continuation_dynamic_size_max
+
+
+def test_continuation_live_confidence_sizing_stays_active_without_history() -> None:
+    service = make_service()
+    action = ActionAssessment(
+        bias="Bullish",
+        setup_type="Continuation",
+        status="Triggered",
+        confidence_label="High",
+        opportunity_score=0.88,
+    )
+    low_execution = make_execution()
+    high_execution = make_execution()
+
+    low_profile = service._apply_execution_size_modifiers(
+        execution=low_execution,
+        scenario_label="efficient_build",
+        scenario_score=0.62,
+        flow_alignment=0.68,
+        action=action,
+        market_interpretation=make_interpretation(
+            flow_alignment=0.68,
+            structure_strength=0.66,
+            clarity_confidence=0.64,
+        ),
+        flow_metrics=FlowMetrics(atr_15m=0.008, range_mid_15m=1.0),
+        timeframe="15m",
+    )
+    high_profile = service._apply_execution_size_modifiers(
+        execution=high_execution,
+        scenario_label="efficient_build",
+        scenario_score=0.92,
+        flow_alignment=0.92,
+        action=action,
+        market_interpretation=make_interpretation(
+            flow_alignment=0.92,
+            structure_strength=0.90,
+            clarity_confidence=0.88,
+        ),
+        flow_metrics=FlowMetrics(atr_15m=0.008, range_mid_15m=1.0),
+        timeframe="15m",
+    )
+
+    assert low_profile["history_ready"] == 0
+    assert high_profile["history_ready"] == 0
+    assert high_profile["live_confidence_score"] > low_profile["live_confidence_score"]
+    assert high_profile["live_confidence_multiplier"] > low_profile["live_confidence_multiplier"]
+    assert high_profile["live_confidence_multiplier"] == expected_live_confidence_multiplier(
+        service,
+        flow_alignment=0.92,
+        structure_strength=0.90,
+        clarity_confidence=0.88,
+    )
+    assert low_profile["live_confidence_multiplier"] == expected_live_confidence_multiplier(
+        service,
+        flow_alignment=0.68,
+        structure_strength=0.66,
+        clarity_confidence=0.64,
+    )
+    assert high_execution.position_size_multiplier > low_execution.position_size_multiplier
+
+
+def test_continuation_live_confidence_elite_boost_applies_above_threshold() -> None:
+    service = make_service()
+
+    below_threshold = service._continuation_live_confidence_multiplier(
+        flow_alignment=0.78,
+        structure_strength=0.80,
+        clarity_confidence=0.79,
+    )
+    above_threshold = service._continuation_live_confidence_multiplier(
+        flow_alignment=0.85,
+        structure_strength=0.86,
+        clarity_confidence=0.83,
+    )
+
+    below_score = service._continuation_live_confidence_score(
+        flow_alignment=0.78,
+        structure_strength=0.80,
+        clarity_confidence=0.79,
+    )
+    above_score = service._continuation_live_confidence_score(
+        flow_alignment=0.85,
+        structure_strength=0.86,
+        clarity_confidence=0.83,
+    )
+    assert above_threshold >= below_threshold
+    assert below_score <= service.settings.continuation_live_confidence_elite_threshold
+    assert above_score > service.settings.continuation_live_confidence_elite_threshold
+    assert above_threshold == expected_live_confidence_multiplier(
+        service,
+        flow_alignment=0.85,
+        structure_strength=0.86,
+        clarity_confidence=0.83,
+    )
+
+
+def test_continuation_live_confidence_soft_penalty_reduces_low_scores() -> None:
+    service = make_service()
+
+    penalized = service._continuation_live_confidence_multiplier(
+        flow_alignment=0.25,
+        structure_strength=0.33,
+        clarity_confidence=0.30,
+    )
+    medium = service._continuation_live_confidence_multiplier(
+        flow_alignment=0.58,
+        structure_strength=0.60,
+        clarity_confidence=0.57,
+    )
+
+    penalized_score = service._continuation_live_confidence_score(
+        flow_alignment=0.25,
+        structure_strength=0.33,
+        clarity_confidence=0.30,
+    )
+    assert penalized_score < service.settings.continuation_live_confidence_low_penalty_threshold
+    assert penalized == expected_live_confidence_multiplier(
+        service,
+        flow_alignment=0.25,
+        structure_strength=0.33,
+        clarity_confidence=0.30,
+    )
+    assert penalized > service.settings.continuation_dynamic_size_min
+    assert medium > penalized
+
+
+def test_continuation_quality_penalty_reduces_size_for_low_quality_history() -> None:
+    service = make_service()
+    control_service = make_service()
+    service.continuation_feedback_cache = {
+        "1h": {
+            "sample_count": 12,
+            "avg_entry_efficiency": 0.44,
+            "avg_mae_r": 0.94,
+            "avg_mfe_r": 0.73,
+            "avg_realized_r": -0.29,
+            "quality_score": expected_quality_score(
+                service,
+                entry_efficiency=0.44,
+                mae_r=0.94,
+                mfe_r=0.73,
+            ),
+            "quality_bucket": "negative",
+            "quality_size_multiplier": service.settings.continuation_quality_negative_multiplier,
+            "quality_history_count": 12,
+            "recent_loss_streak": 0,
+            "size_multiplier": service.settings.continuation_quality_negative_multiplier,
+        }
+    }
+    action = ActionAssessment(
+        bias="Bullish",
+        setup_type="Continuation",
+        status="Triggered",
+        confidence_label="High",
+        opportunity_score=0.82,
+    )
+    execution = make_execution(entry_min=1.0120, invalidation=0.9920, target_1=1.0320, target_2=1.0520)
+    control_execution = make_execution(entry_min=1.0120, invalidation=0.9920, target_1=1.0320, target_2=1.0520)
+
+    profile = service._apply_execution_size_modifiers(
+        execution=execution,
+        scenario_label="efficient_build",
+        state_name="Trend continuation",
+        scenario_score=0.78,
+        flow_alignment=0.82,
+        action=action,
+        market_interpretation=make_interpretation(
+            clarity_confidence=0.81,
+            flow_alignment=0.82,
+            structure_strength=0.84,
+        ),
+        flow_metrics=FlowMetrics(
+            price_change_1h=0.010,
+            atr_1h=0.008,
+            compression_score_1h=0.40,
+            taker_buy_sell_ratio_delta_1h=0.08,
+            range_mid_1h=1.0,
+        ),
+        timeframe="1h",
+    )
+    control_profile = control_service._apply_execution_size_modifiers(
+        execution=control_execution,
+        scenario_label="efficient_build",
+        state_name="Trend continuation",
+        scenario_score=0.78,
+        flow_alignment=0.82,
+        action=action,
+        market_interpretation=make_interpretation(
+            clarity_confidence=0.81,
+            flow_alignment=0.82,
+            structure_strength=0.84,
+        ),
+        flow_metrics=FlowMetrics(
+            price_change_1h=0.010,
+            atr_1h=0.008,
+            compression_score_1h=0.40,
+            taker_buy_sell_ratio_delta_1h=0.08,
+            range_mid_1h=1.0,
+        ),
+        timeframe="1h",
+    )
+
+    assert profile["quality_history_count"] == 12
+    assert profile["quality_bucket"] == "negative"
+    assert profile["quality_size_multiplier"] == service.settings.continuation_quality_negative_multiplier
+    assert profile["quality_score"] == expected_quality_score(
+        service,
+        entry_efficiency=0.44,
+        mae_r=0.94,
+        mfe_r=0.73,
+    )
+    assert control_profile["quality_size_multiplier"] == 1.0
+    assert execution.position_size_multiplier < control_execution.position_size_multiplier
+
+
+def test_continuation_quality_filter_activates_without_minimum_history() -> None:
+    service = make_service()
+    control_service = make_service()
+    service.continuation_feedback_cache = {
+        "1h": {
+            "sample_count": 4,
+            "avg_entry_efficiency": 0.44,
+            "avg_mae_r": 0.94,
+            "avg_mfe_r": 0.73,
+            "avg_realized_r": -0.29,
+            "quality_score": expected_quality_score(
+                service,
+                entry_efficiency=0.44,
+                mae_r=0.94,
+                mfe_r=0.73,
+            ),
+            "quality_bucket": "negative",
+            "quality_size_multiplier": service.settings.continuation_quality_negative_multiplier,
+            "quality_history_count": 4,
+            "recent_loss_streak": 0,
+            "size_multiplier": service.settings.continuation_quality_negative_multiplier,
+        }
+    }
+    action = ActionAssessment(
+        bias="Bullish",
+        setup_type="Continuation",
+        status="Triggered",
+        confidence_label="High",
+        opportunity_score=0.82,
+    )
+    execution = make_execution(entry_min=1.0120, invalidation=0.9920, target_1=1.0320, target_2=1.0520)
+    control_execution = make_execution(entry_min=1.0120, invalidation=0.9920, target_1=1.0320, target_2=1.0520)
+
+    profile = service._apply_execution_size_modifiers(
+        execution=execution,
+        scenario_label="efficient_build",
+        state_name="Trend continuation",
+        scenario_score=0.78,
+        flow_alignment=0.82,
+        action=action,
+        market_interpretation=make_interpretation(
+            clarity_confidence=0.81,
+            flow_alignment=0.82,
+            structure_strength=0.84,
+        ),
+        flow_metrics=FlowMetrics(
+            price_change_1h=0.010,
+            atr_1h=0.008,
+            compression_score_1h=0.40,
+            taker_buy_sell_ratio_delta_1h=0.08,
+            range_mid_1h=1.0,
+        ),
+        timeframe="1h",
+    )
+    control_service._apply_execution_size_modifiers(
+        execution=control_execution,
+        scenario_label="efficient_build",
+        state_name="Trend continuation",
+        scenario_score=0.78,
+        flow_alignment=0.82,
+        action=action,
+        market_interpretation=make_interpretation(
+            clarity_confidence=0.81,
+            flow_alignment=0.82,
+            structure_strength=0.84,
+        ),
+        flow_metrics=FlowMetrics(
+            price_change_1h=0.010,
+            atr_1h=0.008,
+            compression_score_1h=0.40,
+            taker_buy_sell_ratio_delta_1h=0.08,
+            range_mid_1h=1.0,
+        ),
+        timeframe="1h",
+    )
+
+    assert profile["quality_history_count"] == 4
+    assert profile["quality_bucket"] == "negative"
+    assert profile["quality_size_multiplier"] == service.settings.continuation_quality_negative_multiplier
+    assert execution.position_size_multiplier < control_execution.position_size_multiplier
+
+
+def test_continuation_quality_boost_increases_size_for_high_quality_history() -> None:
+    service = make_service()
+    control_service = make_service()
+    service.continuation_feedback_cache = {
+        "4h": {
+            "sample_count": 16,
+            "avg_entry_efficiency": 0.78,
+            "avg_mae_r": 0.28,
+            "avg_mfe_r": 1.62,
+            "avg_realized_r": 0.32,
+            "quality_score": expected_quality_score(
+                service,
+                entry_efficiency=0.78,
+                mae_r=0.28,
+                mfe_r=1.62,
+            ),
+            "quality_bucket": "positive",
+            "quality_size_multiplier": service.settings.continuation_quality_positive_multiplier,
+            "quality_history_count": 16,
+            "recent_loss_streak": 0,
+            "size_multiplier": service.settings.continuation_quality_positive_multiplier,
+        }
+    }
+    action = ActionAssessment(
+        bias="Bullish",
+        setup_type="Continuation",
+        status="Triggered",
+        confidence_label="High",
+        opportunity_score=0.86,
+    )
+    execution = make_execution(entry_min=1.0120, invalidation=0.9920, target_1=1.0320, target_2=1.0520)
+    control_execution = make_execution(entry_min=1.0120, invalidation=0.9920, target_1=1.0320, target_2=1.0520)
+
+    profile = service._apply_execution_size_modifiers(
+        execution=execution,
+        scenario_label="efficient_build",
+        state_name="Trend continuation",
+        scenario_score=0.81,
+        flow_alignment=0.80,
+        action=action,
+        market_interpretation=make_interpretation(
+            clarity_confidence=0.79,
+            flow_alignment=0.80,
+            structure_strength=0.83,
+        ),
+        flow_metrics=FlowMetrics(
+            price_change_4h=0.012,
+            atr_4h=0.008,
+            compression_score_4h=0.38,
+            taker_buy_sell_ratio_delta_4h=0.09,
+            range_mid_4h=1.0,
+        ),
+        timeframe="4h",
+    )
+    control_profile = control_service._apply_execution_size_modifiers(
+        execution=control_execution,
+        scenario_label="efficient_build",
+        state_name="Trend continuation",
+        scenario_score=0.81,
+        flow_alignment=0.80,
+        action=action,
+        market_interpretation=make_interpretation(
+            clarity_confidence=0.79,
+            flow_alignment=0.80,
+            structure_strength=0.83,
+        ),
+        flow_metrics=FlowMetrics(
+            price_change_4h=0.012,
+            atr_4h=0.008,
+            compression_score_4h=0.38,
+            taker_buy_sell_ratio_delta_4h=0.09,
+            range_mid_4h=1.0,
+        ),
+        timeframe="4h",
+    )
+
+    assert profile["quality_history_count"] == 16
+    assert profile["quality_bucket"] == "positive"
+    assert profile["quality_size_multiplier"] == service.settings.continuation_quality_positive_multiplier
+    assert profile["quality_score"] == expected_quality_score(
+        service,
+        entry_efficiency=0.78,
+        mae_r=0.28,
+        mfe_r=1.62,
+    )
+    assert control_profile["quality_size_multiplier"] == 1.0
+    assert execution.position_size_multiplier > control_execution.position_size_multiplier
+
+
+def test_continuation_semi_kill_zone_penalizes_size_without_blocking_entry() -> None:
+    service = make_service()
+    control_service = make_service()
+    service.continuation_feedback_cache = {
+        "1h": {
+            "sample_count": 120,
+            "avg_entry_efficiency": 0.58,
+            "avg_mae_r": 0.62,
+            "avg_mfe_r": 0.97,
+            "avg_realized_r": -0.11,
+            "recent_loss_streak": 0,
+            "size_multiplier": 1.0,
+        }
+    }
+    control_service.continuation_feedback_cache = {
+        "1h": {
+            "sample_count": 120,
+            "avg_entry_efficiency": 0.58,
+            "avg_mae_r": 0.62,
+            "avg_mfe_r": 0.97,
+            "avg_realized_r": -0.11,
+            "recent_loss_streak": 0,
+            "size_multiplier": 1.0,
+        }
+    }
+    service.continuation_expectancy_segment_cache = {
+        ("1h", "medium", "Balanced"): {
+            "sample_count": 9,
+            "winrate": 0.22,
+            "avg_realized_r": -0.41,
+            "avg_entry_efficiency": 0.44,
+            "avg_mae_r": 0.98,
+            "avg_mfe_r": 0.86,
+            "timeframe": "1h",
+            "confidence_bucket": "medium",
+            "regime": "Balanced",
+        }
+    }
+    action = ActionAssessment(
+        bias="Bullish",
+        setup_type="Continuation",
+        status="Triggered",
+        confidence_label="High",
+        opportunity_score=0.78,
+    )
+    execution = make_execution(entry_min=1.0120, invalidation=0.9920, target_1=1.0320, target_2=1.0520)
+    control_execution = make_execution(entry_min=1.0120, invalidation=0.9920, target_1=1.0320, target_2=1.0520)
+    profile = service._apply_execution_size_modifiers(
+        execution=execution,
+        scenario_label="efficient_build",
+        scenario_score=0.72,
+        flow_alignment=0.74,
+        action=action,
+        market_interpretation=make_interpretation(
+            clarity_confidence=0.73,
+            flow_alignment=0.74,
+            structure_strength=0.72,
+        ),
+        flow_metrics=FlowMetrics(
+            price_change_1h=0.010,
+            atr_1h=0.010,
+            compression_score_1h=0.40,
+            taker_buy_sell_ratio_delta_1h=0.05,
+            range_mid_1h=1.0,
+        ),
+        timeframe="1h",
+    )
+    control_service._apply_execution_size_modifiers(
+        execution=control_execution,
+        scenario_label="efficient_build",
+        scenario_score=0.72,
+        flow_alignment=0.74,
+        action=action,
+        market_interpretation=make_interpretation(
+            clarity_confidence=0.73,
+            flow_alignment=0.74,
+            structure_strength=0.72,
+        ),
+        flow_metrics=FlowMetrics(
+            price_change_1h=0.010,
+            atr_1h=0.010,
+            compression_score_1h=0.40,
+            taker_buy_sell_ratio_delta_1h=0.05,
+            range_mid_1h=1.0,
+        ),
+        timeframe="1h",
+    )
+
+    reasons = service._entry_hard_filter_reasons(
+        action=action,
+        flow_metrics=FlowMetrics(
+            price_change_1h=0.010,
+            atr_1h=0.010,
+            compression_score_1h=0.40,
+            taker_buy_sell_ratio_delta_1h=0.05,
+            range_mid_1h=1.0,
+        ),
+        timeframe="1h",
+        clarity_confidence=0.73,
+        market_interpretation=make_interpretation(
+            clarity_confidence=0.73,
+            flow_alignment=0.74,
+            structure_strength=0.72,
+        ),
+        scenario_score=0.72,
+        state_name="Trend continuation",
+    )
+
+    assert profile["kill_zone_active"] == 1
+    assert profile["segment_size_multiplier"] == service.settings.continuation_expectancy_killzone_size_multiplier
+    assert execution.position_size_multiplier < control_execution.position_size_multiplier
+    assert "continuation_expectancy_kill_zone" not in reasons
+    assert "continuation_choppy_regime" not in reasons
+
+
+def test_continuation_elite_exit_boost_expands_tp1_when_history_is_ready() -> None:
+    service = make_service()
+    service.continuation_feedback_cache = {
+        "15m": {
+            "sample_count": 120,
+            "avg_entry_efficiency": 0.74,
+            "avg_mae_r": 0.31,
+            "avg_mfe_r": 1.56,
+            "avg_realized_r": 0.24,
+            "recent_loss_streak": 0,
+            "size_multiplier": 1.0,
+        }
+    }
+    execution = make_execution(entry_min=1.0000, invalidation=0.9800, target_1=1.0200, target_2=1.0400)
+
+    profile = service._apply_continuation_exit_modifiers(
+        execution=execution,
+        action=ActionAssessment(
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Triggered",
+            confidence_label="High",
+            opportunity_score=0.92,
+        ),
+        market_interpretation=make_interpretation(
+            structure_strength=0.88,
+            clarity_confidence=0.84,
+        ),
+        scenario_score=0.88,
+        flow_metrics=FlowMetrics(atr_15m=0.0020, range_mid_15m=1.0),
+        timeframe="15m",
+    )
+
+    assert profile["history_ready"] == 1
+    assert profile["confidence_bucket"] == "elite"
+    assert profile["elite_boost_active"] == 1
+    assert profile["tp1_r_multiple"] >= 1.22

@@ -525,6 +525,7 @@ class PerformanceTradeRow(BaseModel):
     reward_tp2_per_unit: float | None = None
     planned_rr_tp1: float | None = None
     planned_rr_tp2: float | None = None
+    base_capital_per_trade: float | None = None
     capital_per_trade: float | None = None
     estimated_quantity: float | None = None
     risk_amount_usd: float | None = None
@@ -534,11 +535,14 @@ class PerformanceTradeRow(BaseModel):
     pnl_pct: float | None = None
     realized_pnl_usd: float | None = None
     realized_r_multiple: float | None = None
+    allocated_r_multiple: float | None = None
     max_profit_pct: float | None = None
     max_profit_usd: float | None = None
     max_drawdown_pct: float | None = None
     max_drawdown_usd: float | None = None
     engine_tag: str | None = None
+    strategy_version: str | None = None
+    position_size_multiplier: float | None = None
 
 
 class PerformanceTradeTableResponse(BaseModel):

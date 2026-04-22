@@ -68,6 +68,7 @@ class ReplayDiagnostics:
     continuation_15m_entry_type_counts: Counter[str]
     continuation_15m_reason_counts: Counter[str]
     continuation_15m_samples: list[dict[str, object]]
+    near_squeeze_count: int = 0
 
 
 @dataclass(slots=True)
@@ -95,6 +96,107 @@ def _context_soft_gate_reasons(
             include_late_expansion_climax=True,
         ),
     )
+
+
+def _feature_float(value: object) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _continuation_trailing_stop(
+    *,
+    trade: TradeSignal,
+    bucket: TimeframeBucket,
+    direction: int,
+    current_price: float,
+    settings: Any,
+    entry_features: dict[str, object],
+    service: SignalService,
+) -> float | None:
+    existing_stop = getattr(trade, "trailing_stop_price", None)
+    atr_fraction = _current_metric(service, "atr", trade.symbol, trade.timeframe)
+    if atr_fraction is None or atr_fraction <= BREAKEVEN_EPSILON:
+        atr_fraction = _feature_float(entry_features.get(f"atr_{trade.timeframe}")) or 0.0
+    buffer = atr_fraction * current_price * _continuation_trailing_buffer_multiplier(
+        settings=settings,
+        entry_features=entry_features,
+    )
+    if buffer <= BREAKEVEN_EPSILON and trade.invalidation_price is not None:
+        buffer = abs(trade.entry_price - trade.invalidation_price) * 0.35
+    if buffer <= BREAKEVEN_EPSILON:
+        return existing_stop
+
+    recent_low = _current_metric(service, "recent_low", trade.symbol, trade.timeframe) or bucket.low_price
+    recent_high = _current_metric(service, "recent_high", trade.symbol, trade.timeframe) or bucket.high_price
+    candidate = recent_low - buffer if direction > 0 else recent_high + buffer
+    anchor = existing_stop if existing_stop is not None else trade.entry_price
+    if direction > 0:
+        return round(max(candidate, trade.entry_price, anchor), 10)
+    return round(min(candidate, trade.entry_price, anchor), 10)
+
+
+def _continuation_trailing_buffer_multiplier(
+    *,
+    settings: Any,
+    entry_features: dict[str, object],
+) -> float:
+    multiplier = settings.continuation_trailing_atr_buffer
+    volatility_regime = str(entry_features.get("decision_volatility_regime") or "")
+    if volatility_regime == "High":
+        multiplier *= settings.continuation_trailing_high_vol_multiplier
+    elif volatility_regime == "Low":
+        multiplier *= settings.continuation_trailing_low_vol_multiplier
+
+    structure_strength = _feature_float(entry_features.get("structure_strength")) or 0.5
+    multiplier *= 0.9 + (structure_strength * 0.25)
+
+    elite_boost_active = bool(entry_features.get("continuation_elite_boost_active"))
+    if elite_boost_active and bool(entry_features.get("continuation_history_ready")):
+        multiplier *= settings.continuation_elite_trailing_boost_multiplier
+
+    mfe_r = _feature_float(entry_features.get("mfe_r")) or 0.0
+    if mfe_r >= settings.continuation_trailing_profit_lock_mfe_r:
+        multiplier *= settings.continuation_trailing_profit_lock_multiplier
+
+    historical_bucket_mfe_r = _feature_float(entry_features.get("continuation_bucket_avg_mfe_r")) or 0.0
+    if historical_bucket_mfe_r >= settings.continuation_trailing_mfe_loosen_r:
+        multiplier *= settings.continuation_trailing_mfe_loosen_multiplier
+    elif historical_bucket_mfe_r > BREAKEVEN_EPSILON and historical_bucket_mfe_r <= settings.continuation_trailing_mfe_tighten_r:
+        multiplier *= settings.continuation_trailing_mfe_tighten_multiplier
+
+    entry_efficiency = _feature_float(entry_features.get("entry_efficiency"))
+    if entry_efficiency is not None and entry_efficiency < settings.continuation_feedback_penalty_efficiency:
+        multiplier *= 0.95
+
+    return max(0.35, round(multiplier, 4))
+
+
+def _merge_trade_analytics_features(
+    *,
+    entry_features: dict[str, object],
+    pnl_pct: float | None,
+    max_profit_pct: float,
+    max_drawdown_pct: float,
+    risk_pct: float | None,
+) -> dict[str, object]:
+    features = dict(entry_features)
+    mae_pct = abs(min(max_drawdown_pct, 0.0))
+    mfe_pct = max(max_profit_pct, 0.0)
+    features["mae_pct"] = round(mae_pct, 6)
+    features["mfe_pct"] = round(mfe_pct, 6)
+
+    if risk_pct is not None and risk_pct > BREAKEVEN_EPSILON:
+        features["mae_r"] = round(mae_pct / risk_pct, 4)
+        features["mfe_r"] = round(mfe_pct / risk_pct, 4)
+        features["realized_r"] = round((pnl_pct or 0.0) / risk_pct, 4)
+
+    efficiency_denominator = mfe_pct + mae_pct
+    if efficiency_denominator > BREAKEVEN_EPSILON:
+        features["entry_efficiency"] = round(mfe_pct / efficiency_denominator, 4)
+
+    return features
 
 
 class ReplayDatabase:
@@ -226,6 +328,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--symbols", default="ALL", help="Comma-separated symbols or ALL")
     parser.add_argument("--capital-per-trade", type=float, default=100.0, help="Synthetic capital per trade for report output")
     parser.add_argument("--limit-per-symbol", type=int, default=0, help="Optional last-N buckets per timeframe for each symbol")
+    parser.add_argument("--days", type=int, default=0, help="Replay only the last N days based on the latest stored bucket")
     parser.add_argument("--workers", type=int, default=8, help="Concurrent symbol workers (default 8)")
     parser.add_argument(
         "--csv-out",
@@ -249,11 +352,24 @@ async def load_bucket_history(
     database: DatabaseManager,
     symbols: set[str] | None,
     *,
+    days: int,
     limit_per_symbol: int,
 ) -> dict[str, dict[str, list[TimeframeBucket]]]:
     grouped: dict[str, dict[str, list[TimeframeBucket]]] = defaultdict(lambda: defaultdict(list))
     
     async with database.session_factory() as session:
+        latest_bucket_result = await session.execute(
+            select(MarketDataBucket.bucket_start)
+            .order_by(MarketDataBucket.bucket_start.desc())
+            .limit(1)
+        )
+        latest_bucket_start = latest_bucket_result.scalar_one_or_none()
+        cutoff = (
+            latest_bucket_start - timedelta(days=days)
+            if days > 0 and latest_bucket_start is not None
+            else None
+        )
+
         # First get the list of symbols if not provided
         target_symbols = symbols
         if not target_symbols:
@@ -268,6 +384,8 @@ async def load_bucket_history(
                     .where(MarketDataBucket.symbol == symbol, MarketDataBucket.timeframe == timeframe)
                     .order_by(MarketDataBucket.bucket_start.desc())
                 )
+                if cutoff is not None:
+                    statement = statement.where(MarketDataBucket.bucket_start >= cutoff)
                 if limit_per_symbol > 0:
                     statement = statement.limit(limit_per_symbol)
                     
@@ -475,6 +593,7 @@ async def replay_symbol(
                         }
                     )
 
+    diagnostics.near_squeeze_count = getattr(service, "near_squeeze_counter", 0)
     return await replay_db.list_trade_signals(), diagnostics
 
 
@@ -513,6 +632,7 @@ def _evaluate_trade_bucket(
     if direction == 0:
         return
 
+    entry_features = dict(getattr(trade, "entry_features", None) or {})
     timeframe_delta = TIMEFRAME_DELTAS.get(trade.timeframe, TIMEFRAME_DELTAS["1h"])
     timeout_window = timeframe_delta * max(settings.entry_touch_timeout_buckets, 1)
     active_anchor = getattr(trade, "last_scale_in_at", None) or trade.entry_touched_at
@@ -549,6 +669,7 @@ def _evaluate_trade_bucket(
             trade.tp1_hit = True
             # Record TP1 PnL for the 50% partial close
             trade.tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
+            entry_features["tp1_pnl_pct"] = round(trade.tp1_pnl_pct, 6)
             # Trail remaining 50% to breakeven
             trade.trailing_stop_price = trade.entry_price
 
@@ -574,16 +695,33 @@ def _evaluate_trade_bucket(
         if direction > 0 and low_price <= trade.trailing_stop_price:
             exit_price = trade.trailing_stop_price
             trade.result = "win"
-            trade.close_reason = "Partial TP1"
+            trade.close_reason = (
+                "Continuation Trail Stop"
+                if getattr(trade, "setup_type", None) == "Continuation"
+                and abs(trade.trailing_stop_price - trade.entry_price) > BREAKEVEN_EPSILON
+                else "Partial TP1"
+            )
         if direction < 0 and high_price >= trade.trailing_stop_price:
             exit_price = trade.trailing_stop_price
             trade.result = "win"
-            trade.close_reason = "Partial TP1"
+            trade.close_reason = (
+                "Continuation Trail Stop"
+                if getattr(trade, "setup_type", None) == "Continuation"
+                and abs(trade.trailing_stop_price - trade.entry_price) > BREAKEVEN_EPSILON
+                else "Partial TP1"
+            )
 
     risk_pct = (
         abs(trade.entry_price - trade.invalidation_price) / trade.entry_price * 100
         if trade.invalidation_price is not None and trade.entry_price > BREAKEVEN_EPSILON
         else None
+    )
+    entry_features = _merge_trade_analytics_features(
+        entry_features=entry_features,
+        pnl_pct=trade.pnl_pct,
+        max_profit_pct=trade.max_profit_pct,
+        max_drawdown_pct=trade.max_drawdown_pct,
+        risk_pct=risk_pct,
     )
     if exit_price is None and trade.entry_touched_at is not None:
         elapsed_since_entry = bucket.last_timestamp - trade.entry_touched_at
@@ -614,21 +752,17 @@ def _evaluate_trade_bucket(
     # --- DYNAMIC SETUP EXITS ---
     if exit_price is None and trade.entry_touched_at is not None:
         setup_type = getattr(trade, 'setup_type', None)
-        if setup_type == "Continuation":
-            atr = _current_metric(service, "atr", trade.symbol, trade.timeframe) or 0.0
-            if atr > 0:
-                recent_low = _current_metric(service, "recent_low", trade.symbol, trade.timeframe) or bucket.low_price
-                recent_high = _current_metric(service, "recent_high", trade.symbol, trade.timeframe) or bucket.high_price
-                trail_stop = recent_low - (1.0 * atr * price) if direction > 0 else recent_high + (1.0 * atr * price)
-                # Ensure we don't trail backwards past our fixed invalidation
-                fixed_inv = trade.invalidation_price or trail_stop
-                trail_stop = max(trail_stop, fixed_inv) if direction > 0 else min(trail_stop, fixed_inv)
-                
-                if (direction > 0 and low_price <= trail_stop) or (direction < 0 and high_price >= trail_stop):
-                    exit_price = trail_stop
-                    trade.result = "win" if trade.pnl_pct > 0 else "loss"
-                    trade.close_reason = "Dynamic Trail Stop"
-                    
+        if setup_type == "Continuation" and getattr(trade, "tp1_hit", False):
+            trade.trailing_stop_price = _continuation_trailing_stop(
+                trade=trade,
+                bucket=bucket,
+                direction=direction,
+                current_price=price,
+                settings=settings,
+                entry_features=entry_features,
+                service=service,
+            )
+
         elif setup_type == "Squeeze":
             liq_z = _current_metric(service, "liq_z_score", trade.symbol, trade.timeframe) or 0.0
             vol_z = _current_metric(service, "volume_z", trade.symbol, trade.timeframe) or 0.0
@@ -661,6 +795,16 @@ def _evaluate_trade_bucket(
         else:
             trade.pnl_pct = close_pnl_pct
         trade.closed_at = bucket.last_timestamp
+
+    trade.entry_features = _merge_trade_analytics_features(
+        entry_features=entry_features,
+        pnl_pct=trade.pnl_pct,
+        max_profit_pct=trade.max_profit_pct,
+        max_drawdown_pct=trade.max_drawdown_pct,
+        risk_pct=risk_pct,
+    )
+    if trade.result in {"win", "loss", "breakeven"} and hasattr(service, "record_continuation_feedback_trade"):
+        service.record_continuation_feedback_trade(trade)
 
 async def _evaluate_incremental_trades(
     *,
@@ -753,6 +897,7 @@ async def main() -> int:
     grouped = await load_bucket_history(
         source_db,
         symbol_filter,
+        days=max(args.days, 0),
         limit_per_symbol=max(args.limit_per_symbol, 0),
     )
     if not grouped:
@@ -910,11 +1055,13 @@ async def main() -> int:
             reverse=True,
         )
     }
+    total_near_squeeze = sum(d.near_squeeze_count for _, _, d in results)
     payload = {
         "generated_at": datetime.now(UTC).isoformat(),
         "symbols_replayed": len(grouped),
         "replay_elapsed_seconds": round(replay_elapsed, 1),
         "workers": args.workers,
+        "days": args.days,
         "context_soft_gate_enabled": bool(args.context_soft_gate),
         "summary": {
             "trade_count": summary.trade_count,
@@ -925,6 +1072,7 @@ async def main() -> int:
             "timeout_count": summary.timeout_count,
         },
         "diagnostics": {
+            "near_squeeze_count": total_near_squeeze,
             "rejected_by_stage": dict(aggregate_stage_counts.most_common()),
             "rejected_by_reason": dict(aggregate_reason_counts.most_common()),
             "passed_by_stage": dict(aggregate_pass_counts.most_common()),
@@ -955,10 +1103,13 @@ async def main() -> int:
     print("=" * 60)
     print(f"  Time:      {replay_elapsed:.1f}s")
     print(f"  Symbols:   {len(grouped)}")
+    if args.days > 0:
+        print(f"  Window:    Last {args.days} days")
     print(f"  Trades:    {summary.trade_count}")
     print(f"  Wins:      {summary.win_count}")
     print(f"  Losses:    {summary.loss_count}")
     print(f"  Breakeven: {summary.breakeven_count}")
+    print(f"  Near Squeeze: {total_near_squeeze}")
     print(f"  Timeouts:  {summary.timeout_count}")
     print(f"  Open:      {summary.open_count}")
     print(f"  Rejected:  {dict(aggregate_stage_counts.most_common(10))}")

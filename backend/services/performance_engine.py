@@ -105,8 +105,18 @@ class PerformanceEngine:
 
         rows: list[dict[str, object]] = []
         for trade in filtered:
+            entry_features = getattr(trade, "entry_features", None)
+            if not isinstance(entry_features, dict):
+                entry_features = {}
             fill_count = max(getattr(trade, "fill_count", 1) or 1, 1)
-            effective_capital = capital_per_trade * fill_count
+            base_capital = capital_per_trade * fill_count
+            allocation_multiplier = 1.0
+            try:
+                allocation_multiplier = float(entry_features.get("position_size_multiplier", 1.0) or 1.0)
+            except (TypeError, ValueError):
+                allocation_multiplier = 1.0
+            allocation_multiplier = max(0.1, allocation_multiplier)
+            effective_capital = base_capital * allocation_multiplier
             entry = trade.entry_price
             invalidation = trade.invalidation_price
             target_1 = trade.target_price_1 or trade.target_price
@@ -128,6 +138,7 @@ class PerformanceEngine:
             max_profit_usd = effective_capital * (trade.max_profit_pct / 100)
             max_drawdown_usd = effective_capital * (trade.max_drawdown_pct / 100)
             realized_r_multiple = self._safe_div(realized_pnl_usd, risk_amount_usd) if risk_amount_usd is not None else None
+            allocated_r_multiple = realized_r_multiple * allocation_multiplier if realized_r_multiple is not None else None
 
             row = {
                 "trade_id": trade.id,
@@ -160,6 +171,7 @@ class PerformanceEngine:
                 "reward_tp2_per_unit": self._round(reward_tp2, 6),
                 "planned_rr_tp1": self._round(rr_tp1, 4),
                 "planned_rr_tp2": self._round(rr_tp2, 4),
+                "base_capital_per_trade": self._round(base_capital, 2),
                 "capital_per_trade": self._round(effective_capital, 2),
                 "estimated_quantity": self._round(quantity, 8),
                 "risk_amount_usd": self._round(risk_amount_usd, 2),
@@ -169,14 +181,17 @@ class PerformanceEngine:
                 "pnl_pct": self._round(trade.pnl_pct, 4),
                 "realized_pnl_usd": self._round(realized_pnl_usd, 2),
                 "realized_r_multiple": self._round(realized_r_multiple, 4),
+                "allocated_r_multiple": self._round(allocated_r_multiple, 4),
                 "max_profit_pct": self._round(trade.max_profit_pct, 4),
                 "max_profit_usd": self._round(max_profit_usd, 2),
                 "max_drawdown_pct": self._round(trade.max_drawdown_pct, 4),
                 "max_drawdown_usd": self._round(max_drawdown_usd, 2),
                 "engine_tag": getattr(trade, "engine_tag", None),
+                "strategy_version": entry_features.get("strategy_version", "unknown") if entry_features else "unknown",
+                "position_size_multiplier": self._round(allocation_multiplier, 4),
             }
-            if getattr(trade, "entry_features", None):
-                for key, value in trade.entry_features.items():
+            if entry_features:
+                for key, value in entry_features.items():
                     if isinstance(value, (int, float, bool, str)):
                         row[f"feat_{key}"] = value
             rows.append(row)
@@ -230,6 +245,7 @@ class PerformanceEngine:
             "reward_tp2_per_unit",
             "planned_rr_tp1",
             "planned_rr_tp2",
+            "base_capital_per_trade",
             "capital_per_trade",
             "estimated_quantity",
             "risk_amount_usd",
@@ -239,6 +255,7 @@ class PerformanceEngine:
             "pnl_pct",
             "realized_pnl_usd",
             "realized_r_multiple",
+            "allocated_r_multiple",
             "max_profit_pct",
             "max_profit_usd",
             "max_drawdown_pct",

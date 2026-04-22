@@ -77,6 +77,43 @@ def make_bucket() -> TimeframeBucket:
     )
 
 
+def make_1h_bucket(*, hours_ahead: int = 0) -> TimeframeBucket:
+    bucket_end = datetime(2026, 3, 28, 4, 59, 59, tzinfo=UTC) + timedelta(hours=hours_ahead)
+    return TimeframeBucket(
+        symbol="ARIAUSDT",
+        timeframe="1h",
+        bucket_start=bucket_end - timedelta(hours=1),
+        bucket_end=bucket_end,
+        last_timestamp=bucket_end,
+        open_price=0.33,
+        high_price=0.36,
+        low_price=0.32,
+        close_price=0.35,
+        open_interest_open=1000.0,
+        open_interest_high=1010.0,
+        open_interest_low=990.0,
+        open_interest_close=1005.0,
+        spot_volume_open=100.0,
+        spot_volume_close=120.0,
+        spot_volume_delta=20.0,
+        futures_volume_open=100.0,
+        futures_volume_close=150.0,
+        futures_volume_delta=50.0,
+        funding_rate_sum=0.0,
+        funding_rate_close=0.0,
+        long_short_ratio_sum=1.0,
+        long_short_ratio_close=1.0,
+        taker_buy_sell_ratio_sum=1.0,
+        taker_buy_sell_ratio_close=1.0,
+        long_liquidations_close=0.0,
+        long_liquidations_total=0.0,
+        short_liquidations_close=0.0,
+        short_liquidations_total=0.0,
+        exchange_count_sum=1,
+        sample_count=1,
+    )
+
+
 def test_trade_signal_is_not_reopened_for_same_bucket_timestamp() -> None:
     async def run() -> None:
         service = SignalService.__new__(SignalService)
@@ -614,6 +651,553 @@ def test_breakout_requires_ranging_regime_blocks() -> None:
     )
 
     assert "breakout_requires_trending_regime" in reasons
+
+
+def test_squeeze_breakout_filters_reject_weak_taker_unconfirmed_oi_and_high_wick() -> None:
+    service = SignalService.__new__(SignalService)
+    service.settings = Settings(demo_mode=False)
+
+    bucket = make_bucket()
+    bucket.close_price = 0.349
+    bucket.high_price = 0.35
+    bucket.low_price = 0.348
+
+    reasons = service._breakout_filter_reasons(
+        action=SimpleNamespace(setup_type="Squeeze", bias="Bearish"),
+        bucket=bucket,
+        flow_metrics=FlowMetrics(
+            oi_percentile_15m=0.60,
+            taker_buy_sell_ratio_delta_15m=-0.05,
+            oi_change_15m=0.01,
+            wick_ratio_15m=0.45,
+        ),
+        timeframe="15m",
+        execution=SimpleNamespace(breakout_valid=True, entry_min=0.35, entry_type="Squeeze Trigger"),
+    )
+
+    assert "squeeze_taker_below_threshold" in reasons
+    assert "squeeze_oi_not_confirmed" in reasons
+    assert "squeeze_breakout_high_wick" in reasons
+
+
+def test_squeeze_breakout_filters_allow_clean_directional_pressure() -> None:
+    service = SignalService.__new__(SignalService)
+    service.settings = Settings(demo_mode=False)
+
+    bucket = make_bucket()
+    bucket.close_price = 0.349
+    bucket.high_price = 0.35
+    bucket.low_price = 0.348
+
+    reasons = service._breakout_filter_reasons(
+        action=SimpleNamespace(setup_type="Squeeze", bias="Bearish"),
+        bucket=bucket,
+        flow_metrics=FlowMetrics(
+            oi_percentile_15m=0.60,
+            taker_buy_sell_ratio_delta_15m=-0.35,
+            oi_change_15m=-0.02,
+            wick_ratio_15m=0.10,
+        ),
+        timeframe="15m",
+        execution=SimpleNamespace(breakout_valid=True, entry_min=0.35, entry_type="Squeeze Trigger"),
+    )
+
+    assert reasons == []
+
+
+def test_squeeze_setup_snapshot_requires_imbalance_but_not_funding_gate() -> None:
+    snapshot = SignalService._squeeze_setup_snapshot(
+        FlowMetrics(
+            compression_score_15m=0.46,
+            oi_percentile_15m=0.60,
+            funding_level_15m=0.0,
+            long_short_ratio_delta_15m=0.05,
+        ),
+        "15m",
+    )
+
+    assert snapshot["setup"] is True
+    assert snapshot["imbalance"] is True
+    assert snapshot["imbalance_source"] == "ls_delta"
+    assert snapshot["bias"] == "Bearish"
+    assert snapshot["funding_bonus"] == 0.0
+    assert snapshot["strength"] == 0.53
+
+
+def test_squeeze_setup_snapshot_rejects_compression_and_oi_without_imbalance() -> None:
+    snapshot = SignalService._squeeze_setup_snapshot(
+        FlowMetrics(
+            compression_score_15m=0.46,
+            oi_percentile_15m=0.60,
+            funding_level_15m=0.0,
+            long_short_ratio_delta_15m=0.01,
+        ),
+        "15m",
+    )
+
+    assert snapshot["setup"] is False
+    assert snapshot["near_setup"] is False
+    assert snapshot["imbalance"] is False
+    assert snapshot["imbalance_source"] == "none"
+    assert snapshot["bias"] == "Neutral"
+
+
+def test_squeeze_setup_snapshot_uses_funding_bias_for_direction() -> None:
+    snapshot = SignalService._squeeze_setup_snapshot(
+        FlowMetrics(
+            compression_score_15m=0.46,
+            oi_percentile_15m=0.60,
+            funding_level_15m=-0.00005,
+            long_short_ratio_delta_15m=0.0,
+        ),
+        "15m",
+    )
+
+    assert snapshot["setup"] is True
+    assert snapshot["imbalance"] is True
+    assert snapshot["imbalance_source"] == "funding"
+    assert snapshot["bias"] == "Bullish"
+    assert snapshot["funding_bonus"] == 0.1
+
+
+def test_pending_squeeze_htf_arms_from_1h_setup_for_15m_trigger() -> None:
+    service = SignalService.__new__(SignalService)
+    service.pending_squeeze_htf = {}
+    service.closed_timeframes = {"1h", "4h"}
+    htf_bucket = make_1h_bucket()
+    service.aggregate_store = SimpleNamespace(
+        latest_bucket=lambda symbol, timeframe, closed_only=False, now=None: htf_bucket if symbol == "ARIAUSDT" and timeframe == "1h" else None
+    )
+
+    context = service._sync_pending_squeeze_htf(
+        symbol="ARIAUSDT",
+        flow_metrics=FlowMetrics(
+            compression_score_1h=0.52,
+            oi_percentile_1h=0.68,
+            long_short_ratio_delta_1h=0.06,
+            funding_level_1h=0.0,
+        ),
+        now=htf_bucket.last_timestamp,
+    )
+
+    assert context is not None
+    assert context["active"] is True
+    assert context["setup"] is True
+    assert context["detector_timeframe"] == "1h"
+    assert context["trigger_timeframe"] == "15m"
+    assert context["bias"] == "Bearish"
+    assert context["expiry_candles"] == 8
+    assert service.pending_squeeze_htf["ARIAUSDT"]["bucket_start"] == htf_bucket.bucket_start
+
+
+def test_pending_squeeze_htf_persists_until_expiry_without_fresh_setup() -> None:
+    first_bucket = make_1h_bucket()
+    service = SignalService.__new__(SignalService)
+    service.pending_squeeze_htf = {
+        "ARIAUSDT": {
+            "symbol": "ARIAUSDT",
+            "detector_timeframe": "1h",
+            "trigger_timeframe": "15m",
+            "bias": "Bearish",
+            "direction": -1,
+            "strength": 0.60,
+            "compression": 0.52,
+            "oi_percentile": 0.68,
+            "imbalance_source": "ls_delta",
+            "timestamp": first_bucket.last_timestamp,
+            "bucket_start": first_bucket.bucket_start,
+            "expiry_candles": 8,
+        }
+    }
+    service.closed_timeframes = {"1h", "4h"}
+
+    sixth_bucket = make_1h_bucket(hours_ahead=6)
+    service.aggregate_store = SimpleNamespace(
+        latest_bucket=lambda symbol, timeframe, closed_only=False, now=None: sixth_bucket if symbol == "ARIAUSDT" and timeframe == "1h" else None
+    )
+
+    active_context = service._sync_pending_squeeze_htf(
+        symbol="ARIAUSDT",
+        flow_metrics=FlowMetrics(
+            compression_score_1h=0.20,
+            oi_percentile_1h=0.30,
+            long_short_ratio_delta_1h=0.01,
+            funding_level_1h=0.0,
+        ),
+        now=sixth_bucket.last_timestamp,
+    )
+
+    assert active_context is not None
+    assert active_context["active"] is True
+    assert active_context["candles_elapsed"] == 6
+    assert "ARIAUSDT" in service.pending_squeeze_htf
+
+    ninth_bucket = make_1h_bucket(hours_ahead=9)
+    service.aggregate_store = SimpleNamespace(
+        latest_bucket=lambda symbol, timeframe, closed_only=False, now=None: ninth_bucket if symbol == "ARIAUSDT" and timeframe == "1h" else None
+    )
+
+    expired_context = service._sync_pending_squeeze_htf(
+        symbol="ARIAUSDT",
+        flow_metrics=FlowMetrics(
+            compression_score_1h=0.20,
+            oi_percentile_1h=0.30,
+            long_short_ratio_delta_1h=0.01,
+            funding_level_1h=0.0,
+        ),
+        now=ninth_bucket.last_timestamp,
+    )
+
+    assert expired_context is None
+    assert service.pending_squeeze_htf == {}
+
+
+def test_squeeze_trigger_skips_impossible_close_confirmation_gate() -> None:
+    adjusted = SignalService._adjust_post_action_filter_reasons(
+        action=SimpleNamespace(
+            setup_type="Squeeze",
+            status="Triggered",
+            bias="Bullish",
+        ),
+        execution=SimpleNamespace(entry_type="Squeeze Trigger"),
+        timeframe="15m",
+        reasons=["breakout_close_not_confirmed", "breakout_oi_crowded"],
+    )
+
+    assert adjusted == ["breakout_oi_crowded"]
+
+
+def test_squeeze_trigger_arms_pending_confirmation_on_first_breakout() -> None:
+    service = SignalService.__new__(SignalService)
+    service.pending_squeeze = {}
+
+    first_bucket = make_bucket()
+    first_bucket.open_price = 0.3440
+    first_bucket.close_price = 0.3500
+    first_bucket.high_price = 0.3510
+    first_bucket.low_price = 0.3430
+
+    gated_action, pending = service._arm_pending_squeeze(
+        symbol="ARIAUSDT",
+        timeframe="15m",
+        bucket=first_bucket,
+        action=SimpleNamespace(
+            setup_type="Squeeze",
+            status="Triggered",
+            bias="Bullish",
+            confidence_label="High",
+            opportunity_score=0.82,
+        ),
+        execution=SimpleNamespace(
+            breakout_valid=True,
+            entry_min=0.3500,
+            entry_type="Squeeze Trigger",
+        ),
+        market_interpretation=SimpleNamespace(
+            clarity_confidence=0.78,
+        ),
+    )
+
+    assert gated_action.status == "Ready"
+    assert pending is True
+    pending_state = service.pending_squeeze[("ARIAUSDT", "15m")]
+    assert pending_state["symbol"] == "ARIAUSDT"
+    assert pending_state["direction"] == 1
+    assert pending_state["breakout_price"] == 0.3500
+    assert pending_state["strength"] == 0.82
+    assert pending_state["expiry_candles"] == 6
+
+
+def test_squeeze_confirmation_requires_next_candle_hold_above_breakout_level() -> None:
+    service = SignalService.__new__(SignalService)
+    service.pending_squeeze = {
+        ("ARIAUSDT", "15m"): {
+            "symbol": "ARIAUSDT",
+            "direction": 1,
+            "bucket_start": make_bucket().bucket_start,
+            "timestamp": make_bucket().last_timestamp,
+            "breakout_price": 0.3500,
+            "bias": "Bullish",
+            "confidence_label": "High",
+            "strength": 0.82,
+            "expiry_candles": 6,
+        }
+    }
+
+    second_bucket = TimeframeBucket(
+        symbol="ARIAUSDT",
+        timeframe="15m",
+        bucket_start=make_bucket().bucket_start + timedelta(minutes=15),
+        bucket_end=make_bucket().bucket_end + timedelta(minutes=15),
+        last_timestamp=make_bucket().last_timestamp + timedelta(minutes=15),
+        open_price=0.3500,
+        high_price=0.3520,
+        low_price=0.3495,
+        close_price=0.3506,
+        open_interest_open=1005.0,
+        open_interest_high=1010.0,
+        open_interest_low=1000.0,
+        open_interest_close=1008.0,
+        spot_volume_open=120.0,
+        spot_volume_close=126.0,
+        spot_volume_delta=6.0,
+        futures_volume_open=150.0,
+        futures_volume_close=168.0,
+        futures_volume_delta=18.0,
+        funding_rate_sum=0.0,
+        funding_rate_close=0.0,
+        long_short_ratio_sum=1.0,
+        long_short_ratio_close=1.0,
+        taker_buy_sell_ratio_sum=1.0,
+        taker_buy_sell_ratio_close=1.0,
+        long_liquidations_close=0.0,
+        long_liquidations_total=0.0,
+        short_liquidations_close=0.0,
+        short_liquidations_total=0.0,
+        exchange_count_sum=1,
+        sample_count=1,
+    )
+
+    pending_state, confirmed_action, market_interpretation, pending, confirmed, reject_reason = service._resolve_pending_squeeze(
+        symbol="ARIAUSDT",
+        timeframe="15m",
+        bucket=second_bucket,
+        flow_metrics=FlowMetrics(
+            wick_ratio_15m=0.10,
+        ),
+        higher_timeframe_trend="Bullish",
+        higher_timeframe_control="Buyer Dominant",
+    )
+
+    assert pending_state["candles_elapsed"] == 1
+    assert confirmed_action.setup_type == "Squeeze"
+    assert confirmed_action.status == "Triggered"
+    assert market_interpretation is not None
+    assert market_interpretation.state == "Squeeze"
+    assert market_interpretation.action == "ENTER"
+    assert pending is False
+    assert confirmed is True
+    assert reject_reason is None
+    assert service.pending_squeeze == {}
+
+
+def test_squeeze_confirmation_keeps_pending_until_breakout_holds_or_times_out() -> None:
+    service = SignalService.__new__(SignalService)
+    service.pending_squeeze = {
+        ("ARIAUSDT", "15m"): {
+            "symbol": "ARIAUSDT",
+            "direction": 1,
+            "bucket_start": make_bucket().bucket_start,
+            "timestamp": make_bucket().last_timestamp,
+            "breakout_price": 0.3500,
+            "bias": "Bullish",
+            "confidence_label": "High",
+            "strength": 0.82,
+            "expiry_candles": 6,
+        }
+    }
+
+    waiting_bucket = TimeframeBucket(
+        symbol="ARIAUSDT",
+        timeframe="15m",
+        bucket_start=make_bucket().bucket_start + timedelta(minutes=15),
+        bucket_end=make_bucket().bucket_end + timedelta(minutes=15),
+        last_timestamp=make_bucket().last_timestamp + timedelta(minutes=15),
+        open_price=0.3500,
+        high_price=0.3525,
+        low_price=0.3497,
+        close_price=0.3498,
+        open_interest_open=1005.0,
+        open_interest_high=1012.0,
+        open_interest_low=1000.0,
+        open_interest_close=1004.0,
+        spot_volume_open=120.0,
+        spot_volume_close=123.0,
+        spot_volume_delta=3.0,
+        futures_volume_open=150.0,
+        futures_volume_close=160.0,
+        futures_volume_delta=10.0,
+        funding_rate_sum=0.0,
+        funding_rate_close=0.0,
+        long_short_ratio_sum=1.0,
+        long_short_ratio_close=1.0,
+        taker_buy_sell_ratio_sum=1.0,
+        taker_buy_sell_ratio_close=1.0,
+        long_liquidations_close=0.0,
+        long_liquidations_total=0.0,
+        short_liquidations_close=0.0,
+        short_liquidations_total=0.0,
+        exchange_count_sum=1,
+        sample_count=1,
+    )
+
+    pending_state, waiting_action, market_interpretation, pending, confirmed, reject_reason = service._resolve_pending_squeeze(
+        symbol="ARIAUSDT",
+        timeframe="15m",
+        bucket=waiting_bucket,
+        flow_metrics=FlowMetrics(
+            wick_ratio_15m=0.45,
+        ),
+        higher_timeframe_trend="Bullish",
+        higher_timeframe_control="Buyer Dominant",
+    )
+
+    assert pending_state["candles_elapsed"] == 1
+    assert waiting_action.status == "Ready"
+    assert market_interpretation is not None
+    assert market_interpretation.state == "Squeeze Pending"
+    assert pending is True
+    assert confirmed is False
+    assert reject_reason is None
+    assert ("ARIAUSDT", "15m") in service.pending_squeeze
+
+    confirming_bucket = TimeframeBucket(
+        symbol="ARIAUSDT",
+        timeframe="15m",
+        bucket_start=make_bucket().bucket_start + timedelta(minutes=30),
+        bucket_end=make_bucket().bucket_end + timedelta(minutes=30),
+        last_timestamp=make_bucket().last_timestamp + timedelta(minutes=30),
+        open_price=0.3498,
+        high_price=0.3528,
+        low_price=0.3492,
+        close_price=0.3508,
+        open_interest_open=1005.0,
+        open_interest_high=1013.0,
+        open_interest_low=1000.0,
+        open_interest_close=1009.0,
+        spot_volume_open=120.0,
+        spot_volume_close=128.0,
+        spot_volume_delta=8.0,
+        futures_volume_open=150.0,
+        futures_volume_close=170.0,
+        futures_volume_delta=20.0,
+        funding_rate_sum=0.0,
+        funding_rate_close=0.0,
+        long_short_ratio_sum=1.0,
+        long_short_ratio_close=1.0,
+        taker_buy_sell_ratio_sum=1.0,
+        taker_buy_sell_ratio_close=1.0,
+        long_liquidations_close=0.0,
+        long_liquidations_total=0.0,
+        short_liquidations_close=0.0,
+        short_liquidations_total=0.0,
+        exchange_count_sum=1,
+        sample_count=1,
+    )
+
+    pending_state, confirmed_action, market_interpretation, pending, confirmed, reject_reason = service._resolve_pending_squeeze(
+        symbol="ARIAUSDT",
+        timeframe="15m",
+        bucket=confirming_bucket,
+        flow_metrics=FlowMetrics(
+            wick_ratio_15m=0.48,
+        ),
+        higher_timeframe_trend="Bullish",
+        higher_timeframe_control="Buyer Dominant",
+    )
+
+    assert pending_state["candles_elapsed"] == 2
+    assert confirmed_action.status == "Triggered"
+    assert market_interpretation is not None
+    assert market_interpretation.state == "Squeeze"
+    assert pending is False
+    assert confirmed is True
+    assert reject_reason is None
+    assert service.pending_squeeze == {}
+
+    timed_out_service = SignalService.__new__(SignalService)
+    timed_out_service.pending_squeeze = {
+        ("ARIAUSDT", "15m"): {
+            "symbol": "ARIAUSDT",
+            "direction": 1,
+            "bucket_start": make_bucket().bucket_start,
+            "timestamp": make_bucket().last_timestamp,
+            "breakout_price": 0.3500,
+            "bias": "Bullish",
+            "confidence_label": "High",
+            "strength": 0.82,
+            "expiry_candles": 6,
+        }
+    }
+    timeout_bucket = TimeframeBucket(
+        symbol="ARIAUSDT",
+        timeframe="15m",
+        bucket_start=make_bucket().bucket_start + timedelta(minutes=105),
+        bucket_end=make_bucket().bucket_end + timedelta(minutes=105),
+        last_timestamp=make_bucket().last_timestamp + timedelta(minutes=105),
+        open_price=0.3500,
+        high_price=0.3530,
+        low_price=0.3495,
+        close_price=0.3510,
+        open_interest_open=1005.0,
+        open_interest_high=1012.0,
+        open_interest_low=1000.0,
+        open_interest_close=1008.0,
+        spot_volume_open=120.0,
+        spot_volume_close=126.0,
+        spot_volume_delta=6.0,
+        futures_volume_open=150.0,
+        futures_volume_close=168.0,
+        futures_volume_delta=18.0,
+        funding_rate_sum=0.0,
+        funding_rate_close=0.0,
+        long_short_ratio_sum=1.0,
+        long_short_ratio_close=1.0,
+        taker_buy_sell_ratio_sum=1.0,
+        taker_buy_sell_ratio_close=1.0,
+        long_liquidations_close=0.0,
+        long_liquidations_total=0.0,
+        short_liquidations_close=0.0,
+        short_liquidations_total=0.0,
+        exchange_count_sum=1,
+        sample_count=1,
+    )
+
+    pending_state, timed_out_action, market_interpretation, pending, confirmed, reject_reason = timed_out_service._resolve_pending_squeeze(
+        symbol="ARIAUSDT",
+        timeframe="15m",
+        bucket=timeout_bucket,
+        flow_metrics=FlowMetrics(
+            wick_ratio_15m=0.10,
+        ),
+        higher_timeframe_trend="Bullish",
+        higher_timeframe_control="Buyer Dominant",
+    )
+
+    assert pending_state["candles_elapsed"] == 7
+    assert timed_out_action.status == "Rejected"
+    assert market_interpretation is not None
+    assert market_interpretation.state == "Squeeze Timeout"
+    assert pending is False
+    assert confirmed is False
+    assert reject_reason == "squeeze_confirmation_timed_out"
+    assert timed_out_service.pending_squeeze == {}
+
+
+def test_squeeze_trigger_bypasses_followthrough_pullback_gate() -> None:
+    service = SignalService.__new__(SignalService)
+
+    confirmed_action, pending = service._apply_followthrough_gate(
+        symbol="ARIAUSDT",
+        timeframe="15m",
+        bucket=make_bucket(),
+        action=SimpleNamespace(
+            setup_type="Squeeze",
+            status="Triggered",
+            bias="Bullish",
+            confidence_label="High",
+            opportunity_score=0.82,
+        ),
+        execution=SimpleNamespace(
+            breakout_valid=True,
+            entry_min=0.3490,
+            entry_type="Squeeze Trigger",
+        ),
+        flow_metrics=FlowMetrics(),
+    )
+
+    assert confirmed_action.status == "Triggered"
+    assert pending is False
 
 
 def test_continuation_strict_mode_rejects_missing_taker_alignment() -> None:

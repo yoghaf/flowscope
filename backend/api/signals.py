@@ -40,9 +40,8 @@ async def get_live_signals(
 
     serialized = []
     for t in trades:
-        insights = []
-        if t.entry_features and isinstance(t.entry_features, dict):
-            insights = t.entry_features.get("insights", [])
+        entry = t.entry_features if isinstance(t.entry_features, dict) else {}
+        insights = entry.get("insights", [])
 
         serialized.append({
             "id": t.id,
@@ -67,6 +66,9 @@ async def get_live_signals(
             "tp1_hit": t.tp1_hit,
             "engine_tag": getattr(t, "engine_tag", None),
             "insights": insights,
+            "strategy_version": entry.get("strategy_version", "unknown"),
+            "position_size_multiplier": round(float(entry.get("position_size_multiplier", 1.0) or 1.0), 4),
+            "confidence_score": round(float(entry.get("confidence_score", 0.0) or 0.0), 4),
             "created_at": t.created_at.isoformat() if t.created_at else None,
             "closed_at": t.closed_at.isoformat() if t.closed_at else None,
             "close_reason": t.close_reason,

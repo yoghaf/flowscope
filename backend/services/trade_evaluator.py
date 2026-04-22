@@ -49,8 +49,10 @@ class TradeEvaluator:
             max_drawdown_pct = trade.max_drawdown_pct
             closed_at = getattr(trade, "closed_at", None)
             close_reason = getattr(trade, "close_reason", None)
-            tp1_pnl_pct: float | None = None
+            entry_features = dict(getattr(trade, "entry_features", None) or {})
+            tp1_pnl_pct = self._feature_float(entry_features.get("tp1_pnl_pct"))
             entry_flow_alignment = getattr(trade, "entry_flow_alignment", None)
+            setup_type = getattr(trade, "setup_type", None)
 
             payload: dict[str, object] = {"updated_at": now}
             timeframe_delta = TIMEFRAME_DELTAS.get(trade.timeframe, TIMEFRAME_DELTAS["1h"])
@@ -86,16 +88,25 @@ class TradeEvaluator:
                 pnl_pct = ((price - trade.entry_price) / trade.entry_price) * direction * 100
                 max_profit_pct = max(max_profit_pct, pnl_pct)
                 max_drawdown_pct = min(max_drawdown_pct, pnl_pct)
+                entry_features = self._merge_trade_analytics_features(
+                    entry_features=entry_features,
+                    pnl_pct=pnl_pct,
+                    max_profit_pct=max_profit_pct,
+                    max_drawdown_pct=max_drawdown_pct,
+                    risk_pct=risk_pct,
+                )
 
                 if trade.target_price_1 is not None and not tp1_hit:
                     if direction > 0 and high_price >= trade.target_price_1:
                         tp1_hit = True
                         tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
                         trailing_stop_price = trade.entry_price
+                        entry_features["tp1_pnl_pct"] = round(tp1_pnl_pct, 6)
                     if direction < 0 and low_price <= trade.target_price_1:
                         tp1_hit = True
                         tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
                         trailing_stop_price = trade.entry_price
+                        entry_features["tp1_pnl_pct"] = round(tp1_pnl_pct, 6)
 
                 exit_price = None
                 hit_target_2 = False
@@ -119,11 +130,19 @@ class TradeEvaluator:
                     if direction > 0 and low_price <= trailing_stop_price:
                         exit_price = trailing_stop_price
                         result = "win"
-                        close_reason = "Partial TP1"
+                        close_reason = (
+                            "Continuation Trail Stop"
+                            if setup_type == "Continuation" and abs(trailing_stop_price - trade.entry_price) > BREAKEVEN_EPSILON
+                            else "Partial TP1"
+                        )
                     if direction < 0 and high_price >= trailing_stop_price:
                         exit_price = trailing_stop_price
                         result = "win"
-                        close_reason = "Partial TP1"
+                        close_reason = (
+                            "Continuation Trail Stop"
+                            if setup_type == "Continuation" and abs(trailing_stop_price - trade.entry_price) > BREAKEVEN_EPSILON
+                            else "Partial TP1"
+                        )
 
                 if exit_price is None and entry_touched_at is not None:
                     elapsed_since_entry = bucket.last_timestamp - entry_touched_at
@@ -151,6 +170,16 @@ class TradeEvaluator:
                         result = "loss"
                         close_reason = "Stale Exit"
 
+                if exit_price is None and tp1_hit and setup_type == "Continuation":
+                    trailing_stop_price = self._continuation_trailing_stop(
+                        trade=trade,
+                        bucket=bucket,
+                        direction=direction,
+                        current_price=price,
+                        existing_stop=trailing_stop_price,
+                        entry_features=entry_features,
+                    )
+
                 if exit_price is not None:
                     close_pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
                     # Blend 50% TP1 + 50% close for split-position model
@@ -171,7 +200,18 @@ class TradeEvaluator:
             payload["max_drawdown_pct"] = max_drawdown_pct
             payload["closed_at"] = closed_at
             payload["close_reason"] = close_reason
+            payload["entry_features"] = self._merge_trade_analytics_features(
+                entry_features=entry_features,
+                pnl_pct=pnl_pct,
+                max_profit_pct=max_profit_pct,
+                max_drawdown_pct=max_drawdown_pct,
+                risk_pct=risk_pct,
+            )
             await self.database.update_trade_signal(trade.id, payload)
+            for key, value in payload.items():
+                setattr(trade, key, value)
+            if result in {"win", "loss", "breakeven"} and hasattr(self.signal_service, "record_continuation_feedback_trade"):
+                self.signal_service.record_continuation_feedback_trade(trade)
 
             updated_result = result
             updated_entry_touched_at = entry_touched_at
@@ -201,6 +241,111 @@ class TradeEvaluator:
             return float(value) if value is not None else None
         except (TypeError, ValueError):
             return None
+
+    def _current_metric(self, *, symbol: str, timeframe: str, metric_name: str) -> float | None:
+        states_by_timeframe = getattr(self.signal_service, "states_by_timeframe", None)
+        if not isinstance(states_by_timeframe, dict):
+            return None
+        state = states_by_timeframe.get(timeframe, {}).get(symbol)
+        if state is None or not getattr(state, "metrics_raw", None):
+            return None
+        value = state.metrics_raw.get(f"{metric_name}_{timeframe}")
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _feature_float(value: object) -> float | None:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _continuation_trailing_stop(
+        self,
+        *,
+        trade: object,
+        bucket: object,
+        direction: int,
+        current_price: float,
+        existing_stop: float | None,
+        entry_features: dict[str, object],
+    ) -> float | None:
+        atr_fraction = self._current_metric(symbol=trade.symbol, timeframe=trade.timeframe, metric_name="atr")
+        if atr_fraction is None or atr_fraction <= BREAKEVEN_EPSILON:
+            atr_fraction = self._feature_float(entry_features.get(f"atr_{trade.timeframe}")) or 0.0
+        buffer_multiplier = self._continuation_trailing_buffer_multiplier(entry_features=entry_features)
+        buffer = atr_fraction * current_price * buffer_multiplier
+        if buffer <= BREAKEVEN_EPSILON and trade.invalidation_price is not None:
+            buffer = abs(trade.entry_price - trade.invalidation_price) * 0.35
+        if buffer <= BREAKEVEN_EPSILON:
+            return existing_stop
+
+        recent_low = self._current_metric(symbol=trade.symbol, timeframe=trade.timeframe, metric_name="recent_low") or bucket.low_price
+        recent_high = self._current_metric(symbol=trade.symbol, timeframe=trade.timeframe, metric_name="recent_high") or bucket.high_price
+        candidate = recent_low - buffer if direction > 0 else recent_high + buffer
+        anchor = existing_stop if existing_stop is not None else trade.entry_price
+        if direction > 0:
+            return round(max(candidate, trade.entry_price, anchor), 10)
+        return round(min(candidate, trade.entry_price, anchor), 10)
+
+    def _continuation_trailing_buffer_multiplier(self, *, entry_features: dict[str, object]) -> float:
+        multiplier = self.settings.continuation_trailing_atr_buffer
+        volatility_regime = str(entry_features.get("decision_volatility_regime") or "")
+        if volatility_regime == "High":
+            multiplier *= self.settings.continuation_trailing_high_vol_multiplier
+        elif volatility_regime == "Low":
+            multiplier *= self.settings.continuation_trailing_low_vol_multiplier
+
+        structure_strength = self._feature_float(entry_features.get("structure_strength")) or 0.5
+        multiplier *= 0.9 + (structure_strength * 0.25)
+
+        elite_boost_active = bool(entry_features.get("continuation_elite_boost_active"))
+        if elite_boost_active and bool(entry_features.get("continuation_history_ready")):
+            multiplier *= self.settings.continuation_elite_trailing_boost_multiplier
+
+        mfe_r = self._feature_float(entry_features.get("mfe_r")) or 0.0
+        if mfe_r >= self.settings.continuation_trailing_profit_lock_mfe_r:
+            multiplier *= self.settings.continuation_trailing_profit_lock_multiplier
+
+        historical_bucket_mfe_r = self._feature_float(entry_features.get("continuation_bucket_avg_mfe_r")) or 0.0
+        if historical_bucket_mfe_r >= self.settings.continuation_trailing_mfe_loosen_r:
+            multiplier *= self.settings.continuation_trailing_mfe_loosen_multiplier
+        elif historical_bucket_mfe_r > BREAKEVEN_EPSILON and historical_bucket_mfe_r <= self.settings.continuation_trailing_mfe_tighten_r:
+            multiplier *= self.settings.continuation_trailing_mfe_tighten_multiplier
+
+        entry_efficiency = self._feature_float(entry_features.get("entry_efficiency"))
+        if entry_efficiency is not None and entry_efficiency < self.settings.continuation_feedback_penalty_efficiency:
+            multiplier *= 0.95
+
+        return max(0.35, round(multiplier, 4))
+
+    def _merge_trade_analytics_features(
+        self,
+        *,
+        entry_features: dict[str, object],
+        pnl_pct: float | None,
+        max_profit_pct: float,
+        max_drawdown_pct: float,
+        risk_pct: float | None,
+    ) -> dict[str, object]:
+        features = dict(entry_features)
+        mae_pct = abs(min(max_drawdown_pct, 0.0))
+        mfe_pct = max(max_profit_pct, 0.0)
+        features["mae_pct"] = round(mae_pct, 6)
+        features["mfe_pct"] = round(mfe_pct, 6)
+
+        if risk_pct is not None and risk_pct > BREAKEVEN_EPSILON:
+            features["mae_r"] = round(mae_pct / risk_pct, 4)
+            features["mfe_r"] = round(mfe_pct / risk_pct, 4)
+            features["realized_r"] = round((pnl_pct or 0.0) / risk_pct, 4)
+
+        efficiency_denominator = mfe_pct + mae_pct
+        if efficiency_denominator > BREAKEVEN_EPSILON:
+            features["entry_efficiency"] = round(mfe_pct / efficiency_denominator, 4)
+
+        return features
 
     async def _load_evaluation_buckets(self, *, trade: object, anchor: datetime) -> list[object]:
         buckets_by_start: dict[datetime, object] = {}

@@ -967,7 +967,7 @@ class TimeframeAggregateStore:
             return
         compression_values = [getattr(metrics, f"compression_score_{timeframe}", 0.0) for timeframe in TIMEFRAME_ORDER]
         if all(math.isclose(value, 0.0, abs_tol=DELTA_EPSILON) for value in compression_values):
-            logger.warning("compression_score_all_zero symbol=%s", symbol)
+            logger.debug("compression_score_all_zero symbol=%s", symbol)
 
     def _wick_ratio(
         self,

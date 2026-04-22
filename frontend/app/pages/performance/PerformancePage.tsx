@@ -9,7 +9,7 @@ import { api } from "@/lib/api";
 import { formatDate, formatTime } from "@/lib/formatters";
 import type { PerformanceTradeRow, SetupPerformance } from "@/lib/types";
 
-type TableFilterKey = "symbol" | "timeframe" | "setup_type" | "state" | "bias" | "status" | "result";
+type TableFilterKey = "symbol" | "timeframe" | "setup_type" | "state" | "bias" | "status" | "result" | "strategy_version";
 type TableFilters = Record<TableFilterKey, string>;
 type FilterOption = { value: string; label: string };
 
@@ -21,6 +21,7 @@ const INITIAL_FILTERS: TableFilters = {
   bias: "",
   status: "",
   result: "",
+  strategy_version: "",
 };
 
 const FILTER_LABELS: Record<TableFilterKey, string> = {
@@ -31,6 +32,7 @@ const FILTER_LABELS: Record<TableFilterKey, string> = {
   bias: "Bias",
   status: "Status",
   result: "Result",
+  strategy_version: "Strategy",
 };
 
 const FILTER_KEYS = Object.keys(INITIAL_FILTERS) as TableFilterKey[];
@@ -249,6 +251,7 @@ export default function PerformancePage() {
         bias: [],
         status: [],
         result: [],
+        strategy_version: [],
       },
     );
   }, [tableData?.rows]);
@@ -575,6 +578,7 @@ export default function PerformancePage() {
                   <th className="px-4 py-3">Bias</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Result</th>
+                  <th className="px-4 py-3">Strategy</th>
                   <th className="px-4 py-3">Signal Time</th>
                   <th className="px-4 py-3">Recorded</th>
                   <th className="px-4 py-3">Entry Touched</th>
@@ -649,6 +653,11 @@ export default function PerformancePage() {
                       <td className="px-4 py-3">{row.bias}</td>
                       <td className="px-4 py-3">{row.status}</td>
                       <td className="px-4 py-3">{row.result}</td>
+                      <td className="px-4 py-3">
+                        <span className="rounded-lg bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-violet-400 border border-violet-500/20">
+                          {row.strategy_version ?? "--"}
+                        </span>
+                      </td>
                       <td className="px-4 py-3">{formatTimestampCell(row.signal_timestamp)}</td>
                       <td className="px-4 py-3">{formatTimestampCell(row.created_at)}</td>
                       <td className="px-4 py-3">{formatEntryTouched(row)}</td>

@@ -369,6 +369,72 @@ def test_execution_plan_is_removed_when_price_is_already_beyond_invalidation() -
     assert execution is None
 
 
+def test_squeeze_execution_strength_treats_funding_as_bonus_only() -> None:
+    low_funding_strength = ExecutionEngine._squeeze_strength(
+        make_metrics(
+            compression_score_15m=0.50,
+            oi_percentile_15m=0.70,
+            funding_level_15m=0.00002,
+        ),
+        "15m",
+    )
+    bonus_strength = ExecutionEngine._squeeze_strength(
+        make_metrics(
+            compression_score_15m=0.50,
+            oi_percentile_15m=0.70,
+            funding_level_15m=0.00004,
+        ),
+        "15m",
+    )
+
+    assert low_funding_strength == 0.60
+    assert bonus_strength == 0.70
+
+
+def test_squeeze_execution_size_is_halved_as_secondary_edge() -> None:
+    execution_engine = ExecutionEngine()
+    bucket = make_bucket(
+        21,
+        open_price=1.02,
+        high_price=1.03,
+        low_price=0.99,
+        close_price=1.00,
+        oi_open=1000.0,
+        oi_close=990.0,
+    )
+    metrics = make_metrics(
+        price_change_15m=-0.02,
+        oi_change_15m=-0.01,
+        volume_z_15m=1.2,
+        taker_buy_sell_ratio_delta_15m=-0.08,
+        compression_score_15m=0.50,
+        oi_percentile_15m=0.70,
+        funding_level_15m=0.00004,
+        recent_high_15m=1.04,
+        recent_low_15m=0.98,
+        atr_15m=0.003,
+    )
+    action = ActionAssessment(
+        bias="Bearish",
+        setup_type="Squeeze",
+        status="Triggered",
+        confidence_label="High",
+        opportunity_score=0.8,
+    )
+
+    execution = execution_engine.build_execution(
+        action=action,
+        bucket=bucket,
+        metrics=metrics,
+        timeframe="15m",
+        profile=TIMEFRAME_PROFILES["15m"],
+        confidence=0.8,
+    )
+
+    assert execution is not None
+    assert execution.position_size_multiplier == 0.54
+
+
 def test_pre_breakdown_neutral_structure_still_creates_bearish_watch_plan() -> None:
     execution_engine = ExecutionEngine()
     bucket = make_bucket(
