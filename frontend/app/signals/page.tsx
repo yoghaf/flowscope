@@ -307,6 +307,8 @@ function StatCard({
   );
 }
 
+import Link from "next/link";
+
 function SignalCard({ signal }: { signal: Signal }) {
   const isBullish = signal.bias === "Bullish";
   const isOpen = signal.result === "open";
@@ -332,9 +334,10 @@ function SignalCard({ signal }: { signal: Signal }) {
   const confColor = confScore >= 0.75 ? "text-emerald-400" : confScore >= 0.5 ? "text-amber-400" : "text-slate-400";
 
   return (
-    <div
+    <Link
+      href={`/signals/${signal.id}`}
       id={`signal-${signal.id}`}
-      className={`group relative overflow-hidden rounded-2xl border transition-all duration-300 hover:scale-[1.005] hover:shadow-xl ${
+      className={`block group relative overflow-hidden rounded-2xl border transition-all duration-300 hover:scale-[1.005] hover:shadow-xl ${
         isOpen
           ? "border-violet-500/20 bg-gradient-to-br from-violet-500/5 to-card/80 shadow-lg shadow-violet-500/5"
           : "border-white/5 bg-card/50 hover:border-white/10"
@@ -479,7 +482,7 @@ function SignalCard({ signal }: { signal: Signal }) {
           </div>
         )}
       </div>
-    </div>
+    </Link>
   );
 }
 

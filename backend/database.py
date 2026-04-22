@@ -384,6 +384,13 @@ class DatabaseManager:
             result = await session.scalars(statement)
             return list(result)
 
+    async def get_trade_signal_by_id(self, trade_id: int) -> TradeSignal | None:
+        if not self.enabled:
+            return None
+
+        async with self.session_factory() as session:
+            return await session.get(TradeSignal, trade_id)
+
     async def get_alert_preferences(self, user_id: str) -> AlertPreference | None:
         if not self.enabled:
             return None

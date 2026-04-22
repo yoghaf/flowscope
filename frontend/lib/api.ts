@@ -147,6 +147,9 @@ export const api = {
       format: query.format ?? "html",
     });
   },
+  getSignalDetail(id: number | string): Promise<any> {
+    return fetchJson(`/signals/${id}`);
+  },
   getAlerts(query: {
     symbol: string;
     timeframes?: Timeframe[];
