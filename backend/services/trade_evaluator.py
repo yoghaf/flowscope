@@ -134,7 +134,7 @@ class TradeEvaluator:
                         close_reason = (
                             "Continuation Trail Stop"
                             if setup_type == "Continuation" and abs(trailing_stop_price - trade.entry_price) > BREAKEVEN_EPSILON
-                            else "Partial TP1"
+                            else "Trail Stop (TP1)"
                         )
                     if direction < 0 and high_price >= trailing_stop_price:
                         exit_price = trailing_stop_price
@@ -142,7 +142,7 @@ class TradeEvaluator:
                         close_reason = (
                             "Continuation Trail Stop"
                             if setup_type == "Continuation" and abs(trailing_stop_price - trade.entry_price) > BREAKEVEN_EPSILON
-                            else "Partial TP1"
+                            else "Trail Stop (TP1)"
                         )
 
                 if exit_price is None and entry_touched_at is not None and strategy_version != "v2_balanced":

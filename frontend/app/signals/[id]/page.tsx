@@ -21,6 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import TradingViewWidget from "@/app/components/TradingViewWidget";
 
 function formatPrice(price: number | null) {
   if (price === null || price === undefined) return "—";
@@ -291,6 +292,15 @@ export default function SignalDetailPage() {
           )}
         </div>
       )}
+
+      {/* Advanced Chart */}
+      <div className="rounded-2xl border border-white/10 bg-card p-6 shadow-sm">
+        <div className="mb-4 flex items-center gap-2">
+          <BarChart3 className="h-5 w-5 text-blue-400" />
+          <h2 className="text-lg font-bold">Live Chart</h2>
+        </div>
+        <TradingViewWidget symbol={trade.symbol} />
+      </div>
 
       {/* Trade Summary */}
       <div className="rounded-2xl border border-white/10 bg-card p-6 shadow-sm">
