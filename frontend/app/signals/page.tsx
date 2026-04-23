@@ -17,7 +17,6 @@ import {
   Loader2,
   BarChart3,
   Brain,
-  Layers,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -85,8 +84,8 @@ export default function SignalsPage() {
   const [data, setData] = useState<SignalsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "open" | "closed">("all");
-  const [versionFilter, setVersionFilter] = useState<string>("v2_balanced");
   const [error, setError] = useState<string | null>(null);
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
   const fetchSignals = useCallback(async () => {
     try {
@@ -94,7 +93,7 @@ export default function SignalsPage() {
       const json = await api.getLiveSignals({
         status: filter,
         scope: "active",
-        strategy: "all",
+        strategy: "v2_balanced",
         limit: 100,
       });
       setData(json);
@@ -107,25 +106,83 @@ export default function SignalsPage() {
   }, [filter]);
 
   useEffect(() => {
-    fetchSignals();
+    void fetchSignals();
     const interval = setInterval(fetchSignals, 30000);
     return () => clearInterval(interval);
   }, [fetchSignals]);
 
-  const availableVersions = useMemo(() => {
-    if (!data) return [];
-    const versions = new Set(data.signals.map((s) => s.strategy_version).filter(Boolean));
-    return Array.from(versions).sort();
-  }, [data]);
+  const signals = useMemo(() => data?.signals ?? [], [data]);
 
-  const filteredSignals = useMemo(() => {
-    if (!data) return [];
-    if (versionFilter === "All") return data.signals;
-    return data.signals.filter((s) => s.strategy_version === versionFilter);
-  }, [data, versionFilter]);
+  const openSymbols = useMemo(() => {
+    return Array.from(
+      new Set(
+        signals
+          .filter((signal) => signal.result === "open")
+          .map((signal) => signal.symbol.toLowerCase()),
+      ),
+    ).sort();
+  }, [signals]);
+
+  useEffect(() => {
+    if (!openSymbols.length) {
+      setLivePrices({});
+      return;
+    }
+
+    const activeSymbols = new Set(openSymbols.map((symbol) => symbol.toUpperCase()));
+    setLivePrices((current) =>
+      Object.fromEntries(Object.entries(current).filter(([symbol]) => activeSymbols.has(symbol))),
+    );
+
+    const wsUrl = `wss://fstream.binance.com/stream?streams=${openSymbols.map((symbol) => `${symbol}@ticker`).join("/")}`;
+    let websocket: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+
+    const connect = () => {
+      if (disposed) return;
+
+      websocket = new WebSocket(wsUrl);
+      websocket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          const ticker = payload?.data;
+          const symbol = typeof ticker?.s === "string" ? ticker.s.toUpperCase() : null;
+          const nextPrice = Number(ticker?.c);
+          if (!symbol || !Number.isFinite(nextPrice)) return;
+
+          setLivePrices((current) => {
+            if (current[symbol] === nextPrice) {
+              return current;
+            }
+            return {
+              ...current,
+              [symbol]: nextPrice,
+            };
+          });
+        } catch {}
+      };
+      websocket.onclose = () => {
+        if (disposed) return;
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      disposed = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      if (websocket) {
+        websocket.close();
+      }
+    };
+  }, [openSymbols]);
 
   const filteredSummary = useMemo(() => {
-    const closed = filteredSignals.filter((s) => s.result === "win" || s.result === "loss");
+    const closed = signals.filter((s) => s.result === "win" || s.result === "loss");
     const wins = closed.filter((s) => s.result === "win").length;
     const losses = closed.filter((s) => s.result === "loss").length;
     const winrate = closed.length > 0 ? (wins / closed.length) * 100 : 0;
@@ -134,9 +191,9 @@ export default function SignalsPage() {
       wins,
       losses,
       winrate: Math.round(winrate * 10) / 10,
-      open_trades: filteredSignals.filter((s) => s.result === "open").length,
+      open_trades: signals.filter((s) => s.result === "open").length,
     };
-  }, [filteredSignals]);
+  }, [signals]);
 
   return (
     <div className="space-y-8">
@@ -172,25 +229,8 @@ export default function SignalsPage() {
             </button>
           ))}
 
-          {/* Strategy version filter */}
-          <div className="ml-2 flex items-center gap-1.5">
-            <Layers className="h-3.5 w-3.5 text-muted-foreground" />
-            <select
-              id="strategy-version-filter"
-              value={versionFilter}
-              onChange={(e) => setVersionFilter(e.target.value)}
-              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-foreground outline-none transition focus:border-violet-500/40 focus:bg-white/10"
-            >
-              <option value="All">All Versions</option>
-              {availableVersions.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-              {!availableVersions.includes("v2_balanced") && (
-                <option value="v2_balanced">v2_balanced</option>
-              )}
-            </select>
+          <div className="ml-2 rounded-xl border border-violet-500/20 bg-violet-500/10 px-3 py-2 text-sm font-medium text-violet-300">
+            Strategy: v2_balanced
           </div>
 
           <button
@@ -252,23 +292,21 @@ export default function SignalsPage() {
       )}
 
       {/* Empty state */}
-      {data && filteredSignals.length === 0 && (
+      {data && signals.length === 0 && (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-white/5 bg-card/50 py-20">
           <Zap className="h-12 w-12 text-muted-foreground/30" />
           <p className="mt-4 text-lg font-medium text-muted-foreground">No signals yet</p>
           <p className="mt-1 text-sm text-muted-foreground/60">
-            {versionFilter !== "All"
-              ? `No signals found for strategy "${versionFilter}". Try selecting "All Versions".`
-              : "The V14 engine is monitoring 143 tokens. Signals will appear here when A-Grade setups are detected."}
+            No `v2_balanced` signals are available yet.
           </p>
         </div>
       )}
 
       {/* Signals list */}
-      {data && filteredSignals.length > 0 && (
+      {data && signals.length > 0 && (
         <div className="space-y-4">
-          {filteredSignals.map((signal) => (
-            <SignalCard key={signal.id} signal={signal} />
+          {signals.map((signal) => (
+            <SignalCard key={signal.id} signal={signal} livePrice={livePrices[signal.symbol] ?? null} />
           ))}
         </div>
       )}
@@ -309,12 +347,16 @@ function StatCard({
 
 import Link from "next/link";
 
-function SignalCard({ signal }: { signal: Signal }) {
+function SignalCard({ signal, livePrice }: { signal: Signal; livePrice: number | null }) {
   const isBullish = signal.bias === "Bullish";
   const isOpen = signal.result === "open";
   const isWin = signal.result === "win";
   const size = signal.position_size_multiplier;
   const confScore = signal.confidence_score;
+  const livePnl =
+    isOpen && livePrice !== null && signal.entry_price
+      ? ((livePrice - signal.entry_price) / signal.entry_price) * 100 * (isBullish ? 1 : -1)
+      : null;
 
   const resultColors: Record<string, string> = {
     open: "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -408,6 +450,26 @@ function SignalCard({ signal }: { signal: Signal }) {
             )}
           </div>
         </div>
+
+        {isOpen && (
+          <div className="mt-4 flex flex-wrap items-center gap-4 rounded-xl border border-blue-500/10 bg-blue-500/[0.04] px-4 py-3">
+            <div>
+              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Live Price</p>
+              <p className="mt-1 text-sm font-semibold tabular-nums text-blue-300">
+                {livePrice !== null ? formatPrice(livePrice) : "Connecting..."}
+              </p>
+            </div>
+            {livePnl !== null && (
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Live PnL</p>
+                <p className={`mt-1 text-sm font-semibold tabular-nums ${livePnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                  {livePnl >= 0 ? "+" : ""}
+                  {livePnl.toFixed(2)}%
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Price levels */}
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">

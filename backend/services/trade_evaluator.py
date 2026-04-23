@@ -30,6 +30,7 @@ class TradeEvaluator:
         now = datetime.now(UTC)
         catchup_queued = 0
         for trade in open_trades:
+          try:
             trade_timeframe = self._normalize_timeframe(getattr(trade, "timeframe", None))
             history_logs = list(getattr(trade, "history_logs", None) or [])
             if history_logs:
@@ -60,6 +61,7 @@ class TradeEvaluator:
             max_drawdown_pct = trade.max_drawdown_pct
             closed_at = None
             close_reason = None
+            exit_price = None
 
             entry_features = dict(getattr(trade, "entry_features", None) or {})
             tp1_pnl_pct = self._feature_float(entry_features.get("tp1_pnl_pct"))
@@ -290,7 +292,7 @@ class TradeEvaluator:
             if result != "open":
                 history_logs.append({
                     "timestamp": closed_at.isoformat() if closed_at else now.isoformat(),
-                    "price": exit_price if 'exit_price' in locals() and exit_price else trade.entry_price,
+                    "price": exit_price if exit_price is not None else price,
                     "pnl_pct": round(pnl_pct, 4),
                     "event": "close",
                     "reason": close_reason or "Unknown",
@@ -316,6 +318,8 @@ class TradeEvaluator:
                 queued = await self.signal_service.catch_up_trade_entry_notification(trade)
                 if queued:
                     catchup_queued += 1
+          except Exception:
+            logger.exception("Trade evaluator failed for trade_id=%s symbol=%s", getattr(trade, "id", "?"), getattr(trade, "symbol", "?"))
 
         logger.info("Trade evaluator scanned open_trades=%d catchup_queued=%d", len(open_trades), catchup_queued)
 

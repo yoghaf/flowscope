@@ -583,8 +583,8 @@ class SignalService:
                         for item in self.performance_snapshot.conditions
                     }
                 await self._refresh_continuation_feedback_cache()
-            except Exception as exc:
-                logger.warning("Trade evaluator failed: %s", exc)
+            except Exception:
+                logger.exception("Trade evaluator failed")
             await asyncio.sleep(self.settings.trade_evaluator_interval_seconds)
 
     async def _start_binance_stream(self) -> None:
@@ -2901,9 +2901,10 @@ class SignalService:
             features["entry_type"] = execution_entry_type
         features["position_size_multiplier"] = round(float(getattr(execution, "position_size_multiplier", 1.0) or 1.0), 4)
         features["strategy_version"] = getattr(self.settings, "strategy_version", "v2_balanced")
-        _flow_align = float(features.get("flow_alignment") or market_interpretation.flow_alignment or 0.0)
-        _struct_str = float(features.get("structure_strength") or market_interpretation.structure_strength or 0.0)
-        _clarity = float(features.get("clarity_confidence") or clarity_confidence or 0.0)
+        _mi = getattr(asset_state, "market_interpretation", None) or {}
+        _flow_align = float(features.get("flow_alignment") or _mi.get("flow_alignment") or 0.0)
+        _struct_str = float(features.get("structure_strength") or _mi.get("structure_strength") or 0.0)
+        _clarity = float(features.get("clarity_confidence") or _mi.get("clarity_confidence") or clarity_confidence or 0.0)
         features["confidence_score"] = round(
             max(0.0, min(1.0, 0.30 * _flow_align + 0.50 * _struct_str + 0.20 * _clarity)),
             4,
