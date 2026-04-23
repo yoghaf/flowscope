@@ -24,8 +24,9 @@ from backend.models import DemoTrade, TradeSignal
 
 logger = logging.getLogger(__name__)
 
-# Binance Futures Testnet URL
+# Binance Futures Testnet/Demo URL (latest official endpoint)
 TESTNET_FUTURES_URL = "https://testnet.binancefuture.com/fapi"
+DEMO_FUTURES_URL = "https://demo-fapi.binance.com"
 
 
 class TradingBotService:
