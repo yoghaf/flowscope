@@ -19,8 +19,7 @@ import {
   Brain,
   Layers,
 } from "lucide-react";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { api } from "@/lib/api";
 
 interface Signal {
   id: number;
@@ -92,11 +91,12 @@ export default function SignalsPage() {
   const fetchSignals = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/signals/live?status=${filter}&limit=100`, {
-        cache: "no-store",
+      const json = await api.getLiveSignals({
+        status: filter,
+        scope: "active",
+        strategy: "all",
+        limit: 100,
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
       setData(json);
       setError(null);
     } catch (err: unknown) {

@@ -7,7 +7,7 @@ UTC = timezone.utc
 from backend.config import Settings
 from backend.database import DatabaseManager
 from backend.engines.autopsy_engine import AutopsyEngine
-from backend.services.timeframe_aggregator import TIMEFRAME_DELTAS
+from backend.services.timeframe_aggregator import TIMEFRAME_DELTAS, floor_timestamp
 
 logger = logging.getLogger(__name__)
 BREAKEVEN_EPSILON = 1e-9
@@ -30,6 +30,7 @@ class TradeEvaluator:
         now = datetime.now(UTC)
         catchup_queued = 0
         for trade in open_trades:
+            trade_timeframe = self._normalize_timeframe(getattr(trade, "timeframe", None))
             history_logs = list(getattr(trade, "history_logs", None) or [])
             if history_logs:
                 evaluation_anchor = datetime.fromisoformat(history_logs[-1]["timestamp"])
@@ -38,7 +39,11 @@ class TradeEvaluator:
                 
             evaluation_buckets = await self._load_evaluation_buckets(trade=trade, anchor=evaluation_anchor)
 
-            price = evaluation_buckets[-1].close_price if evaluation_buckets else await self.signal_service.get_latest_price(trade.symbol, trade.timeframe)
+            price = (
+                evaluation_buckets[-1].close_price
+                if evaluation_buckets
+                else await self.signal_service.get_latest_price(trade.symbol, trade_timeframe)
+            )
             if price is None or trade.entry_price is None:
                 continue
 
@@ -63,7 +68,7 @@ class TradeEvaluator:
             setup_type = getattr(trade, "setup_type", None)
 
             payload: dict[str, object] = {"updated_at": now}
-            timeframe_delta = TIMEFRAME_DELTAS.get(trade.timeframe, TIMEFRAME_DELTAS["1h"])
+            timeframe_delta = TIMEFRAME_DELTAS.get(trade_timeframe, TIMEFRAME_DELTAS["1h"])
             timeout_window = timeframe_delta * max(self.settings.entry_touch_timeout_buckets, 1)
             risk_pct = (
                 abs(trade.entry_price - trade.invalidation_price) / trade.entry_price * 100
@@ -74,7 +79,7 @@ class TradeEvaluator:
             )
 
             # Dynamic interval logic based on timeframe
-            tf = trade.timeframe
+            tf = trade_timeframe
             if tf == "15m":
                 req_interval = 300  # 5 mins
             elif tf == "1h":
@@ -174,36 +179,32 @@ class TradeEvaluator:
                 hit_invalidation = False
                 if trade.target_price_2 is not None:
                     hit_target_2 = high_price >= trade.target_price_2 if direction > 0 else low_price <= trade.target_price_2
-                if trade.invalidation_price is not None:
-                    hit_invalidation = low_price <= trade.invalidation_price if direction > 0 else high_price >= trade.invalidation_price
+                
+                # If TP1 is hit, the trailing stop replaces the invalidation price.
+                # But if TP1 was just hit in this candle, we don't activate the trailing stop yet
+                # because we don't know the intra-candle path (it might have hit low before high).
+                active_stop_price = trailing_stop_price if (tp1_hit and trailing_stop_price is not None and not tp1_just_hit) else trade.invalidation_price
+                
+                hit_stop = False
+                if active_stop_price is not None:
+                    hit_stop = low_price <= active_stop_price if direction > 0 else high_price >= active_stop_price
 
-                if hit_invalidation:
-                    exit_price = trade.invalidation_price
-                    result = "loss"
-                    close_reason = "Invalidation"
-                elif hit_target_2:
+                if hit_target_2:
                     exit_price = trade.target_price_2
                     result = "win"
                     close_reason = "Target 2"
-
-                # Trailing stop at breakeven after TP1 — partial win (50% already banked)
-                if exit_price is None and tp1_hit and trailing_stop_price is not None and not tp1_just_hit:
-                    if direction > 0 and low_price <= trailing_stop_price:
-                        exit_price = trailing_stop_price
+                elif hit_stop:
+                    exit_price = active_stop_price
+                    if tp1_hit and trailing_stop_price is not None and active_stop_price == trailing_stop_price:
                         result = "win"
                         close_reason = (
                             "Continuation Trail Stop"
                             if setup_type == "Continuation" and abs(trailing_stop_price - trade.entry_price) > BREAKEVEN_EPSILON
                             else "Partial TP1"
                         )
-                    if direction < 0 and high_price >= trailing_stop_price:
-                        exit_price = trailing_stop_price
-                        result = "win"
-                        close_reason = (
-                            "Continuation Trail Stop"
-                            if setup_type == "Continuation" and abs(trailing_stop_price - trade.entry_price) > BREAKEVEN_EPSILON
-                            else "Partial TP1"
-                        )
+                    else:
+                        result = "loss"
+                        close_reason = "Invalidation"
 
                 if exit_price is None and entry_touched_at is not None and strategy_version != "v2_balanced":
                     elapsed_since_entry = bucket.last_timestamp - entry_touched_at
@@ -211,7 +212,7 @@ class TradeEvaluator:
                     if elapsed_since_entry >= fail_fast_window:
                         mfe_r = (max_profit_pct / risk_pct) if risk_pct and risk_pct > BREAKEVEN_EPSILON else None
                         price_failed_to_follow = mfe_r is not None and mfe_r < self.settings.fail_fast_min_mfe_r
-                        current_flow_alignment = self._current_flow_alignment(symbol=trade.symbol, timeframe=trade.timeframe)
+                        current_flow_alignment = self._current_flow_alignment(symbol=trade.symbol, timeframe=trade_timeframe)
                         flow_dropped = (
                             entry_flow_alignment is not None
                             and current_flow_alignment is not None
@@ -319,6 +320,7 @@ class TradeEvaluator:
         logger.info("Trade evaluator scanned open_trades=%d catchup_queued=%d", len(open_trades), catchup_queued)
 
     def _current_flow_alignment(self, *, symbol: str, timeframe: str) -> float | None:
+        timeframe = self._normalize_timeframe(timeframe)
         states_by_timeframe = getattr(self.signal_service, "states_by_timeframe", None)
         if not isinstance(states_by_timeframe, dict):
             return None
@@ -332,6 +334,7 @@ class TradeEvaluator:
             return None
 
     def _current_metric(self, *, symbol: str, timeframe: str, metric_name: str) -> float | None:
+        timeframe = self._normalize_timeframe(timeframe)
         states_by_timeframe = getattr(self.signal_service, "states_by_timeframe", None)
         if not isinstance(states_by_timeframe, dict):
             return None
@@ -361,9 +364,10 @@ class TradeEvaluator:
         existing_stop: float | None,
         entry_features: dict[str, object],
     ) -> float | None:
-        atr_fraction = self._current_metric(symbol=trade.symbol, timeframe=trade.timeframe, metric_name="atr")
+        trade_timeframe = self._normalize_timeframe(getattr(trade, "timeframe", None))
+        atr_fraction = self._current_metric(symbol=trade.symbol, timeframe=trade_timeframe, metric_name="atr")
         if atr_fraction is None or atr_fraction <= BREAKEVEN_EPSILON:
-            atr_fraction = self._feature_float(entry_features.get(f"atr_{trade.timeframe}")) or 0.0
+            atr_fraction = self._feature_float(entry_features.get(f"atr_{trade_timeframe}")) or 0.0
         buffer_multiplier = self._continuation_trailing_buffer_multiplier(entry_features=entry_features)
         buffer = atr_fraction * current_price * buffer_multiplier
         if buffer <= BREAKEVEN_EPSILON and trade.invalidation_price is not None:
@@ -371,8 +375,8 @@ class TradeEvaluator:
         if buffer <= BREAKEVEN_EPSILON:
             return existing_stop
 
-        recent_low = self._current_metric(symbol=trade.symbol, timeframe=trade.timeframe, metric_name="recent_low") or bucket.low_price
-        recent_high = self._current_metric(symbol=trade.symbol, timeframe=trade.timeframe, metric_name="recent_high") or bucket.high_price
+        recent_low = self._current_metric(symbol=trade.symbol, timeframe=trade_timeframe, metric_name="recent_low") or bucket.low_price
+        recent_high = self._current_metric(symbol=trade.symbol, timeframe=trade_timeframe, metric_name="recent_high") or bucket.high_price
         candidate = recent_low - buffer if direction > 0 else recent_high + buffer
         anchor = existing_stop if existing_stop is not None else trade.entry_price
         if direction > 0:
@@ -438,20 +442,26 @@ class TradeEvaluator:
 
     async def _load_evaluation_buckets(self, *, trade: object, anchor: datetime) -> list[object]:
         buckets_by_start: dict[datetime, object] = {}
+        timeframe = self._normalize_timeframe(getattr(trade, "timeframe", None))
+        query_since = floor_timestamp(anchor, timeframe) if timeframe in TIMEFRAME_DELTAS else anchor
 
         if hasattr(self.database, "load_market_buckets"):
-            db_buckets = await self.database.load_market_buckets([trade.symbol], anchor, [trade.timeframe])
+            db_buckets = await self.database.load_market_buckets([trade.symbol], query_since, [timeframe])
             for bucket in db_buckets:
                 buckets_by_start[bucket.bucket_start] = bucket
 
         aggregate_store = getattr(self.signal_service, "aggregate_store", None)
         if aggregate_store is not None:
             if hasattr(aggregate_store, "history_for"):
-                for bucket in aggregate_store.history_for(trade.symbol, trade.timeframe, closed_only=False):
+                for bucket in aggregate_store.history_for(trade.symbol, timeframe, closed_only=False):
                     if bucket.last_timestamp >= anchor:
                         buckets_by_start[bucket.bucket_start] = bucket
-            latest_bucket = aggregate_store.latest_bucket(trade.symbol, trade.timeframe, closed_only=False)
+            latest_bucket = aggregate_store.latest_bucket(trade.symbol, timeframe, closed_only=False)
             if latest_bucket is not None and latest_bucket.last_timestamp >= anchor:
                 buckets_by_start[latest_bucket.bucket_start] = latest_bucket
 
         return [buckets_by_start[key] for key in sorted(buckets_by_start)]
+
+    @staticmethod
+    def _normalize_timeframe(value: object) -> str:
+        return str(value or "").strip().lower()

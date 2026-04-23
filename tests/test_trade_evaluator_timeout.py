@@ -15,7 +15,9 @@ from backend.services.trade_evaluator import TradeEvaluator
 class FakeAggregateStore:
     buckets: list[TimeframeBucket]
 
-    def latest_bucket(self, symbol: str, timeframe: str, closed_only: bool = False) -> TimeframeBucket:
+    def latest_bucket(self, symbol: str, timeframe: str, closed_only: bool = False) -> TimeframeBucket | None:
+        if not self.buckets:
+            return None
         return self.buckets[-1]
 
     def history_for(self, symbol: str, timeframe: str, closed_only: bool = False) -> list[TimeframeBucket]:
@@ -82,7 +84,13 @@ def make_bucket(
     low_price: float = 0.32897,
     close_price: float = 0.34,
 ) -> TimeframeBucket:
-    delta = timedelta(minutes=15) if timeframe == "15m" else timedelta(hours=4)
+    delta_map = {
+        "15m": timedelta(minutes=15),
+        "1h": timedelta(hours=1),
+        "4h": timedelta(hours=4),
+        "24h": timedelta(hours=24),
+    }
+    delta = delta_map.get(timeframe, timedelta(minutes=15))
     bucket_start = now - delta
     return TimeframeBucket(
         symbol="ARIAUSDT",
@@ -411,6 +419,158 @@ def test_trade_evaluator_continuation_trail_updates_and_logs_trade_analytics() -
         assert payload["entry_features"]["mfe_r"] == 1.04
         assert payload["entry_features"]["realized_r"] > 0.79
         assert payload["entry_features"]["entry_efficiency"] == 1.0
+
+    asyncio.run(run())
+
+
+def test_trade_evaluator_normalizes_24h_timeframe_and_keeps_hourly_log_cadence() -> None:
+    async def run() -> None:
+        first_update = datetime(2026, 4, 23, 3, 2, 6, tzinfo=UTC)
+        second_update = datetime(2026, 4, 23, 3, 7, 14, tzinfo=UTC)
+        buckets = [
+            make_bucket(
+                first_update,
+                timeframe="24h",
+                open_price=0.4968,
+                high_price=0.4980,
+                low_price=0.4959,
+                close_price=0.4968,
+            ),
+            make_bucket(
+                second_update,
+                timeframe="24h",
+                open_price=0.4968,
+                high_price=0.4990,
+                low_price=0.4960,
+                close_price=0.4984,
+            ),
+        ]
+        trade = SimpleNamespace(
+            id=6,
+            symbol="ARIAUSDT",
+            timeframe=" 24H ",
+            bias="Bullish",
+            setup_type="Breakout",
+            status="Triggered",
+            result="open",
+            timestamp=first_update - timedelta(hours=1),
+            updated_at=first_update,
+            entry_price=0.4952,
+            invalidation_price=0.4700,
+            target_price_1=0.5300,
+            target_price_2=0.5600,
+            tp1_hit=False,
+            trailing_stop_price=0.4700,
+            pnl_pct=0.0,
+            max_profit_pct=0.0,
+            max_drawdown_pct=0.0,
+            entry_touched_at=first_update - timedelta(minutes=1),
+            closed_at=None,
+            close_reason=None,
+            entry_notification_sent_at=None,
+            last_scale_in_at=None,
+            entry_features={},
+            history_logs=[],
+        )
+        database = FakeDatabase(trade, buckets=buckets)
+        signal_service = FakeSignalService(buckets, price=0.4984, timeframe="24h")
+        settings = Settings(entry_touch_timeout_buckets=2)
+
+        evaluator = TradeEvaluator(settings, database, signal_service)
+        await evaluator.evaluate()
+
+        assert len(database.updates) == 1
+        _, payload = database.updates[0]
+        history_logs = payload["history_logs"]
+        assert len(history_logs) == 1
+        assert history_logs[0]["timestamp"] == first_update.isoformat()
+
+    asyncio.run(run())
+
+
+def test_trade_evaluator_loads_current_24h_bucket_when_anchor_is_inside_bucket() -> None:
+    async def run() -> None:
+        first_update = datetime(2026, 4, 23, 3, 2, 6, tzinfo=UTC)
+        hourly_update = datetime(2026, 4, 23, 4, 5, 0, tzinfo=UTC)
+        bucket = TimeframeBucket(
+            symbol="ARIAUSDT",
+            timeframe="24h",
+            bucket_start=datetime(2026, 4, 23, 0, 0, 0, tzinfo=UTC),
+            bucket_end=datetime(2026, 4, 24, 0, 0, 0, tzinfo=UTC),
+            last_timestamp=hourly_update,
+            open_price=0.4968,
+            high_price=0.4992,
+            low_price=0.4951,
+            close_price=0.4988,
+            open_interest_open=1000.0,
+            open_interest_high=1015.0,
+            open_interest_low=998.0,
+            open_interest_close=1012.0,
+            spot_volume_open=100.0,
+            spot_volume_close=140.0,
+            spot_volume_delta=40.0,
+            futures_volume_open=120.0,
+            futures_volume_close=190.0,
+            futures_volume_delta=70.0,
+            funding_rate_sum=0.0,
+            funding_rate_close=-0.00005,
+            long_short_ratio_sum=1.0,
+            long_short_ratio_close=1.02,
+            taker_buy_sell_ratio_sum=1.0,
+            taker_buy_sell_ratio_close=1.01,
+            long_liquidations_close=0.0,
+            long_liquidations_total=0.0,
+            short_liquidations_close=0.0,
+            short_liquidations_total=0.0,
+            exchange_count_sum=1,
+            sample_count=1,
+        )
+        trade = SimpleNamespace(
+            id=7,
+            symbol="ARIAUSDT",
+            timeframe="24h",
+            bias="Bullish",
+            setup_type="Breakout",
+            status="Triggered",
+            result="open",
+            timestamp=first_update - timedelta(hours=1),
+            updated_at=first_update,
+            entry_price=0.4952,
+            invalidation_price=0.4700,
+            target_price_1=0.5300,
+            target_price_2=0.5600,
+            tp1_hit=False,
+            trailing_stop_price=0.4700,
+            pnl_pct=0.0,
+            max_profit_pct=0.0,
+            max_drawdown_pct=0.0,
+            entry_touched_at=first_update - timedelta(minutes=1),
+            closed_at=None,
+            close_reason=None,
+            entry_notification_sent_at=None,
+            last_scale_in_at=None,
+            entry_features={},
+            history_logs=[
+                {
+                    "timestamp": first_update.isoformat(),
+                    "price": 0.4968,
+                    "pnl_pct": 0.0,
+                    "event": "update",
+                }
+            ],
+        )
+        database = FakeDatabase(trade, buckets=[bucket])
+        signal_service = FakeSignalService([], price=0.4988, timeframe="24h")
+        settings = Settings(entry_touch_timeout_buckets=2)
+
+        evaluator = TradeEvaluator(settings, database, signal_service)
+        await evaluator.evaluate()
+
+        assert len(database.updates) == 1
+        _, payload = database.updates[0]
+        history_logs = payload["history_logs"]
+        assert len(history_logs) == 2
+        assert history_logs[-1]["timestamp"] == hourly_update.isoformat()
 
     asyncio.run(run())
 

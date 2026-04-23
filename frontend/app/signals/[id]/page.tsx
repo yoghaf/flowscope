@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -51,20 +51,43 @@ export default function SignalDetailPage() {
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "disconnected">("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
 
-  useEffect(() => {
-    async function load() {
+  const loadTrade = useCallback(
+    async (background = false) => {
       try {
-        setLoading(true);
+        if (!background) {
+          setLoading(true);
+        }
         const data = await api.getSignalDetail(id);
         setTrade(data);
+        setError(null);
       } catch (err: any) {
-        setError(err.message || "Failed to load trade detail");
+        if (!background) {
+          setError(err.message || "Failed to load trade detail");
+        }
       } finally {
-        setLoading(false);
+        if (!background) {
+          setLoading(false);
+        }
       }
+    },
+    [id],
+  );
+
+  useEffect(() => {
+    if (id) {
+      void loadTrade(false);
     }
-    if (id) load();
-  }, [id]);
+  }, [id, loadTrade]);
+
+  useEffect(() => {
+    if (!id || trade?.result !== "open") return;
+
+    const interval = setInterval(() => {
+      void loadTrade(true);
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, [id, loadTrade, trade?.result]);
 
   // Binance WebSocket for Live Price
   useEffect(() => {
@@ -101,7 +124,7 @@ export default function SignalDetailPage() {
         wsRef.current.close();
       }
     };
-  }, [trade]);
+  }, [trade?.result, trade?.symbol]);
 
   if (loading) {
     return (
@@ -156,6 +179,15 @@ export default function SignalDetailPage() {
 
   const livePnl = currentPrice && trade.entry_price ? 
     ((currentPrice - trade.entry_price) / trade.entry_price) * 100 * (isBullish ? 1 : -1) : 0;
+
+  const historyLogs = useMemo(() => {
+    if (!Array.isArray(trade?.history_logs)) {
+      return [];
+    }
+    return [...trade.history_logs].sort(
+      (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+    );
+  }, [trade?.history_logs]);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 pb-20">
@@ -472,7 +504,7 @@ export default function SignalDetailPage() {
       </div>
 
       {/* Trade Timeline (History Logs) */}
-      {trade.history_logs && trade.history_logs.length > 0 && (
+      {historyLogs.length > 0 && (
         <div className="mt-8 rounded-2xl border border-white/10 bg-card p-6 shadow-sm">
           <div className="mb-6 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -480,7 +512,7 @@ export default function SignalDetailPage() {
               <h2 className="text-xl font-bold">Trade Journey & Timeline</h2>
             </div>
             <span className="text-xs font-medium text-muted-foreground bg-white/5 px-2 py-1 rounded-md">
-              {trade.history_logs.length} updates recorded
+              {historyLogs.length} updates recorded
             </span>
           </div>
           
@@ -488,7 +520,7 @@ export default function SignalDetailPage() {
             {/* Vertical timeline line */}
             <div className="absolute bottom-0 left-[23px] top-4 w-px bg-white/10" />
             
-            {trade.history_logs.map((log: any, index: number) => {
+            {historyLogs.map((log: any, index: number) => {
               const isClose = log.event === "close";
               const pnlColor = log.pnl_pct > 0 ? "text-emerald-400" : log.pnl_pct < 0 ? "text-rose-400" : "text-foreground";
               
