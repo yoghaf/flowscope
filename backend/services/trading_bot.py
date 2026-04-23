@@ -220,7 +220,12 @@ class TradingBotService:
                 await asyncio.sleep(10)
 
     async def _check_positions(self) -> None:
-        """Check Binance for filled SL/TP orders and update our records."""
+        """Check Binance for filled SL/TP orders and update our records.
+        
+        Implements V2 trailing logic:
+        - After TP1 is hit → move SL to breakeven (entry price)
+        - Monitor unrealized PnL in real-time
+        """
         if not self.client:
             return
 
@@ -245,10 +250,30 @@ class TradingBotService:
                     direction = 1 if trade.side == "BUY" else -1
                     pnl_pct = ((mark_price - entry_price) / entry_price) * direction * 100
 
-                    await self._update_demo_trade(trade.id, {
+                    update_payload: dict = {
                         "pnl_usdt": unrealized_pnl,
                         "pnl_pct": round(pnl_pct, 4),
-                    })
+                    }
+
+                    # --- V2 Trailing Logic: TP1 hit → move SL to breakeven ---
+                    tp1_price = trade.tp1_price
+                    tp1_already_hit = getattr(trade, "close_reason", None) == "__tp1_trailed"
+                    
+                    if tp1_price and not tp1_already_hit:
+                        tp1_hit = (
+                            (mark_price >= tp1_price if direction > 0 else mark_price <= tp1_price)
+                        )
+                        if tp1_hit:
+                            logger.info(
+                                "🤖 TP1 HIT for %s @ %.6f — moving SL to breakeven (%.6f)",
+                                trade.symbol, mark_price, entry_price,
+                            )
+                            # Cancel old SL and place new one at breakeven
+                            await self._move_sl_to_breakeven(trade, entry_price)
+                            update_payload["close_reason"] = "__tp1_trailed"  # internal flag
+                            update_payload["sl_price"] = entry_price
+
+                    await self._update_demo_trade(trade.id, update_payload)
 
             except Exception as e:
                 logger.error("🤖 Error checking position %s: %s", trade.symbol, e)
@@ -324,6 +349,48 @@ class TradingBotService:
 
         except Exception as e:
             logger.error("🤖 Error resolving position %s: %s", trade.symbol, e)
+
+    async def _move_sl_to_breakeven(self, trade: DemoTrade, breakeven_price: float) -> None:
+        """Cancel existing SL and place new one at breakeven (entry price).
+        
+        This implements the V2 strategy's trailing logic:
+        After TP1 hit → SL moves to entry = guaranteed breakeven or better.
+        """
+        if not self.client:
+            return
+
+        try:
+            # Cancel old SL order
+            if trade.binance_sl_order_id:
+                try:
+                    self.client.futures_cancel_order(
+                        symbol=trade.symbol,
+                        orderId=int(trade.binance_sl_order_id),
+                    )
+                    logger.info("🤖 Old SL cancelled for %s", trade.symbol)
+                except Exception:
+                    pass  # May already be cancelled/filled
+
+            # Place new SL at breakeven
+            sl_side = SIDE_SELL if trade.side == "BUY" else SIDE_BUY
+            new_sl = self.client.futures_create_order(
+                symbol=trade.symbol,
+                side=sl_side,
+                type=ORDER_TYPE_STOP_MARKET,
+                stopPrice=self._format_price(trade.symbol, breakeven_price),
+                closePosition="true",
+            )
+            new_sl_id = str(new_sl.get("orderId", ""))
+            logger.info("🤖 New SL (breakeven) placed for %s @ %.6f (Order: %s)",
+                        trade.symbol, breakeven_price, new_sl_id)
+
+            # Update stored SL order ID
+            await self._update_demo_trade(trade.id, {
+                "binance_sl_order_id": new_sl_id,
+            })
+
+        except Exception as e:
+            logger.error("🤖 Failed to move SL to breakeven for %s: %s", trade.symbol, e)
 
     # ─── Manual Actions ───────────────────────────────────────────
 
