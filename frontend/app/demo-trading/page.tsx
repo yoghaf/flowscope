@@ -75,8 +75,14 @@ export default function DemoTradingPage() {
     try {
       await api.toggleDemoTrading();
       await loadData();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to toggle:", err);
+      // Alert the user if the backend rejected the toggle (e.g. missing API keys)
+      if (err.response && err.response.data && err.response.data.error) {
+        alert("Failed to start bot: " + err.response.data.error);
+      } else {
+        alert("Failed to start bot. Please check your API keys in the .env file.");
+      }
     } finally {
       setToggling(false);
     }

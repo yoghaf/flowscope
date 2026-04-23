@@ -79,4 +79,12 @@ async def toggle_demo_trading(request: Request) -> dict[str, Any]:
     else:
         settings.demo_trading_enabled = True
         await bot.start()
+        
+        if not bot._running:
+            settings.demo_trading_enabled = False
+            # Check if keys are missing vs other errors
+            if not settings.binance_api_key or not settings.binance_api_secret:
+                return JSONResponse(status_code=400, content={"error": "Binance API keys are missing in .env"})
+            return JSONResponse(status_code=400, content={"error": "Failed to connect to Binance. Check API keys or IP whitelist."})
+            
         return {"enabled": True, "message": "Demo trading ENABLED"}

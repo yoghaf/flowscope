@@ -55,9 +55,10 @@ class TradingBotService:
             self.client = Client(
                 self.settings.binance_api_key,
                 self.settings.binance_api_secret,
+                testnet=self.settings.demo_trading_use_testnet
             )
+            
             if self.settings.demo_trading_use_testnet:
-                self.client.FUTURES_URL = TESTNET_FUTURES_URL
                 logger.info("🤖 Connected to Binance Futures TESTNET")
             else:
                 logger.info("🤖 Connected to Binance Futures LIVE")
