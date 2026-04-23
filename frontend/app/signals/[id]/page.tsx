@@ -535,6 +535,26 @@ export default function SignalDetailPage() {
                           <p className="font-mono text-sm">{log.oi.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
                         </div>
                       )}
+                      {log.taker_ratio !== undefined && log.taker_ratio !== null && (
+                        <div>
+                          <p className="text-[10px] uppercase text-muted-foreground">Taker Ratio</p>
+                          <p className={`font-mono text-sm ${log.taker_ratio > 1 ? "text-emerald-400" : log.taker_ratio < 1 ? "text-rose-400" : ""}`}>
+                            {log.taker_ratio.toFixed(3)}
+                          </p>
+                        </div>
+                      )}
+                      {log.long_short_ratio !== undefined && log.long_short_ratio !== null && (
+                        <div>
+                          <p className="text-[10px] uppercase text-muted-foreground">L/S Ratio</p>
+                          <p className="font-mono text-sm">{log.long_short_ratio.toFixed(3)}</p>
+                        </div>
+                      )}
+                      {log.funding !== undefined && log.funding !== null && (
+                        <div>
+                          <p className="text-[10px] uppercase text-muted-foreground">Funding Fee</p>
+                          <p className="font-mono text-sm">{(log.funding * 100).toFixed(4)}%</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

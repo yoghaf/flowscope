@@ -102,6 +102,8 @@ class TradeEvaluator:
                         "volume": bucket.spot_volume_delta + bucket.futures_volume_delta,
                         "oi": bucket.open_interest_close,
                         "funding": bucket.funding_rate_close,
+                        "long_short_ratio": getattr(bucket, "long_short_ratio_close", None),
+                        "taker_ratio": getattr(bucket, "taker_buy_sell_ratio_close", None),
                         "event": "update",
                     })
 
