@@ -20,6 +20,27 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 
+function asNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
 function formatPrice(price: number | null) {
   if (price === null || price === undefined) return "—";
   return price < 1 ? price.toPrecision(4) : price.toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -93,7 +114,9 @@ export default function SignalDetailPage() {
   useEffect(() => {
     if (!trade || trade.result !== "open") return;
 
-    const symbol = trade.symbol.toLowerCase();
+    const symbol = typeof trade.symbol === "string" ? trade.symbol.toLowerCase() : "";
+    if (!symbol) return;
+
     const wsUrl = `wss://fstream.binance.com/ws/${symbol}@ticker`;
 
     const connectWs = () => {
@@ -152,6 +175,17 @@ export default function SignalDetailPage() {
   const isBullish = trade.bias === "Bullish";
   const isOpen = trade.result === "open";
   const isWin = trade.result === "win";
+  const tradeSymbol = typeof trade.symbol === "string" ? trade.symbol : "UNKNOWN";
+  const entryPrice = asNumber(trade.entry_price);
+  const invalidationPrice = asNumber(trade.invalidation_price);
+  const targetPrice1 = asNumber(trade.target_price_1);
+  const targetPrice2 = asNumber(trade.target_price_2);
+  const confidenceRaw = asNumber(trade.confidence_score);
+  const confidenceFallback = asNumber(trade.confidence);
+  const confidenceScore =
+    confidenceRaw ?? (confidenceFallback === null ? 0 : confidenceFallback > 1 ? confidenceFallback / 100 : confidenceFallback);
+  const positionSizeMultiplier = asNumber(trade.position_size_multiplier);
+  const insights = asStringArray(trade.insights);
 
   const resultColors: Record<string, string> = {
     open: "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -168,22 +202,27 @@ export default function SignalDetailPage() {
   };
 
   // Calculate live distance
-  const currentPrice = isOpen && livePrice ? livePrice : (trade.closed_at ? null : trade.entry_price);
+  const currentPrice = isOpen && livePrice !== null ? livePrice : trade.closed_at ? null : entryPrice;
   
   const getDistanceStr = (target: number | null, current: number | null) => {
-    if (!target || !current) return null;
+    if (target === null || current === null) return null;
     const diff = target - current;
     const pct = (diff / current) * 100;
     return `${diff > 0 ? '+' : ''}${pct.toFixed(2)}%`;
   };
 
-  const livePnl = currentPrice && trade.entry_price ? 
-    ((currentPrice - trade.entry_price) / trade.entry_price) * 100 * (isBullish ? 1 : -1) : 0;
+  const livePnl =
+    currentPrice !== null && entryPrice !== null
+      ? ((currentPrice - entryPrice) / entryPrice) * 100 * (isBullish ? 1 : -1)
+      : 0;
 
   const historyLogs = Array.isArray(trade?.history_logs)
-    ? [...trade.history_logs].sort(
-        (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
-      )
+    ? trade.history_logs
+        .filter((log: unknown): log is Record<string, unknown> => Boolean(log) && typeof log === "object")
+        .sort(
+          (left: Record<string, unknown>, right: Record<string, unknown>) =>
+            new Date(String(left.timestamp ?? 0)).getTime() - new Date(String(right.timestamp ?? 0)).getTime(),
+        )
     : [];
 
   return (
@@ -208,7 +247,7 @@ export default function SignalDetailPage() {
           </div>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-bold tracking-tight">{trade.symbol}</h1>
+              <h1 className="text-3xl font-bold tracking-tight">{tradeSymbol}</h1>
               <span
                 className={`rounded-lg px-2.5 py-1 text-xs font-semibold uppercase ${
                   qualityColors[trade.quality_score] ?? qualityColors.C
@@ -262,7 +301,7 @@ export default function SignalDetailPage() {
                 </span>
               </div>
             </div>
-            {livePrice && (
+            {livePrice !== null && (
               <div className="text-right">
                 <p className="text-2xl font-bold tabular-nums">${formatPrice(livePrice)}</p>
                 <p className={`text-sm font-semibold ${livePnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -272,7 +311,7 @@ export default function SignalDetailPage() {
             )}
           </div>
 
-          {livePrice && trade.entry_price && trade.invalidation_price && trade.target_price_1 && (
+          {livePrice !== null && entryPrice !== null && invalidationPrice !== null && targetPrice1 !== null && (
             <div className="mt-6 relative h-24 rounded-xl bg-black/40 p-4 border border-white/5 overflow-hidden">
               {/* Visual Distance Bar */}
               <div className="absolute inset-0 flex flex-col justify-center px-8">
@@ -285,9 +324,9 @@ export default function SignalDetailPage() {
                   {/* Current Price Dot */}
                   {(() => {
                     // Very rough normalization for the visual bar (SL = 10%, Entry = 30%, TP1 = 70%)
-                    const sl = trade.invalidation_price;
-                    const en = trade.entry_price;
-                    const tp = trade.target_price_1;
+                    const sl = invalidationPrice;
+                    const en = entryPrice;
+                    const tp = targetPrice1;
                     
                     let pos = 30; // default at entry
                     if (isBullish) {
@@ -326,13 +365,13 @@ export default function SignalDetailPage() {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <div className="rounded-xl bg-white/[0.03] p-4">
             <p className="text-xs font-medium uppercase text-muted-foreground">Entry Zone</p>
-            <p className="mt-1 text-xl font-bold">{formatPrice(trade.entry_price)}</p>
+            <p className="mt-1 text-xl font-bold">{formatPrice(entryPrice)}</p>
           </div>
           <div className="rounded-xl bg-rose-500/5 p-4 ring-1 ring-rose-500/10">
             <p className="text-xs font-medium uppercase text-rose-400">Stop Loss</p>
-            <p className="mt-1 text-xl font-bold">{formatPrice(trade.invalidation_price)}</p>
+            <p className="mt-1 text-xl font-bold">{formatPrice(invalidationPrice)}</p>
             {currentPrice && (
-              <p className="mt-1 text-xs text-rose-400/70">{getDistanceStr(trade.invalidation_price, currentPrice)}</p>
+              <p className="mt-1 text-xs text-rose-400/70">{getDistanceStr(invalidationPrice, currentPrice)}</p>
             )}
           </div>
           <div className={`rounded-xl p-4 ring-1 ${trade.tp1_hit ? 'bg-emerald-500/10 ring-emerald-500/20' : 'bg-emerald-500/5 ring-emerald-500/10'}`}>
@@ -340,14 +379,14 @@ export default function SignalDetailPage() {
               <p className="text-xs font-medium uppercase text-emerald-400">Take Profit 1</p>
               {trade.tp1_hit && <CheckCircle2 className="h-3 w-3 text-emerald-400" />}
             </div>
-            <p className="mt-1 text-xl font-bold">{formatPrice(trade.target_price_1)}</p>
+            <p className="mt-1 text-xl font-bold">{formatPrice(targetPrice1)}</p>
             {currentPrice && !trade.tp1_hit && (
-              <p className="mt-1 text-xs text-emerald-400/70">{getDistanceStr(trade.target_price_1, currentPrice)}</p>
+              <p className="mt-1 text-xs text-emerald-400/70">{getDistanceStr(targetPrice1, currentPrice)}</p>
             )}
           </div>
           <div className="rounded-xl bg-emerald-500/5 p-4 ring-1 ring-emerald-500/10">
             <p className="text-xs font-medium uppercase text-emerald-400">Take Profit 2</p>
-            <p className="mt-1 text-xl font-bold">{formatPrice(trade.target_price_2)}</p>
+            <p className="mt-1 text-xl font-bold">{formatPrice(targetPrice2)}</p>
           </div>
         </div>
 
@@ -392,9 +431,9 @@ export default function SignalDetailPage() {
             <h2 className="text-lg font-bold">Entry Rationale</h2>
           </div>
           
-          {trade.insights && trade.insights.length > 0 && (
+          {insights.length > 0 && (
             <div className="mb-6 space-y-2">
-              {trade.insights.map((insight: string, i: number) => (
+              {insights.map((insight: string, i: number) => (
                 <div key={i} className="flex items-start gap-2 text-sm text-foreground/80">
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-violet-400" />
                   <p>{insight}</p>
@@ -426,7 +465,7 @@ export default function SignalDetailPage() {
           <div className="mb-4 flex items-center gap-2">
             <Target className="h-5 w-5 text-emerald-400" />
             <h2 className="text-lg font-bold">Confidence Breakdown</h2>
-            <span className="ml-auto text-xl font-black text-emerald-400">{Math.round(trade.confidence_score * 100)}%</span>
+            <span className="ml-auto text-xl font-black text-emerald-400">{Math.round(confidenceScore * 100)}%</span>
           </div>
 
           <div className="space-y-4">
@@ -444,7 +483,9 @@ export default function SignalDetailPage() {
           <div className="mt-6 flex items-center justify-between rounded-xl bg-white/[0.03] p-4">
             <div>
               <p className="text-xs font-medium text-muted-foreground">Calculated Size</p>
-              <p className="mt-1 text-lg font-bold">{trade.position_size_multiplier.toFixed(2)}x</p>
+              <p className="mt-1 text-lg font-bold">
+                {positionSizeMultiplier === null ? "â€”" : `${positionSizeMultiplier.toFixed(2)}x`}
+              </p>
             </div>
             <div className="text-right">
               <p className="text-xs font-medium text-muted-foreground">Risk Level</p>
@@ -489,7 +530,15 @@ export default function SignalDetailPage() {
             <div className="grid grid-cols-2 gap-4">
               <MetricBox 
                 label="OI Delta" 
-                value={((trade.exit_features.open_interest_close || 0) - (trade.exit_features.open_interest_open || 0)) / (trade.exit_features.open_interest_open || 1) * 100} 
+                value={(() => {
+                  const openInterestOpen = asNumber(trade.exit_features.open_interest_open);
+                  const openInterestClose = asNumber(trade.exit_features.open_interest_close);
+                  if (openInterestOpen === null || openInterestClose === null) {
+                    return null;
+                  }
+
+                  return ((openInterestClose - openInterestOpen) / (openInterestOpen || 1)) * 100;
+                })()} 
                 format="pct" 
               />
               <MetricBox label="Funding Rate" value={trade.exit_features.funding_rate_close} format="pct" />
@@ -519,7 +568,13 @@ export default function SignalDetailPage() {
             
             {historyLogs.map((log: any, index: number) => {
               const isClose = log.event === "close";
-              const pnlColor = log.pnl_pct > 0 ? "text-emerald-400" : log.pnl_pct < 0 ? "text-rose-400" : "text-foreground";
+              const logPnl = asNumber(log.pnl_pct) ?? 0;
+              const logVolume = asNumber(log.volume);
+              const logOi = asNumber(log.oi);
+              const logTakerRatio = asNumber(log.taker_ratio);
+              const logLongShortRatio = asNumber(log.long_short_ratio);
+              const logFunding = asNumber(log.funding);
+              const pnlColor = logPnl > 0 ? "text-emerald-400" : logPnl < 0 ? "text-rose-400" : "text-foreground";
               
               return (
                 <div key={index} className="relative flex gap-6 pb-6 last:pb-0">
@@ -544,44 +599,44 @@ export default function SignalDetailPage() {
                     <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
                       <div>
                         <p className="text-[10px] uppercase text-muted-foreground">Price</p>
-                        <p className="font-mono text-sm">{formatPrice(log.price)}</p>
+                        <p className="font-mono text-sm">{formatPrice(asNumber(log.price))}</p>
                       </div>
                       <div>
                         <p className="text-[10px] uppercase text-muted-foreground">PnL</p>
                         <p className={`font-mono text-sm font-bold ${pnlColor}`}>
-                          {log.pnl_pct > 0 ? "+" : ""}{log.pnl_pct}%
+                          {logPnl > 0 ? "+" : ""}{logPnl}%
                         </p>
                       </div>
-                      {log.volume !== undefined && (
+                      {logVolume !== null && (
                         <div>
                           <p className="text-[10px] uppercase text-muted-foreground">Volume Delta</p>
-                          <p className="font-mono text-sm">{log.volume.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                          <p className="font-mono text-sm">{logVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
                         </div>
                       )}
-                      {log.oi !== undefined && (
+                      {logOi !== null && (
                         <div>
                           <p className="text-[10px] uppercase text-muted-foreground">Open Interest</p>
-                          <p className="font-mono text-sm">{log.oi.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                          <p className="font-mono text-sm">{logOi.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
                         </div>
                       )}
-                      {log.taker_ratio !== undefined && log.taker_ratio !== null && (
+                      {logTakerRatio !== null && (
                         <div>
                           <p className="text-[10px] uppercase text-muted-foreground">Taker Ratio</p>
-                          <p className={`font-mono text-sm ${log.taker_ratio > 1 ? "text-emerald-400" : log.taker_ratio < 1 ? "text-rose-400" : ""}`}>
-                            {log.taker_ratio.toFixed(3)}
+                          <p className={`font-mono text-sm ${logTakerRatio > 1 ? "text-emerald-400" : logTakerRatio < 1 ? "text-rose-400" : ""}`}>
+                            {logTakerRatio.toFixed(3)}
                           </p>
                         </div>
                       )}
-                      {log.long_short_ratio !== undefined && log.long_short_ratio !== null && (
+                      {logLongShortRatio !== null && (
                         <div>
                           <p className="text-[10px] uppercase text-muted-foreground">L/S Ratio</p>
-                          <p className="font-mono text-sm">{log.long_short_ratio.toFixed(3)}</p>
+                          <p className="font-mono text-sm">{logLongShortRatio.toFixed(3)}</p>
                         </div>
                       )}
-                      {log.funding !== undefined && log.funding !== null && (
+                      {logFunding !== null && (
                         <div>
                           <p className="text-[10px] uppercase text-muted-foreground">Funding Fee</p>
-                          <p className="font-mono text-sm">{(log.funding * 100).toFixed(4)}%</p>
+                          <p className="font-mono text-sm">{(logFunding * 100).toFixed(4)}%</p>
                         </div>
                       )}
                     </div>
@@ -607,9 +662,10 @@ function Badge({ label, value }: { label: string; value: string }) {
 }
 
 function ProgressBar({ label, value, color, inverse = false }: { label: string; value: number | null | undefined; color: string; inverse?: boolean }) {
-  if (value === null || value === undefined) return null;
+  const normalizedValue = asNumber(value);
+  if (normalizedValue === null) return null;
   
-  const pct = Math.round(value * 100);
+  const pct = Math.round(normalizedValue * 100);
   const width = Math.min(100, Math.max(0, pct));
   
   const colorMap: Record<string, string> = {
@@ -638,21 +694,22 @@ function ProgressBar({ label, value, color, inverse = false }: { label: string; 
 }
 
 function MetricBox({ label, value, format }: { label: string; value: number | null | undefined; format: "pct" | "num" }) {
-  if (value === null || value === undefined) return null;
+  const normalizedValue = asNumber(value);
+  if (normalizedValue === null) return null;
   
   let formatted = "";
-  let isPositive = value > 0;
+  const isPositive = normalizedValue > 0;
   
   if (format === "pct") {
-    formatted = `${isPositive ? '+' : ''}${value.toFixed(2)}%`;
+    formatted = `${isPositive ? '+' : ''}${normalizedValue.toFixed(2)}%`;
   } else {
-    formatted = `${isPositive ? '+' : ''}${value.toFixed(2)}`;
+    formatted = `${isPositive ? '+' : ''}${normalizedValue.toFixed(2)}`;
   }
 
   return (
     <div className="rounded-xl bg-white/[0.02] p-3">
       <p className="text-[10px] font-medium uppercase text-muted-foreground">{label}</p>
-      <p className={`mt-1 text-lg font-semibold tabular-nums ${isPositive ? 'text-emerald-400' : value < 0 ? 'text-rose-400' : 'text-foreground'}`}>
+      <p className={`mt-1 text-lg font-semibold tabular-nums ${isPositive ? 'text-emerald-400' : normalizedValue < 0 ? 'text-rose-400' : 'text-foreground'}`}>
         {formatted}
       </p>
     </div>
