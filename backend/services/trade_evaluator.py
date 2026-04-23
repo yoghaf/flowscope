@@ -97,14 +97,17 @@ class TradeEvaluator:
                     risk_pct=risk_pct,
                 )
 
+                tp1_just_hit = False
                 if trade.target_price_1 is not None and not tp1_hit:
                     if direction > 0 and high_price >= trade.target_price_1:
                         tp1_hit = True
+                        tp1_just_hit = True
                         tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
                         trailing_stop_price = trade.entry_price
                         entry_features["tp1_pnl_pct"] = round(tp1_pnl_pct, 6)
                     if direction < 0 and low_price <= trade.target_price_1:
                         tp1_hit = True
+                        tp1_just_hit = True
                         tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
                         trailing_stop_price = trade.entry_price
                         entry_features["tp1_pnl_pct"] = round(tp1_pnl_pct, 6)
@@ -127,14 +130,14 @@ class TradeEvaluator:
                     close_reason = "Target 2"
 
                 # Trailing stop at breakeven after TP1 — partial win (50% already banked)
-                if exit_price is None and tp1_hit and trailing_stop_price is not None:
+                if exit_price is None and tp1_hit and trailing_stop_price is not None and not tp1_just_hit:
                     if direction > 0 and low_price <= trailing_stop_price:
                         exit_price = trailing_stop_price
                         result = "win"
                         close_reason = (
                             "Continuation Trail Stop"
                             if setup_type == "Continuation" and abs(trailing_stop_price - trade.entry_price) > BREAKEVEN_EPSILON
-                            else "Trail Stop (TP1)"
+                            else "Partial TP1"
                         )
                     if direction < 0 and high_price >= trailing_stop_price:
                         exit_price = trailing_stop_price
@@ -142,7 +145,7 @@ class TradeEvaluator:
                         close_reason = (
                             "Continuation Trail Stop"
                             if setup_type == "Continuation" and abs(trailing_stop_price - trade.entry_price) > BREAKEVEN_EPSILON
-                            else "Trail Stop (TP1)"
+                            else "Partial TP1"
                         )
 
                 if exit_price is None and entry_touched_at is not None and strategy_version != "v2_balanced":
