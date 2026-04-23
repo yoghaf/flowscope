@@ -559,10 +559,10 @@ class TradingBotService:
             wins = [t for t in closed if t.result == "win"]
             losses = [t for t in closed if t.result == "loss"]
 
-            total_pnl = sum(t.pnl_usdt for t in closed)
+            total_pnl = sum((t.pnl_usdt or 0.0) for t in closed)
             win_rate = len(wins) / len(closed) * 100 if closed else 0
-            avg_win = sum(t.pnl_usdt for t in wins) / len(wins) if wins else 0
-            avg_loss = sum(t.pnl_usdt for t in losses) / len(losses) if losses else 0
+            avg_win = sum((t.pnl_usdt or 0.0) for t in wins) / len(wins) if wins else 0
+            avg_loss = sum((t.pnl_usdt or 0.0) for t in losses) / len(losses) if losses else 0
             current_capital = self.settings.demo_trading_capital_usdt + total_pnl
 
             return {

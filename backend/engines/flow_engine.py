@@ -39,6 +39,13 @@ class FlowEngine:
         lookback_15m = self._lookback(history, current.timestamp, timedelta(minutes=15))
         lookback_1h = self._lookback(history, current.timestamp, timedelta(hours=1))
         lookback_4h = self._lookback(history, current.timestamp, timedelta(hours=4))
+        # For volume change, the current bucket is incomplete so its volume is naturally much lower
+        # than a fully closed past bucket. We use the last closed bucket to get an accurate volume change.
+        last_closed = history[-2] if len(history) > 1 else current
+        vol_lookback_15m = self._lookback(history, last_closed.timestamp, timedelta(minutes=15))
+        vol_lookback_1h = self._lookback(history, last_closed.timestamp, timedelta(hours=1))
+        vol_lookback_4h = self._lookback(history, last_closed.timestamp, timedelta(hours=4))
+
         return FlowMetrics(
             price_change_15m=self.calculate_change(current.price, lookback_15m.price),
             price_change_1h=self.calculate_change(current.price, lookback_1h.price),
@@ -46,9 +53,9 @@ class FlowEngine:
             oi_change_15m=self.calculate_change(current.open_interest, lookback_15m.open_interest),
             oi_change_1h=self.calculate_change(current.open_interest, lookback_1h.open_interest),
             oi_change_4h=self.calculate_change(current.open_interest, lookback_4h.open_interest),
-            volume_change_15m=self.calculate_change(current.volume, lookback_15m.volume),
-            volume_change_1h=self.calculate_change(current.volume, lookback_1h.volume),
-            volume_change_4h=self.calculate_change(current.volume, lookback_4h.volume),
+            volume_change_15m=self.calculate_change(last_closed.volume, vol_lookback_15m.volume),
+            volume_change_1h=self.calculate_change(last_closed.volume, vol_lookback_1h.volume),
+            volume_change_4h=self.calculate_change(last_closed.volume, vol_lookback_4h.volume),
             compression_score=self._compression_score(history, timeframe="1h"),
         )
 
