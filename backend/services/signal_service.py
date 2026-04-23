@@ -3042,6 +3042,14 @@ class SignalService:
                     action.bias,
                 )
 
+            # Hook: Execute demo trade if bot is active
+            trading_bot = getattr(self, "trading_bot", None)
+            if trading_bot is not None:
+                # Reload the trade object from DB with the ID
+                saved_trade = await self.database.get_trade_signal_by_id(trade_id)
+                if saved_trade:
+                    asyncio.create_task(trading_bot.on_new_signal(saved_trade))
+
     @staticmethod
     def _execution_levels_sane(
         *,

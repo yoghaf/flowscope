@@ -181,3 +181,33 @@ class TradeSignal(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+class DemoTrade(Base):
+    __tablename__ = "demo_trades"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_signal_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    side: Mapped[str] = mapped_column(String(8), nullable=False)  # BUY / SELL
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    notional_usdt: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
+    sl_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tp1_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tp2_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="open")
+    result: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    pnl_usdt: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    pnl_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    binance_entry_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    binance_sl_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    binance_tp_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    position_size_multiplier: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    close_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)

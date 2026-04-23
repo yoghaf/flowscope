@@ -268,6 +268,16 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_api_base: str = "https://api.telegram.org"
 
+    # Demo Trading Bot
+    binance_api_key: str | None = None
+    binance_api_secret: str | None = None
+    demo_trading_enabled: bool = False
+    demo_trading_use_testnet: bool = True
+    demo_trading_capital_usdt: float = 1000.0
+    demo_trading_base_size_usdt: float = 100.0
+    demo_trading_max_open_positions: int = 5
+    demo_trading_monitor_interval_seconds: int = 30
+
     binance_rest_url: str = "https://fapi.binance.com"
     binance_spot_rest_url: str = "https://api.binance.com"
     binance_ws_url: str = "wss://fstream.binance.com"

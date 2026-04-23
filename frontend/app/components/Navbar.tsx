@@ -76,6 +76,7 @@ export default function Navbar() {
               { href: "/scanner", label: "Scanner" },
               { href: "/performance", label: "Performance" },
               { href: "/signals", label: "AI Signals" },
+              { href: "/demo-trading", label: "Demo Trade" },
               { href: "/alerts", label: "Alerts" },
             ].map((item) => (
               <Link
@@ -135,6 +136,7 @@ export default function Navbar() {
                     { href: "/scanner", label: "Open Scanner" },
                     { href: "/performance", label: "Open Performance" },
                     { href: "/signals", label: "Open AI Signals" },
+                    { href: "/demo-trading", label: "Open Demo Trade" },
                     { href: "/alerts", label: "Open Alerts" },
                     { href: "/alerts#alert-preferences", label: "Notification Settings", icon: Settings2 },
                   ].map((item) => {
