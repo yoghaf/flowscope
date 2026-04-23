@@ -99,7 +99,7 @@ export default function CoinTable({
                   {formatPercent(oiChange)}
                 </td>
                 <td className={`px-6 py-4 text-right font-semibold ${volumeChange === null ? "text-muted-foreground" : volumeChange >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                  {formatPercent(volumeChange)}
+                  {volumeChange === null ? "--" : Math.abs(volumeChange) >= 10 ? `${volumeChange >= 0 ? "+" : ""}${(volumeChange + 1).toFixed(0)}x` : `${volumeChange >= 0 ? "+" : ""}${(volumeChange * 100).toFixed(1)}%`}
                 </td>
                 {isScanner ? (
                   <>
