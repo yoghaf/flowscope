@@ -21,7 +21,6 @@ import {
   Zap,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { SignalChart } from "./SignalChart";
 
 function formatPrice(price: number | null) {
   if (price === null || price === undefined) return "—";
