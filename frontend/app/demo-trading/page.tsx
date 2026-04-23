@@ -318,7 +318,7 @@ function PositionCard({
               >
                 {position.side}
               </span>
-              {position.position_size_multiplier !== 1.0 && (
+              {position.position_size_multiplier != null && position.position_size_multiplier !== 1.0 && (
                 <span className="rounded-md bg-violet-500/10 px-2 py-0.5 text-[10px] font-bold text-violet-400">
                   {position.position_size_multiplier.toFixed(2)}x
                 </span>
