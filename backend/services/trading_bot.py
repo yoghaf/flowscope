@@ -8,14 +8,13 @@ from datetime import datetime, timezone
 UTC = timezone.utc
 
 from binance.client import Client
-from binance.enums import (
-    SIDE_BUY,
-    SIDE_SELL,
-    ORDER_TYPE_MARKET,
-    ORDER_TYPE_STOP_MARKET,
-    ORDER_TYPE_TAKE_PROFIT_MARKET,
-    FUTURE_ORDER_TYPE_LIMIT,
-)
+
+# Order type/side constants (string literals for compatibility)
+SIDE_BUY = "BUY"
+SIDE_SELL = "SELL"
+ORDER_TYPE_MARKET = "MARKET"
+ORDER_TYPE_STOP_MARKET = "STOP_MARKET"
+ORDER_TYPE_TAKE_PROFIT_MARKET = "TAKE_PROFIT_MARKET"
 from sqlalchemy import select, update
 
 from backend.config import Settings
