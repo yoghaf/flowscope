@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, JSON, String, func
+from sqlalchemy import Boolean, DateTime, Float, Integer, JSON, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -168,6 +168,8 @@ class TradeSignal(Base):
     max_profit_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     engine_tag: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     entry_features: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    exit_features: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    autopsy_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

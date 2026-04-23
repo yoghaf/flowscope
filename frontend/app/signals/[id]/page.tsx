@@ -452,23 +452,50 @@ export default function SignalDetailPage() {
         </div>
       </div>
       
+      {/* Autopsy Brain & Metrics */}
+      {!isOpen && trade.autopsy_rationale && (
+        <div className="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-6 shadow-sm">
+          <div className="mb-4 flex items-center gap-2">
+            <Brain className="h-6 w-6 text-violet-400" />
+            <h2 className="text-xl font-bold text-violet-100">Automated Autopsy</h2>
+          </div>
+          <p className="text-sm leading-relaxed text-violet-200/90">{trade.autopsy_rationale}</p>
+        </div>
+      )}
+
       {/* Metrics Grid */}
-      <div className="rounded-2xl border border-white/10 bg-card p-6 shadow-sm">
-        <div className="mb-4 flex items-center gap-2">
-          <Layers className="h-5 w-5 text-blue-400" />
-          <h2 className="text-lg font-bold">Snapshot at Entry</h2>
+      <div className="grid gap-6 sm:grid-cols-2">
+        <div className="rounded-2xl border border-white/10 bg-card p-6 shadow-sm">
+          <div className="mb-4 flex items-center gap-2">
+            <Layers className="h-5 w-5 text-blue-400" />
+            <h2 className="text-lg font-bold">Snapshot at Entry</h2>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <MetricBox label="OI Change (1H)" value={trade.oi_change_1h} format="pct" />
+            <MetricBox label="Funding (1H)" value={trade.funding_level_1h} format="pct" />
+            <MetricBox label="Volume Z (1H)" value={trade.volume_z_1h} format="num" />
+            <MetricBox label="Market Pressure" value={trade.market_pressure_1h} format="num" />
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <MetricBox label="OI Change (1H)" value={trade.oi_change_1h} format="pct" />
-          <MetricBox label="OI Change (4H)" value={trade.oi_change_4h} format="pct" />
-          <MetricBox label="Funding (4H)" value={trade.funding_level_4h} format="pct" />
-          <MetricBox label="Volume Z (4H)" value={trade.volume_z_4h} format="num" />
-          
-          <MetricBox label="Market Pressure (1H)" value={trade.market_pressure_1h} format="num" />
-          <MetricBox label="Liq Pressure (1H)" value={trade.liq_pressure_1h} format="num" />
-          <MetricBox label="L/S Delta (1H)" value={trade.long_short_ratio_delta_1h} format="num" />
-          <MetricBox label="Compression (4H)" value={trade.compression_score_4h} format="num" />
-        </div>
+
+        {trade.exit_features && (
+          <div className="rounded-2xl border border-white/10 bg-card p-6 shadow-sm">
+            <div className="mb-4 flex items-center gap-2">
+              <Activity className="h-5 w-5 text-rose-400" />
+              <h2 className="text-lg font-bold">Snapshot at Exit</h2>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <MetricBox 
+                label="OI Delta" 
+                value={((trade.exit_features.open_interest_close || 0) - (trade.exit_features.open_interest_open || 0)) / (trade.exit_features.open_interest_open || 1) * 100} 
+                format="pct" 
+              />
+              <MetricBox label="Funding Rate" value={trade.exit_features.funding_rate_close} format="pct" />
+              <MetricBox label="Volume Delta" value={trade.exit_features.volume_delta} format="num" />
+              <MetricBox label="Market Pressure" value={trade.exit_features.market_pressure} format="num" />
+            </div>
+          </div>
+        )}
       </div>
 
     </div>

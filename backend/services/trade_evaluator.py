@@ -6,6 +6,7 @@ UTC = timezone.utc
 
 from backend.config import Settings
 from backend.database import DatabaseManager
+from backend.engines.autopsy_engine import AutopsyEngine
 from backend.services.timeframe_aggregator import TIMEFRAME_DELTAS
 
 logger = logging.getLogger(__name__)
@@ -211,6 +212,19 @@ class TradeEvaluator:
                 max_drawdown_pct=max_drawdown_pct,
                 risk_pct=risk_pct,
             )
+
+            # Generate autopsy on close
+            if result in ("win", "loss"):
+                payload["exit_features"] = bucket.to_record()
+                payload["autopsy_rationale"] = AutopsyEngine.generate_rationale(
+                    result=result,
+                    close_reason=close_reason or "Unknown",
+                    entry_features=entry_features,
+                    exit_features=payload["exit_features"],
+                    tp1_hit=tp1_hit,
+                    bias=trade.bias,
+                )
+
             await self.database.update_trade_signal(trade.id, payload)
             for key, value in payload.items():
                 setattr(trade, key, value)
