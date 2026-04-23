@@ -136,25 +136,6 @@ export function SignalChart({ symbol, entryPrice, tp1, tp2, sl, bias, timeframe,
           });
         }
 
-        // Add Marker for Signal Time
-        const signalTimestamp = new Date(signalTime).getTime() / 1000;
-        
-        // Find closest candle
-        const closestCandle = klines.reduce((prev, curr) => {
-          return (Math.abs((curr.time as number) - signalTimestamp) < Math.abs((prev.time as number) - signalTimestamp) ? curr : prev);
-        });
-
-        if (closestCandle) {
-          candlestickSeries.setMarkers([
-            {
-              time: closestCandle.time,
-              position: bias === "Bullish" ? "belowBar" : "aboveBar",
-              color: bias === "Bullish" ? "#3B82F6" : "#F43F5E",
-              shape: bias === "Bullish" ? "arrowUp" : "arrowDown",
-              text: "Signal",
-            }
-          ]);
-        }
 
         // Auto scale and fit content
         chart.timeScale().fitContent();
