@@ -215,7 +215,11 @@ class TradeEvaluator:
 
             # Generate autopsy on close
             if result in ("win", "loss"):
-                payload["exit_features"] = bucket.to_record()
+                payload["exit_features"] = {
+                    c.key: getattr(bucket, c.key)
+                    for c in bucket.__table__.columns
+                    if c.key not in ("symbol", "timeframe", "bucket_start", "bucket_end", "last_timestamp")
+                }
                 payload["autopsy_rationale"] = AutopsyEngine.generate_rationale(
                     result=result,
                     close_reason=close_reason or "Unknown",
