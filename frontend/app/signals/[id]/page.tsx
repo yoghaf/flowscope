@@ -471,6 +471,79 @@ export default function SignalDetailPage() {
         )}
       </div>
 
+      {/* Trade Timeline (History Logs) */}
+      {trade.history_logs && trade.history_logs.length > 0 && (
+        <div className="mt-8 rounded-2xl border border-white/10 bg-card p-6 shadow-sm">
+          <div className="mb-6 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-blue-400" />
+              <h2 className="text-xl font-bold">Trade Journey & Timeline</h2>
+            </div>
+            <span className="text-xs font-medium text-muted-foreground bg-white/5 px-2 py-1 rounded-md">
+              {trade.history_logs.length} updates recorded
+            </span>
+          </div>
+          
+          <div className="relative space-y-0 pl-4">
+            {/* Vertical timeline line */}
+            <div className="absolute bottom-0 left-[23px] top-4 w-px bg-white/10" />
+            
+            {trade.history_logs.map((log: any, index: number) => {
+              const isClose = log.event === "close";
+              const pnlColor = log.pnl_pct > 0 ? "text-emerald-400" : log.pnl_pct < 0 ? "text-rose-400" : "text-foreground";
+              
+              return (
+                <div key={index} className="relative flex gap-6 pb-6 last:pb-0">
+                  <div className="relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-background shadow-[0_0_0_4px_var(--background)] mt-1.5">
+                    <div className={`h-2.5 w-2.5 rounded-full ${isClose ? "bg-rose-500" : "bg-blue-500"}`} />
+                  </div>
+                  
+                  <div className={`flex-1 rounded-xl border p-4 ${isClose ? "bg-rose-500/5 border-rose-500/20" : "bg-white/[0.02] border-white/5"}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        {new Date(log.timestamp).toLocaleString(undefined, {
+                          month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit"
+                        })}
+                      </p>
+                      {isClose && (
+                        <span className="rounded-md bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-rose-300">
+                          {log.reason || "Closed"}
+                        </span>
+                      )}
+                    </div>
+                    
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                      <div>
+                        <p className="text-[10px] uppercase text-muted-foreground">Price</p>
+                        <p className="font-mono text-sm">{formatPrice(log.price)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase text-muted-foreground">PnL</p>
+                        <p className={`font-mono text-sm font-bold ${pnlColor}`}>
+                          {log.pnl_pct > 0 ? "+" : ""}{log.pnl_pct}%
+                        </p>
+                      </div>
+                      {log.volume !== undefined && (
+                        <div>
+                          <p className="text-[10px] uppercase text-muted-foreground">Volume Delta</p>
+                          <p className="font-mono text-sm">{log.volume.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                        </div>
+                      )}
+                      {log.oi !== undefined && (
+                        <div>
+                          <p className="text-[10px] uppercase text-muted-foreground">Open Interest</p>
+                          <p className="font-mono text-sm">{log.oi.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -444,6 +444,9 @@ class TradeSignalEntry(BaseModel):
     max_drawdown_pct: float
     max_profit_pct: float
     engine_tag: str | None = None
+    entry_features: dict | None = None
+    exit_features: dict | None = None
+    history_logs: list[dict] | None = None
     created_at: datetime
     updated_at: datetime
 

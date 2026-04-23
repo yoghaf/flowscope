@@ -62,6 +62,12 @@ class DatabaseManager:
                 await connection.execute(
                     text(
                         "ALTER TABLE trade_signals "
+                        "ADD COLUMN IF NOT EXISTS history_logs JSON"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE trade_signals "
                         "ADD COLUMN IF NOT EXISTS entry_flow_alignment DOUBLE PRECISION"
                     )
                 )

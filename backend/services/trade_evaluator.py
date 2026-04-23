@@ -55,6 +55,7 @@ class TradeEvaluator:
             strategy_version = entry_features.get("strategy_version", "v1")
             entry_flow_alignment = getattr(trade, "entry_flow_alignment", None)
             setup_type = getattr(trade, "setup_type", None)
+            history_logs = list(getattr(trade, "history_logs", None) or [])
 
             payload: dict[str, object] = {"updated_at": now}
             timeframe_delta = TIMEFRAME_DELTAS.get(trade.timeframe, TIMEFRAME_DELTAS["1h"])
@@ -90,6 +91,19 @@ class TradeEvaluator:
                 pnl_pct = ((price - trade.entry_price) / trade.entry_price) * direction * 100
                 max_profit_pct = max(max_profit_pct, pnl_pct)
                 max_drawdown_pct = min(max_drawdown_pct, pnl_pct)
+                
+                bucket_ts_str = bucket.last_timestamp.isoformat()
+                if not history_logs or history_logs[-1].get("timestamp") != bucket_ts_str:
+                    history_logs.append({
+                        "timestamp": bucket_ts_str,
+                        "price": price,
+                        "pnl_pct": round(pnl_pct, 4),
+                        "volume": bucket.spot_volume_delta + bucket.futures_volume_delta,
+                        "oi": bucket.open_interest_close,
+                        "funding": bucket.funding_rate_close,
+                        "event": "update",
+                    })
+
                 entry_features = self._merge_trade_analytics_features(
                     entry_features=entry_features,
                     pnl_pct=pnl_pct,
@@ -228,7 +242,17 @@ class TradeEvaluator:
                     tp1_hit=tp1_hit,
                     bias=trade.bias,
                 )
+                
+            if result != "open":
+                history_logs.append({
+                    "timestamp": closed_at.isoformat() if closed_at else now.isoformat(),
+                    "price": exit_price if 'exit_price' in locals() and exit_price else trade.entry_price,
+                    "pnl_pct": round(pnl_pct, 4),
+                    "event": "close",
+                    "reason": close_reason or "Unknown",
+                })
 
+            payload["history_logs"] = history_logs
             await self.database.update_trade_signal(trade.id, payload)
             for key, value in payload.items():
                 setattr(trade, key, value)

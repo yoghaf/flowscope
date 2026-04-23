@@ -169,6 +169,7 @@ class TradeSignal(Base):
     engine_tag: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     entry_features: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     exit_features: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    history_logs: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     autopsy_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
