@@ -78,8 +78,8 @@ async function fetchBlob(
 }
 
 export const api = {
-  getLiveSignals(query: { status?: "all" | "open" | "closed"; scope?: "all" | "active"; strategy?: string; limit?: number }): Promise<SignalsResponse> {
-    return fetchJson<SignalsResponse>("/signals/live", {
+  getLiveSignals(query: { status?: "all" | "open" | "closed"; scope?: "all" | "active"; strategy?: string; limit?: number }): Promise<any> {
+    return fetchJson<any>("/signals/live", {
       status: query.status ?? "all",
       scope: query.scope ?? "active",
       strategy: query.strategy ?? "v2_balanced",
