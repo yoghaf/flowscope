@@ -15,10 +15,8 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Loader2,
-  BarChart3,
   Brain,
   Layers,
-  Zap,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -292,30 +290,6 @@ export default function SignalDetailPage() {
         </div>
       )}
 
-      {/* Live Interactive Chart */}
-      <div className="rounded-2xl border border-white/10 bg-card p-6 shadow-sm">
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <BarChart3 className="h-5 w-5 text-blue-400" />
-            <h2 className="text-lg font-bold">Interactive Chart</h2>
-          </div>
-          <button className="flex items-center gap-2 rounded-lg bg-blue-500/10 px-3 py-1.5 text-sm font-semibold text-blue-400 transition hover:bg-blue-500/20">
-            <Zap className="h-4 w-4" />
-            Execute Demo Trade
-          </button>
-        </div>
-        
-        <SignalChart
-          symbol={trade.symbol}
-          entryPrice={trade.entry_price}
-          tp1={trade.target_price_1}
-          tp2={trade.target_price_2}
-          sl={trade.invalidation_price}
-          bias={trade.bias}
-          timeframe={trade.timeframe}
-          signalTime={trade.timestamp || trade.created_at}
-        />
-      </div>
 
       {/* Trade Summary */}
       <div className="rounded-2xl border border-white/10 bg-card p-6 shadow-sm">
