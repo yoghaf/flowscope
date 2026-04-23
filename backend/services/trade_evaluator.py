@@ -41,21 +41,22 @@ class TradeEvaluator:
             direction = 1 if bias == "Bullish" else -1 if bias == "Bearish" else 1
 
             status = trade.status
-            result = trade.result
+            result = "open"
             entry_touched_at = trade.entry_touched_at
-            tp1_hit = trade.tp1_hit
-            trailing_stop_price = trade.trailing_stop_price
-            pnl_pct = trade.pnl_pct
-            max_profit_pct = trade.max_profit_pct
-            max_drawdown_pct = trade.max_drawdown_pct
-            closed_at = getattr(trade, "closed_at", None)
-            close_reason = getattr(trade, "close_reason", None)
+            tp1_hit = False
+            trailing_stop_price = None
+            pnl_pct = 0.0
+            max_profit_pct = 0.0
+            max_drawdown_pct = 0.0
+            closed_at = None
+            close_reason = None
+            history_logs = []
+
             entry_features = dict(getattr(trade, "entry_features", None) or {})
             tp1_pnl_pct = self._feature_float(entry_features.get("tp1_pnl_pct"))
             strategy_version = entry_features.get("strategy_version", "v1")
             entry_flow_alignment = getattr(trade, "entry_flow_alignment", None)
             setup_type = getattr(trade, "setup_type", None)
-            history_logs = list(getattr(trade, "history_logs", None) or [])
 
             payload: dict[str, object] = {"updated_at": now}
             timeframe_delta = TIMEFRAME_DELTAS.get(trade.timeframe, TIMEFRAME_DELTAS["1h"])
@@ -120,12 +121,26 @@ class TradeEvaluator:
                         tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
                         trailing_stop_price = trade.entry_price
                         entry_features["tp1_pnl_pct"] = round(tp1_pnl_pct, 6)
+                        history_logs.append({
+                            "timestamp": bucket.last_timestamp.isoformat(),
+                            "price": trade.target_price_1,
+                            "pnl_pct": round(tp1_pnl_pct, 4),
+                            "event": "tp1_hit",
+                            "reason": "Take Profit 1"
+                        })
                     if direction < 0 and low_price <= trade.target_price_1:
                         tp1_hit = True
                         tp1_just_hit = True
                         tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
                         trailing_stop_price = trade.entry_price
                         entry_features["tp1_pnl_pct"] = round(tp1_pnl_pct, 6)
+                        history_logs.append({
+                            "timestamp": bucket.last_timestamp.isoformat(),
+                            "price": trade.target_price_1,
+                            "pnl_pct": round(tp1_pnl_pct, 4),
+                            "event": "tp1_hit",
+                            "reason": "Take Profit 1"
+                        })
 
                 exit_price = None
                 hit_target_2 = False
