@@ -71,7 +71,7 @@ export default function SignalDetailPage() {
     if (!trade || trade.result !== "open") return;
 
     const symbol = trade.symbol.toLowerCase();
-    const wsUrl = `wss://stream.binance.com:9443/ws/${symbol}@ticker`;
+    const wsUrl = `wss://fstream.binance.com/ws/${symbol}@ticker`;
 
     const connectWs = () => {
       setWsStatus("connecting");
