@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useMemo, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -180,14 +180,11 @@ export default function SignalDetailPage() {
   const livePnl = currentPrice && trade.entry_price ? 
     ((currentPrice - trade.entry_price) / trade.entry_price) * 100 * (isBullish ? 1 : -1) : 0;
 
-  const historyLogs = useMemo(() => {
-    if (!Array.isArray(trade?.history_logs)) {
-      return [];
-    }
-    return [...trade.history_logs].sort(
-      (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
-    );
-  }, [trade?.history_logs]);
+  const historyLogs = Array.isArray(trade?.history_logs)
+    ? [...trade.history_logs].sort(
+        (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+      )
+    : [];
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 pb-20">
