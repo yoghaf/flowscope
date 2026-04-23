@@ -179,8 +179,8 @@ export default function DemoTradingPage() {
           </div>
           <div className="h-4 w-px bg-white/10" />
           <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Max Positions:</span>
-            <span className="font-bold">{stats?.max_positions}</span>
+            <span className="text-muted-foreground">Leverage:</span>
+            <span className="font-bold text-amber-400">Max</span>
           </div>
           <div className="h-4 w-px bg-white/10" />
           <div className="flex items-center gap-2">

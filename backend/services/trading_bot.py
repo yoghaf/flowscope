@@ -90,12 +90,6 @@ class TradingBotService:
             return
 
         try:
-            # Check max open positions
-            open_count = await self._count_open_positions()
-            if open_count >= self.settings.demo_trading_max_open_positions:
-                logger.info("🤖 Max open positions (%d) reached. Skipping %s.", open_count, trade.symbol)
-                return
-
             # Check if already have open position for this symbol
             if await self._has_open_position(trade.symbol):
                 logger.info("🤖 Already have open position for %s. Skipping.", trade.symbol)
@@ -121,6 +115,14 @@ class TradingBotService:
                 side, trade.symbol, quantity, notional,
                 trade.invalidation_price, trade.target_price_2,
             )
+
+            # 0. Set max leverage for this symbol
+            try:
+                max_lev = self._get_max_leverage(trade.symbol)
+                self.client.futures_change_leverage(symbol=trade.symbol, leverage=max_lev)
+                logger.info("🤖 Leverage set to %dx for %s", max_lev, trade.symbol)
+            except Exception as e:
+                logger.warning("🤖 Could not set leverage for %s: %s", trade.symbol, e)
 
             # 1. Place Market Order (Entry)
             entry_order = self.client.futures_create_order(
@@ -387,6 +389,16 @@ class TradingBotService:
                             break
                     break
         return f"{price:.{precision}f}"
+
+    def _get_max_leverage(self, symbol: str) -> int:
+        """Get maximum allowed leverage for a symbol from exchange info."""
+        if self._exchange_info:
+            for s in self._exchange_info.get("symbols", []):
+                if s["symbol"] == symbol:
+                    # Binance stores max leverage in leverageBracket or symbol info
+                    max_lev = int(s.get("maxLeverage", 125))
+                    return min(max_lev, 125)
+        return 20  # safe default
 
     # ─── Database Helpers ─────────────────────────────────────────
 
