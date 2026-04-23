@@ -97,7 +97,8 @@ class TradingBotService:
 
             # Calculate quantity
             side = SIDE_BUY if trade.bias == "Bullish" else SIDE_SELL
-            size_multiplier = getattr(trade, "position_size_multiplier", None) or 1.0
+            entry_features = getattr(trade, "entry_features", None) or {}
+            size_multiplier = float(entry_features.get("position_size_multiplier", 1.0) or 1.0)
             notional = self.settings.demo_trading_base_size_usdt * size_multiplier
             entry_price = trade.entry_price
 
