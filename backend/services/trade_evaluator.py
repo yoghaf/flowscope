@@ -30,7 +30,12 @@ class TradeEvaluator:
         now = datetime.now(UTC)
         catchup_queued = 0
         for trade in open_trades:
-            evaluation_anchor = getattr(trade, "last_scale_in_at", None) or trade.entry_touched_at or trade.timestamp
+            history_logs = list(getattr(trade, "history_logs", None) or [])
+            if history_logs:
+                evaluation_anchor = datetime.fromisoformat(history_logs[-1]["timestamp"])
+            else:
+                evaluation_anchor = getattr(trade, "last_scale_in_at", None) or trade.entry_touched_at or trade.timestamp
+                
             evaluation_buckets = await self._load_evaluation_buckets(trade=trade, anchor=evaluation_anchor)
 
             price = evaluation_buckets[-1].close_price if evaluation_buckets else await self.signal_service.get_latest_price(trade.symbol, trade.timeframe)
@@ -43,14 +48,13 @@ class TradeEvaluator:
             status = trade.status
             result = "open"
             entry_touched_at = trade.entry_touched_at
-            tp1_hit = False
-            trailing_stop_price = None
-            pnl_pct = 0.0
-            max_profit_pct = 0.0
-            max_drawdown_pct = 0.0
+            tp1_hit = trade.tp1_hit
+            trailing_stop_price = trade.trailing_stop_price
+            pnl_pct = trade.pnl_pct
+            max_profit_pct = trade.max_profit_pct
+            max_drawdown_pct = trade.max_drawdown_pct
             closed_at = None
             close_reason = None
-            history_logs = []
 
             entry_features = dict(getattr(trade, "entry_features", None) or {})
             tp1_pnl_pct = self._feature_float(entry_features.get("tp1_pnl_pct"))
@@ -68,6 +72,19 @@ class TradeEvaluator:
                 and trade.entry_price > BREAKEVEN_EPSILON
                 else None
             )
+
+            # Dynamic interval logic based on timeframe
+            tf = trade.timeframe
+            if tf == "15m":
+                req_interval = 300  # 5 mins
+            elif tf == "1h":
+                req_interval = 900  # 15 mins
+            elif tf == "4h":
+                req_interval = 1800 # 30 mins
+            elif tf in ("24h", "1d"):
+                req_interval = 3600 # 1 hour
+            else:
+                req_interval = 300
 
             for bucket in evaluation_buckets:
                 high_price = bucket.high_price
@@ -93,10 +110,18 @@ class TradeEvaluator:
                 max_profit_pct = max(max_profit_pct, pnl_pct)
                 max_drawdown_pct = min(max_drawdown_pct, pnl_pct)
                 
-                bucket_ts_str = bucket.last_timestamp.isoformat()
-                if not history_logs or history_logs[-1].get("timestamp") != bucket_ts_str:
+                bucket_time = bucket.last_timestamp
+                should_log = False
+                if not history_logs:
+                    should_log = True
+                else:
+                    last_log_time = datetime.fromisoformat(history_logs[-1]["timestamp"])
+                    if (bucket_time - last_log_time).total_seconds() >= req_interval:
+                        should_log = True
+                
+                if should_log:
                     history_logs.append({
-                        "timestamp": bucket_ts_str,
+                        "timestamp": bucket_time.isoformat(),
                         "price": price,
                         "pnl_pct": round(pnl_pct, 4),
                         "volume": bucket.spot_volume_delta + bucket.futures_volume_delta,
