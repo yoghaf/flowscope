@@ -112,23 +112,46 @@ export default function DemoTradingPage() {
           </div>
         </div>
 
-        <button
-          onClick={handleToggle}
-          disabled={toggling}
-          className={`flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all ${
-            isEnabled
-              ? "bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 border border-emerald-500/30"
-              : "bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 border border-rose-500/30"
-          }`}
-        >
-          {toggling ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Power className="h-4 w-4" />
+        <div className="flex flex-col items-end gap-2">
+          <button
+            onClick={handleToggle}
+            disabled={toggling}
+            className={`group relative flex items-center gap-3 rounded-xl px-6 py-3.5 text-sm font-black uppercase tracking-wider transition-all ${
+              isEnabled
+                ? "bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border-2 border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+                : "bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 border-2 border-rose-500/50"
+            }`}
+          >
+            {isEnabled && (
+              <span className="absolute -right-1 -top-1 flex h-3 w-3">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500"></span>
+              </span>
+            )}
+            
+            {toggling ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Power className="h-5 w-5" />
+            )}
+            {isEnabled ? "🟢 BOT IS LIVE" : "🔴 BOT IS OFFLINE"}
+          </button>
+          {!isEnabled && (
+            <p className="text-xs font-semibold text-rose-400/80 animate-pulse">
+              Click to activate auto-trading
+            </p>
           )}
-          {isEnabled ? "Bot ACTIVE" : "Bot DISABLED"}
-        </button>
+        </div>
       </div>
+
+      {!isEnabled && (
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm font-medium text-rose-300 flex items-center gap-3">
+          <Power className="h-5 w-5 shrink-0" />
+          <p>
+            The Autonomous Trading Engine is currently <strong>OFFLINE</strong>. It will only monitor signals in the background but will <strong>not execute any trades</strong> on Binance until you turn it on.
+          </p>
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
