@@ -15,7 +15,7 @@ interface SignalChartProps {
 }
 
 interface Kline {
-  time: number;
+  time: Time;
   open: number;
   high: number;
   low: number;
@@ -84,7 +84,7 @@ export function SignalChart({ symbol, entryPrice, tp1, tp2, sl, bias, timeframe,
         const data = await response.json();
         
         const klines: Kline[] = data.map((d: any) => ({
-          time: (d[0] / 1000) as Time,
+          time: Math.floor(d[0] / 1000) as Time,
           open: parseFloat(d[1]),
           high: parseFloat(d[2]),
           low: parseFloat(d[3]),
