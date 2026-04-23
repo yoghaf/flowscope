@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createChart, ColorType, ISeriesApi, SeriesMarker, Time } from "lightweight-charts";
+import { createChart, ColorType, CandlestickSeries, type Time } from "lightweight-charts";
 
 interface SignalChartProps {
   symbol: string;
@@ -57,7 +57,7 @@ export function SignalChart({ symbol, entryPrice, tp1, tp2, sl, bias, timeframe,
       },
     });
 
-    const candlestickSeries = chart.addCandlestickSeries({
+    const candlestickSeries = chart.addSeries(CandlestickSeries, {
       upColor: "#10B981", // Tailwind emerald-500
       downColor: "#F43F5E", // Tailwind rose-500
       borderVisible: false,
