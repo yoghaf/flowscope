@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "token-savior": {
+      "command": "C:\\Users\\Yoga\\.local\\token-savior-venv\\Scripts\\token-savior.exe",
+      "env": {
+        "WORKSPACE_ROOTS": "C:\\Code\\flowscope",
+        "TOKEN_SAVIOR_CLIENT": "claude-code"
+      }
+    }
+  }
+}

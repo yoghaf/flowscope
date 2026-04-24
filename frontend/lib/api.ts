@@ -112,6 +112,9 @@ export const api = {
       search: query.search,
     });
   },
+  getWhaleRadar(): Promise<any> {
+    return fetchJson<any>("/scanner/whale-radar");
+  },
   getCoin(symbol: string, timeframe: Timeframe, snapshotId: string): Promise<CoinDetailResponse> {
     return fetchJson<CoinDetailResponse>(`/coin/${symbol}`, {
       timeframe,

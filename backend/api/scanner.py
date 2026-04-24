@@ -28,3 +28,8 @@ async def get_scanner(
         max_score=max_score,
         search=search,
     )
+
+@router.get("/scanner/whale-radar")
+async def get_whale_radar(request: Request) -> dict:
+    service = request.app.state.whale_radar_service
+    return await service.get_latest_radar_data()

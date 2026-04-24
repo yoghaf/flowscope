@@ -74,9 +74,11 @@ export default function Navbar() {
             {[
               { href: "/", label: "Dashboard" },
               { href: "/scanner", label: "Scanner" },
+              { href: "/whale-radar", label: "Whale Radar" },
               { href: "/performance", label: "Performance" },
               { href: "/signals", label: "AI Signals" },
               { href: "/demo-trading", label: "Demo Trade" },
+              { href: "/alerts", label: "Alerts" },
               { href: "/alerts", label: "Alerts" },
             ].map((item) => (
               <Link
@@ -134,6 +136,7 @@ export default function Navbar() {
                   {[
                     { href: "/", label: "Open Dashboard" },
                     { href: "/scanner", label: "Open Scanner" },
+                    { href: "/whale-radar", label: "Open Whale Radar" },
                     { href: "/performance", label: "Open Performance" },
                     { href: "/signals", label: "Open AI Signals" },
                     { href: "/demo-trading", label: "Open Demo Trade" },
