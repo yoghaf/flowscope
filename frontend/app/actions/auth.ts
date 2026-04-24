@@ -7,7 +7,8 @@ export async function verifyPin(pin: string) {
   
   if (pin === correctPin) {
     // Set cookie that expires in 30 days
-    cookies().set("admin_auth", "authenticated", {
+    const cookieStore = await cookies();
+    cookieStore.set("admin_auth", "authenticated", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
@@ -21,5 +22,6 @@ export async function verifyPin(pin: string) {
 }
 
 export async function logout() {
-  cookies().delete("admin_auth");
+  const cookieStore = await cookies();
+  cookieStore.delete("admin_auth");
 }
