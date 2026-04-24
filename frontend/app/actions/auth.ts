@@ -10,7 +10,6 @@ export async function verifyPin(pin: string) {
     const cookieStore = await cookies();
     cookieStore.set("admin_auth", "authenticated", {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 30 * 24 * 60 * 60, // 30 days
       path: "/",
