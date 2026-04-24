@@ -3052,6 +3052,16 @@ class SignalService:
                 bucket=bucket,
                 state=asset_state,
             )
+            
+            # FIX: Dispatch the newly created AI signal to the Demo Trading Bot
+            if hasattr(self, "trading_bot") and self.trading_bot:
+                try:
+                    trade_obj = await self.database.get_trade_signal_by_id(trade_id)
+                    if trade_obj:
+                        asyncio.create_task(self.trading_bot.on_new_signal(trade_obj))
+                except Exception as e:
+                    logger.error("Failed to notify trading bot: %s", e)
+                    
             expectancy = self.setup_expectancy.get(action.setup_type, 0.0)
             if execution.quality_score == "A" and expectancy > 0:
                 logger.info(
