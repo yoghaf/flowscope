@@ -42,11 +42,11 @@ async def lifespan(app: FastAPI):
     app.state.signal_service = signal_service
     app.state.trading_bot = trading_bot
     app.state.whale_radar_service = whale_radar_service
-    await database.init()
-    await signal_service.start()
-    await trading_bot.start()
-    await whale_radar_service.start()
     signal_service.trading_bot = trading_bot
+    await database.init()
+    await trading_bot.start()
+    await signal_service.start()
+    await whale_radar_service.start()
     yield
     await whale_radar_service.stop()
     await trading_bot.stop()
