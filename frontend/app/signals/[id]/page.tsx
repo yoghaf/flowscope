@@ -568,6 +568,7 @@ export default function SignalDetailPage() {
             
             {historyLogs.map((log: any, index: number) => {
               const isClose = log.event === "close";
+              const isTp1 = log.event === "tp1_hit";
               const logPnl = asNumber(log.pnl_pct) ?? 0;
               const logVolume = asNumber(log.volume);
               const logOi = asNumber(log.oi);
@@ -576,13 +577,23 @@ export default function SignalDetailPage() {
               const logFunding = asNumber(log.funding);
               const pnlColor = logPnl > 0 ? "text-emerald-400" : logPnl < 0 ? "text-rose-400" : "text-foreground";
               
+              let dotColor = "bg-blue-500";
+              let cardBg = "bg-white/[0.02] border-white/5";
+              if (isClose) {
+                dotColor = logPnl > 0 ? "bg-emerald-500" : "bg-rose-500";
+                cardBg = logPnl > 0 ? "bg-emerald-500/5 border-emerald-500/20" : "bg-rose-500/5 border-rose-500/20";
+              } else if (isTp1) {
+                dotColor = "bg-emerald-400";
+                cardBg = "bg-emerald-400/5 border-emerald-400/20";
+              }
+              
               return (
                 <div key={index} className="relative flex gap-6 pb-6 last:pb-0">
                   <div className="relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-background shadow-[0_0_0_4px_var(--background)] mt-1.5">
-                    <div className={`h-2.5 w-2.5 rounded-full ${isClose ? "bg-rose-500" : "bg-blue-500"}`} />
+                    <div className={`h-2.5 w-2.5 rounded-full ${dotColor}`} />
                   </div>
                   
-                  <div className={`flex-1 rounded-xl border p-4 ${isClose ? "bg-rose-500/5 border-rose-500/20" : "bg-white/[0.02] border-white/5"}`}>
+                  <div className={`flex-1 rounded-xl border p-4 ${cardBg}`}>
                     <div className="flex items-center justify-between mb-2">
                       <p className="text-xs font-medium text-muted-foreground">
                         {new Date(log.timestamp).toLocaleString(undefined, {
@@ -590,8 +601,13 @@ export default function SignalDetailPage() {
                         })}
                       </p>
                       {isClose && (
-                        <span className="rounded-md bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-rose-300">
+                        <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${logPnl > 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}`}>
                           {log.reason || "Closed"}
+                        </span>
+                      )}
+                      {isTp1 && (
+                        <span className="rounded-md bg-emerald-400/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300">
+                          🎯 Partial TP1 Hit
                         </span>
                       )}
                     </div>
