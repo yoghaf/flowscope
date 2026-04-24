@@ -254,6 +254,41 @@ class TradeEvaluator:
                     closed_at = bucket.last_timestamp
                     break
 
+            # ---------------------------------------------------------
+            # REAL-TIME EVALUATION (If still open after bucket history)
+            # ---------------------------------------------------------
+            if result == "open" and status == "Triggered" and trade.entry_price and trade.entry_price > 0:
+                rt_price = await self.signal_service.get_latest_price(trade.symbol, trade_timeframe)
+                if rt_price is not None:
+                    rt_pnl_pct = ((rt_price - trade.entry_price) / trade.entry_price) * direction * 100
+                    pnl_pct = rt_pnl_pct
+                    max_profit_pct = max(max_profit_pct, rt_pnl_pct)
+                    max_drawdown_pct = min(max_drawdown_pct, rt_pnl_pct)
+
+                    rt_hit_target_2 = rt_price >= trade.target_price_2 if trade.target_price_2 and direction > 0 else (rt_price <= trade.target_price_2 if trade.target_price_2 else False)
+                    rt_active_stop = trailing_stop_price if (tp1_hit and trailing_stop_price is not None) else trade.invalidation_price
+                    rt_hit_stop = False
+                    if rt_active_stop is not None:
+                        rt_hit_stop = rt_price <= rt_active_stop if direction > 0 else rt_price >= rt_active_stop
+
+                    if rt_hit_target_2:
+                        exit_price = trade.target_price_2
+                        result = "win"
+                        close_reason = "Target 2"
+                    elif rt_hit_stop:
+                        exit_price = rt_active_stop
+                        result = "win" if tp1_hit else "loss"
+                        close_reason = "Continuation Trail Stop" if tp1_hit else "Invalidation"
+                        
+                    if exit_price is not None:
+                        close_pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
+                        if tp1_hit and entry_features.get("tp1_pnl_pct") is not None:
+                            pnl_pct = 0.5 * float(entry_features["tp1_pnl_pct"]) + 0.5 * close_pnl_pct
+                        else:
+                            pnl_pct = close_pnl_pct
+                        closed_at = now
+                        price = exit_price
+
             payload["status"] = status
             payload["entry_touched_at"] = entry_touched_at
             payload["tp1_hit"] = tp1_hit
@@ -272,14 +307,15 @@ class TradeEvaluator:
                 risk_pct=risk_pct,
             )
 
-            # Generate autopsy on close
             if result in ("win", "loss"):
                 import dataclasses
+                # Use last available bucket for exit features, or empty dict if none
                 payload["exit_features"] = {
                     k: v
-                    for k, v in dataclasses.asdict(bucket).items()
+                    for k, v in dataclasses.asdict(evaluation_buckets[-1]).items()
                     if k not in ("symbol", "timeframe", "bucket_start", "bucket_end", "last_timestamp")
-                }
+                } if evaluation_buckets else {"realtime_exit": True}
+                
                 payload["autopsy_rationale"] = AutopsyEngine.generate_rationale(
                     result=result,
                     close_reason=close_reason or "Unknown",
