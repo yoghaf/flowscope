@@ -202,7 +202,7 @@ class TradeEvaluator:
                         close_reason = (
                             "Continuation Trail Stop"
                             if setup_type == "Continuation" and abs(trailing_stop_price - trade.entry_price) > BREAKEVEN_EPSILON
-                            else "Partial TP1"
+                            else "Breakeven SL"
                         )
                     else:
                         result = "loss"
@@ -278,7 +278,10 @@ class TradeEvaluator:
                     elif rt_hit_stop:
                         exit_price = rt_active_stop
                         result = "win" if tp1_hit else "loss"
-                        close_reason = "Continuation Trail Stop" if tp1_hit else "Invalidation"
+                        if tp1_hit:
+                            close_reason = "Continuation Trail Stop" if setup_type == "Continuation" and abs(trailing_stop_price - trade.entry_price) > BREAKEVEN_EPSILON else "Breakeven SL"
+                        else:
+                            close_reason = "Invalidation"
                         
                     if exit_price is not None:
                         close_pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * direction * 100
