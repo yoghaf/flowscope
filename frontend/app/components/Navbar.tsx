@@ -79,7 +79,6 @@ export default function Navbar() {
               { href: "/signals", label: "AI Signals" },
               { href: "/demo-trading", label: "Demo Trade" },
               { href: "/alerts", label: "Alerts" },
-              { href: "/alerts", label: "Alerts" },
             ].map((item) => (
               <Link
                 key={item.href}
