@@ -641,15 +641,33 @@ class SignalService:
                     type="signal",
                     timestamp=alert.timestamp,
                     symbols=[alert.symbol],
-                    signal=alert,
+                signal=alert,
                 )
             )
 
     async def _snapshot_cycle(self) -> None:
+        symbols = list(self.symbols)
+
+        # FIX: Dynamically include any open trades that may have fallen out of the top 120 universe.
+        # This prevents their data from "freezing" and ensures SL/TP exit logic continues to work.
+        if hasattr(self, "database") and self.database.enabled:
+            try:
+                open_trades = await self.database.load_open_trade_signals()
+                for trade in open_trades:
+                    if trade.symbol not in symbols:
+                        symbols.append(trade.symbol)
+
+                # Ensure the background collectors (like Binance) track these symbols for OI, Ratio, etc.
+                for collector in self.collectors:
+                    if hasattr(collector, "_symbols"):
+                        collector._symbols = symbols
+            except Exception as e:
+                logger.error("Failed to append open trade symbols for snapshot cycle: %s", e)
+
         results: list[tuple[str, dict[str, ExchangeSnapshot] | Exception]] = []
         for collector in self.collectors:
             try:
-                result = await collector.fetch_snapshots(self.symbols)
+                result = await collector.fetch_snapshots(symbols)
                 results.append((collector.exchange_name, result))
                 logger.info("Snapshot from %s: %d symbols", collector.exchange_name, len(result))
             except Exception as exc:
