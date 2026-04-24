@@ -47,7 +47,7 @@ export default function WhaleRadarPage() {
           <div className="mb-6 flex items-center gap-2 border-b border-white/10 pb-4">
             <Flame className="h-6 w-6 text-orange-500" />
             <div>
-              <h2 className="text-xl font-bold text-foreground">Squeeze Hunter (空头燃料)</h2>
+              <h2 className="text-xl font-bold text-foreground">Squeeze Hunter</h2>
               <p className="text-sm text-muted-foreground">High negative funding with rising price = Short Squeeze</p>
             </div>
           </div>
@@ -85,7 +85,7 @@ export default function WhaleRadarPage() {
           <div className="mb-6 flex items-center gap-2 border-b border-white/10 pb-4">
             <Target className="h-6 w-6 text-emerald-500" />
             <div>
-              <h2 className="text-xl font-bold text-foreground">Ambush Scanner (埋伏)</h2>
+              <h2 className="text-xl font-bold text-foreground">Ambush Scanner</h2>
               <p className="text-sm text-muted-foreground">Low Market Cap + Sideways + OI Spike</p>
             </div>
           </div>
@@ -141,7 +141,7 @@ export default function WhaleRadarPage() {
         <div className="mb-6 flex items-center gap-2 border-b border-white/10 pb-4">
           <TrendingUp className="h-6 w-6 text-blue-500" />
           <div>
-            <h2 className="text-xl font-bold text-foreground">Comprehensive Overview (综合)</h2>
+            <h2 className="text-xl font-bold text-foreground">Comprehensive Overview</h2>
             <p className="text-sm text-muted-foreground">Top overall scores balancing all metrics</p>
           </div>
         </div>
