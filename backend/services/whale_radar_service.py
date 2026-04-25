@@ -190,8 +190,8 @@ class WhaleRadarService:
             except Exception as e:
                 logger.error("🐳 Error in Whale Radar loop: %s", e, exc_info=True)
             
-            # Run every 60 minutes
-            await asyncio.sleep(3600)
+            # Run every 15 minutes
+            await asyncio.sleep(900)
 
     async def _perform_scan(self) -> None:
         # 1. Fetch market data

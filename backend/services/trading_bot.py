@@ -110,16 +110,6 @@ class TradingBotService:
             quantity = self._calculate_quantity(trade.symbol, notional, entry_price)
             if quantity <= 0:
                 logger.warning("🤖 Calculated quantity is 0 for %s. Skipping.", trade.symbol)
-                await self._save_demo_trade({
-                    "trade_signal_id": trade.id,
-                    "symbol": trade.symbol,
-                    "side": side,
-                    "entry_price": entry_price,
-                    "quantity": 0,
-                    "notional_usdt": notional,
-                    "status": "error",
-                    "error_message": "Symbol not supported on Testnet or quantity calculated to 0 (Lot size restriction).",
-                })
                 return
 
             logger.info(
