@@ -44,10 +44,15 @@ class TradeEvaluator:
             else:
                 evaluation_anchor = getattr(trade, "last_scale_in_at", None) or trade.entry_touched_at or trade.timestamp
                 
+            # CRITICAL: Use created_at (actual wall-clock DB insertion time), NOT
+            # timestamp (which is bucket.last_timestamp / candle time). For delayed
+            # processing, the candle time can be hours before the actual creation,
+            # allowing stale bucket data to slip through the filter.
+            actual_creation_time = getattr(trade, "created_at", None) or trade.timestamp
             evaluation_buckets = await self._load_evaluation_buckets(
                 trade=trade,
                 anchor=evaluation_anchor,
-                trade_created_at=trade.timestamp if is_fresh_trade else None,
+                trade_created_at=actual_creation_time if is_fresh_trade else None,
             )
 
             price = (
