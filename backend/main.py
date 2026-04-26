@@ -21,7 +21,6 @@ from backend.schemas import RealtimeEvent
 from backend.services.realtime import RealtimeHub
 from backend.services.signal_service import SignalService
 from backend.services.trading_bot import TradingBotService
-from backend.services.whale_radar_service import WhaleRadarService
 
 logging.basicConfig(level=logging.INFO)
 
@@ -30,7 +29,6 @@ database = DatabaseManager(settings)
 realtime_hub = RealtimeHub()
 signal_service = SignalService(settings, database, realtime_hub)
 trading_bot = TradingBotService(settings, database)
-whale_radar_service = WhaleRadarService()
 
 
 @asynccontextmanager
@@ -41,14 +39,11 @@ async def lifespan(app: FastAPI):
     app.state.realtime_hub = realtime_hub
     app.state.signal_service = signal_service
     app.state.trading_bot = trading_bot
-    app.state.whale_radar_service = whale_radar_service
     signal_service.trading_bot = trading_bot
     await database.init()
     await trading_bot.start()
     await signal_service.start()
-    await whale_radar_service.start()
     yield
-    await whale_radar_service.stop()
     await trading_bot.stop()
     await signal_service.stop()
     await database.close()

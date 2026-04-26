@@ -22,7 +22,9 @@ export default function Navbar() {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const search = query.trim();
-    router.push(search ? `/scanner?search=${encodeURIComponent(search)}` : "/scanner");
+    router.push(
+      search ? `/scanner?search=${encodeURIComponent(search)}` : "/scanner",
+    );
   };
 
   useEffect(() => {
@@ -65,7 +67,9 @@ export default function Navbar() {
               </div>
             </div>
             <div>
-              <span className="text-xl font-semibold tracking-tight text-foreground">FlowScope</span>
+              <span className="text-xl font-semibold tracking-tight text-foreground">
+                FlowScope
+              </span>
               <p className="text-[10px] text-muted-foreground">Pro Analytics</p>
             </div>
           </Link>
@@ -74,7 +78,6 @@ export default function Navbar() {
             {[
               { href: "/", label: "Dashboard" },
               { href: "/scanner", label: "Scanner" },
-              { href: "/whale-radar", label: "Whale Radar" },
               { href: "/performance", label: "Performance" },
               { href: "/signals", label: "AI Signals" },
               { href: "/demo-trading", label: "Demo Trade" },
@@ -130,17 +133,22 @@ export default function Navbar() {
               {menuOpen ? (
                 <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl border border-white/10 bg-[#0B0F14] p-2 shadow-2xl shadow-black/40">
                   <div className="px-3 py-2">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Quick Menu</p>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Quick Menu
+                    </p>
                   </div>
                   {[
                     { href: "/", label: "Open Dashboard" },
                     { href: "/scanner", label: "Open Scanner" },
-                    { href: "/whale-radar", label: "Open Whale Radar" },
                     { href: "/performance", label: "Open Performance" },
                     { href: "/signals", label: "Open AI Signals" },
                     { href: "/demo-trading", label: "Open Demo Trade" },
                     { href: "/alerts", label: "Open Alerts" },
-                    { href: "/alerts#alert-preferences", label: "Notification Settings", icon: Settings2 },
+                    {
+                      href: "/alerts#alert-preferences",
+                      label: "Notification Settings",
+                      icon: Settings2,
+                    },
                   ].map((item) => {
                     const Icon = item.icon;
                     return (
@@ -151,7 +159,9 @@ export default function Navbar() {
                         className="flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium text-foreground transition hover:bg-white/5 hover:text-primary"
                       >
                         <span>{item.label}</span>
-                        {Icon ? <Icon className="h-4 w-4 text-muted-foreground" /> : null}
+                        {Icon ? (
+                          <Icon className="h-4 w-4 text-muted-foreground" />
+                        ) : null}
                       </Link>
                     );
                   })}
