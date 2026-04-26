@@ -285,10 +285,12 @@ class TradeEvaluator:
                     max_drawdown_pct = min(max_drawdown_pct, rt_pnl_pct)
 
                     # --- TP1 real-time check (critical: detect TP1 hit between candles) ---
+                    rt_tp1_just_hit = False
                     if trade.target_price_1 is not None and not tp1_hit:
                         rt_hit_tp1 = rt_price >= trade.target_price_1 if direction > 0 else rt_price <= trade.target_price_1
                         if rt_hit_tp1:
                             tp1_hit = True
+                            rt_tp1_just_hit = True
                             tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
                             trailing_stop_price = trade.entry_price
                             entry_features["tp1_pnl_pct"] = round(tp1_pnl_pct, 6)
@@ -304,8 +306,28 @@ class TradeEvaluator:
                                 trade.id, trade.symbol, rt_price, trade.target_price_1,
                             )
 
+                    # --- Real-time trailing stop update (after TP1 hit) ---
+                    if tp1_hit and not rt_tp1_just_hit and setup_type == "Continuation":
+                        # Build a lightweight pseudo-bucket for trailing stop calc
+                        class _RtBucket:
+                            pass
+                        rt_bucket = _RtBucket()
+                        rt_bucket.high_price = rt_price
+                        rt_bucket.low_price = rt_price
+                        rt_bucket.close_price = rt_price
+                        trailing_stop_price = self._continuation_trailing_stop(
+                            trade=trade,
+                            bucket=rt_bucket,
+                            direction=direction,
+                            current_price=rt_price,
+                            existing_stop=trailing_stop_price,
+                            entry_features=entry_features,
+                        )
+
+                    # --- TP2 / SL / SL-BE real-time check ---
                     rt_hit_target_2 = rt_price >= trade.target_price_2 if trade.target_price_2 and direction > 0 else (rt_price <= trade.target_price_2 if trade.target_price_2 else False)
-                    rt_active_stop = trailing_stop_price if (tp1_hit and trailing_stop_price is not None) else trade.invalidation_price
+                    # If TP1 just hit this cycle, don't activate trailing stop yet (same logic as bucket)
+                    rt_active_stop = trailing_stop_price if (tp1_hit and trailing_stop_price is not None and not rt_tp1_just_hit) else trade.invalidation_price
                     rt_hit_stop = False
                     if rt_active_stop is not None:
                         rt_hit_stop = rt_price <= rt_active_stop if direction > 0 else rt_price >= rt_active_stop
