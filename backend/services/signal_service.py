@@ -2854,50 +2854,16 @@ class SignalService:
             )
             return
 
-        existing_trade = await self.database.get_open_trade_signal(
-            symbol=symbol,
-            timeframe=timeframe,
-        )
-        if existing_trade is None:
-            # Check for cross-timeframe duplicates
-            has_any_trade = await self.database.has_any_open_trade_for_symbol(symbol=symbol)
-            if has_any_trade:
-                logger.info(
-                    "Skipping cross-timeframe duplicate entry for symbol=%s timeframe=%s",
-                    symbol,
-                    timeframe,
-                )
-                return
-        if existing_trade is not None:
-            if existing_trade.bias != action.bias:
-                logger.info(
-                    "Skipping reverse trade signal symbol=%s timeframe=%s active_bias=%s new_bias=%s",
-                    symbol,
-                    timeframe,
-                    existing_trade.bias,
-                    action.bias,
-                )
-                return
-            if not self._can_scale_in_trade(existing_trade=existing_trade, fill_price=bucket.close_price):
-                logger.info(
-                    "Skipping additional entry symbol=%s timeframe=%s bias=%s reason=scale_in_not_armed fills=%d",
-                    symbol,
-                    timeframe,
-                    action.bias,
-                    max(getattr(existing_trade, "fill_count", 1), 1),
-                )
-                return
-            await self._merge_open_trade_signal(
-                trade=existing_trade,
-                bucket=bucket,
-                flow_metrics=flow_metrics,
-                state=state,
-                action=action,
-                execution=execution,
-                entry_price=entry_price,
-                asset_state=asset_state,
+        # Block any new signal if this symbol already has an active open trade
+        # (regardless of timeframe). One symbol = one position at a time.
+        has_any_open = await self.database.has_any_open_trade_for_symbol(symbol=symbol)
+        if has_any_open:
+            logger.info(
+                "Skipping new trade signal symbol=%s timeframe=%s bias=%s reason=active_position_exists",
+                symbol,
+                timeframe,
+                action.bias,
             )
-            self.last_trade_signal_at[key] = bucket.last_timestamp
             return
 
         is_cooling_down = await self.database.is_token_cooling_down(symbol=symbol)
