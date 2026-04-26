@@ -295,12 +295,19 @@ class TradeEvaluator:
                             trade.id, trade.symbol, rt_price, trade.entry_price,
                         )
 
-                # CRITICAL: When entry is first touched in real-time, do NOT evaluate
-                # TP/SL in the same cycle. We don't know the intra-tick path — the price
-                # snapshot might already be past TP1 but the actual market path may not
-                # have crossed entry → TP1 sequentially. Wait for the next evaluation
-                # cycle when we have proper price movement data.
-                if rt_price is not None and status == "Triggered" and not rt_entry_just_touched:
+                # CRITICAL: When entry is first touched (either in real-time OR at
+                # creation time), do NOT evaluate TP/SL in the same cycle. We don't
+                # know the intra-tick path — the price snapshot might already be past
+                # TP1 but the actual market path may not have crossed entry → TP1
+                # sequentially. Wait for the next evaluation cycle when we have proper
+                # price movement data.
+                #
+                # is_fresh_trade covers the case where entry_touched_at was set at
+                # creation time (signal_service sets entry_touched_at = bucket.last_timestamp
+                # when price is already at/past entry). In this case rt_entry_just_touched
+                # is False but we still must skip TP/SL evaluation.
+                skip_tp_sl = rt_entry_just_touched or is_fresh_trade
+                if rt_price is not None and status == "Triggered" and not skip_tp_sl:
                     rt_pnl_pct = ((rt_price - trade.entry_price) / trade.entry_price) * direction * 100
                     pnl_pct = rt_pnl_pct
                     max_profit_pct = max(max_profit_pct, rt_pnl_pct)
