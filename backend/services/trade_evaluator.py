@@ -33,12 +33,17 @@ class TradeEvaluator:
           try:
             trade_timeframe = self._normalize_timeframe(getattr(trade, "timeframe", None))
             history_logs = list(getattr(trade, "history_logs", None) or [])
+            is_fresh_trade = not history_logs and trade.entry_touched_at is None
             if history_logs:
                 evaluation_anchor = datetime.fromisoformat(history_logs[-1]["timestamp"])
             else:
                 evaluation_anchor = getattr(trade, "last_scale_in_at", None) or trade.entry_touched_at or trade.timestamp
                 
-            evaluation_buckets = await self._load_evaluation_buckets(trade=trade, anchor=evaluation_anchor)
+            evaluation_buckets = await self._load_evaluation_buckets(
+                trade=trade,
+                anchor=evaluation_anchor,
+                trade_created_at=trade.timestamp if is_fresh_trade else None,
+            )
 
             price = (
                 evaluation_buckets[-1].close_price
@@ -544,7 +549,7 @@ class TradeEvaluator:
 
         return features
 
-    async def _load_evaluation_buckets(self, *, trade: object, anchor: datetime) -> list[object]:
+    async def _load_evaluation_buckets(self, *, trade: object, anchor: datetime, trade_created_at: datetime | None = None) -> list[object]:
         buckets_by_start: dict[datetime, object] = {}
         timeframe = self._normalize_timeframe(getattr(trade, "timeframe", None))
         query_since = floor_timestamp(anchor, timeframe) if timeframe in TIMEFRAME_DELTAS else anchor
@@ -564,7 +569,21 @@ class TradeEvaluator:
             if latest_bucket is not None and latest_bucket.last_timestamp >= anchor:
                 buckets_by_start[latest_bucket.bucket_start] = latest_bucket
 
-        return [buckets_by_start[key] for key in sorted(buckets_by_start)]
+        sorted_buckets = [buckets_by_start[key] for key in sorted(buckets_by_start)]
+
+        # CRITICAL: For fresh trades (no history yet, entry not touched), exclude
+        # buckets whose candle opened BEFORE the trade was created. These buckets
+        # contain high/low prices from before the signal existed, which would
+        # cause false TP1/SL hits (e.g. a 24h candle whose high was set hours
+        # before the signal, but the candle is still open).
+        # Only allow buckets that started AFTER the trade was created.
+        if trade_created_at is not None:
+            sorted_buckets = [
+                b for b in sorted_buckets
+                if b.bucket_start >= trade_created_at
+            ]
+
+        return sorted_buckets
 
     @staticmethod
     def _normalize_timeframe(value: object) -> str:
