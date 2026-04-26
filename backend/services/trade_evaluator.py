@@ -266,11 +266,13 @@ class TradeEvaluator:
                 rt_price = await self.signal_service.get_latest_price(trade.symbol, trade_timeframe)
 
                 # Real-time entry touch detection (before candle close)
+                rt_entry_just_touched = False
                 if rt_price is not None and status != "Triggered" and entry_touched_at is None:
                     entry_crossed_rt = rt_price >= trade.entry_price if direction > 0 else rt_price <= trade.entry_price
                     if entry_crossed_rt:
                         status = "Triggered"
                         entry_touched_at = now
+                        rt_entry_just_touched = True
                         history_logs.append({
                             "timestamp": now.isoformat(),
                             "price": rt_price,
@@ -283,7 +285,12 @@ class TradeEvaluator:
                             trade.id, trade.symbol, rt_price, trade.entry_price,
                         )
 
-                if rt_price is not None and status == "Triggered":
+                # CRITICAL: When entry is first touched in real-time, do NOT evaluate
+                # TP/SL in the same cycle. We don't know the intra-tick path — the price
+                # snapshot might already be past TP1 but the actual market path may not
+                # have crossed entry → TP1 sequentially. Wait for the next evaluation
+                # cycle when we have proper price movement data.
+                if rt_price is not None and status == "Triggered" and not rt_entry_just_touched:
                     rt_pnl_pct = ((rt_price - trade.entry_price) / trade.entry_price) * direction * 100
                     pnl_pct = rt_pnl_pct
                     max_profit_pct = max(max_profit_pct, rt_pnl_pct)
