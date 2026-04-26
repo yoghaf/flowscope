@@ -32,6 +32,7 @@ interface Signal {
   volatility_regime: string;
   entry_price: number | null;
   invalidation_price: number | null;
+  trailing_stop_price: number | null;
   target_price_1: number | null;
   target_price_2: number | null;
   risk_level: string;
@@ -65,7 +66,9 @@ interface SignalsData {
 
 function formatPrice(price: number | null) {
   if (price === null || price === undefined) return "—";
-  return price < 1 ? price.toPrecision(4) : price.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return price < 1
+    ? price.toPrecision(4)
+    : price.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 function timeAgo(dateStr: string | null) {
@@ -129,9 +132,13 @@ export default function SignalsPage() {
       return;
     }
 
-    const activeSymbols = new Set(openSymbols.map((symbol) => symbol.toUpperCase()));
+    const activeSymbols = new Set(
+      openSymbols.map((symbol) => symbol.toUpperCase()),
+    );
     setLivePrices((current) =>
-      Object.fromEntries(Object.entries(current).filter(([symbol]) => activeSymbols.has(symbol))),
+      Object.fromEntries(
+        Object.entries(current).filter(([symbol]) => activeSymbols.has(symbol)),
+      ),
     );
 
     const wsUrl = `wss://fstream.binance.com/stream?streams=${openSymbols.map((symbol) => `${symbol}@ticker`).join("/")}`;
@@ -147,7 +154,8 @@ export default function SignalsPage() {
         try {
           const payload = JSON.parse(event.data);
           const ticker = payload?.data;
-          const symbol = typeof ticker?.s === "string" ? ticker.s.toUpperCase() : null;
+          const symbol =
+            typeof ticker?.s === "string" ? ticker.s.toUpperCase() : null;
           const nextPrice = Number(ticker?.c);
           if (!symbol || !Number.isFinite(nextPrice)) return;
 
@@ -182,7 +190,9 @@ export default function SignalsPage() {
   }, [openSymbols]);
 
   const filteredSummary = useMemo(() => {
-    const closed = signals.filter((s) => s.result === "win" || s.result === "loss");
+    const closed = signals.filter(
+      (s) => s.result === "win" || s.result === "loss",
+    );
     const wins = closed.filter((s) => s.result === "win").length;
     const losses = closed.filter((s) => s.result === "loss").length;
     const winrate = closed.length > 0 ? (wins / closed.length) * 100 : 0;
@@ -268,7 +278,13 @@ export default function SignalsPage() {
             icon={<Target className="h-4 w-4" />}
             label="Winrate"
             value={`${filteredSummary.winrate}%`}
-            color={filteredSummary.winrate >= 60 ? "emerald" : filteredSummary.winrate >= 50 ? "amber" : "rose"}
+            color={
+              filteredSummary.winrate >= 60
+                ? "emerald"
+                : filteredSummary.winrate >= 50
+                  ? "amber"
+                  : "rose"
+            }
           />
         </div>
       )}
@@ -295,7 +311,9 @@ export default function SignalsPage() {
       {data && signals.length === 0 && (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-white/5 bg-card/50 py-20">
           <Zap className="h-12 w-12 text-muted-foreground/30" />
-          <p className="mt-4 text-lg font-medium text-muted-foreground">No signals yet</p>
+          <p className="mt-4 text-lg font-medium text-muted-foreground">
+            No signals yet
+          </p>
           <p className="mt-1 text-sm text-muted-foreground/60">
             No `v2_balanced` signals are available yet.
           </p>
@@ -306,7 +324,11 @@ export default function SignalsPage() {
       {data && signals.length > 0 && (
         <div className="space-y-4">
           {signals.map((signal) => (
-            <SignalCard key={signal.id} signal={signal} livePrice={livePrices[signal.symbol] ?? null} />
+            <SignalCard
+              key={signal.id}
+              signal={signal}
+              livePrice={livePrices[signal.symbol] ?? null}
+            />
           ))}
         </div>
       )}
@@ -327,9 +349,11 @@ function StatCard({
 }) {
   const colorMap: Record<string, string> = {
     blue: "from-blue-500/20 to-blue-600/5 text-blue-400 border-blue-500/10",
-    emerald: "from-emerald-500/20 to-emerald-600/5 text-emerald-400 border-emerald-500/10",
+    emerald:
+      "from-emerald-500/20 to-emerald-600/5 text-emerald-400 border-emerald-500/10",
     rose: "from-rose-500/20 to-rose-600/5 text-rose-400 border-rose-500/10",
-    amber: "from-amber-500/20 to-amber-600/5 text-amber-400 border-amber-500/10",
+    amber:
+      "from-amber-500/20 to-amber-600/5 text-amber-400 border-amber-500/10",
   };
 
   return (
@@ -347,7 +371,13 @@ function StatCard({
 
 import Link from "next/link";
 
-function SignalCard({ signal, livePrice }: { signal: Signal; livePrice: number | null }) {
+function SignalCard({
+  signal,
+  livePrice,
+}: {
+  signal: Signal;
+  livePrice: number | null;
+}) {
   const isBullish = signal.bias === "Bullish";
   const isOpen = signal.result === "open";
   const isWin = signal.result === "win";
@@ -355,7 +385,9 @@ function SignalCard({ signal, livePrice }: { signal: Signal; livePrice: number |
   const confScore = signal.confidence_score;
   const livePnl =
     isOpen && livePrice !== null && signal.entry_price
-      ? ((livePrice - signal.entry_price) / signal.entry_price) * 100 * (isBullish ? 1 : -1)
+      ? ((livePrice - signal.entry_price) / signal.entry_price) *
+        100 *
+        (isBullish ? 1 : -1)
       : null;
 
   const resultColors: Record<string, string> = {
@@ -373,7 +405,12 @@ function SignalCard({ signal, livePrice }: { signal: Signal; livePrice: number |
   };
 
   const sizeColor = size >= 1.0 ? "text-emerald-400" : "text-slate-400";
-  const confColor = confScore >= 0.75 ? "text-emerald-400" : confScore >= 0.5 ? "text-amber-400" : "text-slate-400";
+  const confColor =
+    confScore >= 0.75
+      ? "text-emerald-400"
+      : confScore >= 0.5
+        ? "text-amber-400"
+        : "text-slate-400";
 
   return (
     <Link
@@ -420,15 +457,17 @@ function SignalCard({ signal, livePrice }: { signal: Signal; livePrice: number |
                 >
                   {signal.result}
                 </span>
-                {signal.strategy_version && signal.strategy_version !== "unknown" && (
-                  <span className="rounded-lg bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-violet-400 border border-violet-500/20">
-                    {signal.strategy_version}
-                  </span>
-                )}
+                {signal.strategy_version &&
+                  signal.strategy_version !== "unknown" && (
+                    <span className="rounded-lg bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-violet-400 border border-violet-500/20">
+                      {signal.strategy_version}
+                    </span>
+                  )}
               </div>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {signal.setup_type} · {signal.timeframe} · {signal.market_regime} ·{" "}
-                <Clock className="inline h-3 w-3" /> {timeAgo(signal.created_at)}
+                {signal.setup_type} · {signal.timeframe} ·{" "}
+                {signal.market_regime} · <Clock className="inline h-3 w-3" />{" "}
+                {timeAgo(signal.created_at)}
               </p>
             </div>
           </div>
@@ -439,12 +478,16 @@ function SignalCard({ signal, livePrice }: { signal: Signal; livePrice: number |
             </div>
             <p className="text-[10px] text-muted-foreground">Confidence</p>
             <div className="flex items-center gap-2 text-[10px]">
-              <span className={`font-semibold ${sizeColor}`}>{size.toFixed(2)}x</span>
+              <span className={`font-semibold ${sizeColor}`}>
+                {size.toFixed(2)}x
+              </span>
               <span className="text-muted-foreground">Size</span>
             </div>
             {confScore > 0 && (
               <div className="flex items-center gap-2 text-[10px]">
-                <span className={`font-semibold ${confColor}`}>{Math.round(confScore * 100)}%</span>
+                <span className={`font-semibold ${confColor}`}>
+                  {Math.round(confScore * 100)}%
+                </span>
                 <span className="text-muted-foreground">Score</span>
               </div>
             )}
@@ -454,15 +497,21 @@ function SignalCard({ signal, livePrice }: { signal: Signal; livePrice: number |
         {isOpen && (
           <div className="mt-4 flex flex-wrap items-center gap-4 rounded-xl border border-blue-500/10 bg-blue-500/[0.04] px-4 py-3">
             <div>
-              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Live Price</p>
+              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                Live Price
+              </p>
               <p className="mt-1 text-sm font-semibold tabular-nums text-blue-300">
                 {livePrice !== null ? formatPrice(livePrice) : "Connecting..."}
               </p>
             </div>
             {livePnl !== null && (
               <div>
-                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Live PnL</p>
-                <p className={`mt-1 text-sm font-semibold tabular-nums ${livePnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                  Live PnL
+                </p>
+                <p
+                  className={`mt-1 text-sm font-semibold tabular-nums ${livePnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}
+                >
                   {livePnl >= 0 ? "+" : ""}
                   {livePnl.toFixed(2)}%
                 </p>
@@ -473,12 +522,28 @@ function SignalCard({ signal, livePrice }: { signal: Signal; livePrice: number |
 
         {/* Price levels */}
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <PriceBox label="Entry" value={formatPrice(signal.entry_price)} icon={<ArrowUpRight className="h-3 w-3" />} />
           <PriceBox
-            label="Stop Loss"
-            value={formatPrice(signal.invalidation_price)}
-            icon={<Shield className="h-3 w-3 text-rose-400" />}
-            danger
+            label="Entry"
+            value={formatPrice(signal.entry_price)}
+            icon={<ArrowUpRight className="h-3 w-3" />}
+          />
+          <PriceBox
+            label={
+              signal.tp1_hit && signal.trailing_stop_price
+                ? "Trail Stop"
+                : "Stop Loss"
+            }
+            value={formatPrice(
+              signal.tp1_hit && signal.trailing_stop_price
+                ? signal.trailing_stop_price
+                : signal.invalidation_price,
+            )}
+            icon={
+              <Shield
+                className={`h-3 w-3 ${signal.tp1_hit && signal.trailing_stop_price ? "text-amber-400" : "text-rose-400"}`}
+              />
+            }
+            danger={!signal.tp1_hit || !signal.trailing_stop_price}
           />
           <PriceBox
             label="TP1"
@@ -504,23 +569,34 @@ function SignalCard({ signal, livePrice }: { signal: Signal; livePrice: number |
               ) : (
                 <ArrowDownRight className="h-4 w-4 text-rose-400" />
               )}
-              <span className={`text-sm font-bold ${isWin ? "text-emerald-400" : "text-rose-400"}`}>
+              <span
+                className={`text-sm font-bold ${isWin ? "text-emerald-400" : "text-rose-400"}`}
+              >
                 {signal.pnl_pct > 0 ? "+" : ""}
                 {signal.pnl_pct}%
               </span>
             </div>
             <div className="h-4 w-px bg-white/10" />
             <span className="text-xs text-muted-foreground">
-              Max Profit: <span className="text-emerald-400/80">+{signal.max_profit_pct}%</span>
+              Max Profit:{" "}
+              <span className="text-emerald-400/80">
+                +{signal.max_profit_pct}%
+              </span>
             </span>
             <span className="text-xs text-muted-foreground">
-              Max DD: <span className="text-rose-400/80">-{signal.max_drawdown_pct}%</span>
+              Max DD:{" "}
+              <span className="text-rose-400/80">
+                -{signal.max_drawdown_pct}%
+              </span>
             </span>
             {signal.close_reason && (
               <>
                 <div className="h-4 w-px bg-white/10" />
                 <span className="text-xs text-muted-foreground">
-                  Reason: <span className="text-foreground/70">{signal.close_reason}</span>
+                  Reason:{" "}
+                  <span className="text-foreground/70">
+                    {signal.close_reason}
+                  </span>
                 </span>
               </>
             )}
@@ -536,7 +612,10 @@ function SignalCard({ signal, livePrice }: { signal: Signal; livePrice: number |
             </div>
             <ul className="space-y-1">
               {signal.insights.map((insight, i) => (
-                <li key={i} className="text-xs leading-relaxed text-foreground/70">
+                <li
+                  key={i}
+                  className="text-xs leading-relaxed text-foreground/70"
+                >
                   {insight}
                 </li>
               ))}
