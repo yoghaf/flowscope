@@ -33,7 +33,12 @@ class TradeEvaluator:
           try:
             trade_timeframe = self._normalize_timeframe(getattr(trade, "timeframe", None))
             history_logs = list(getattr(trade, "history_logs", None) or [])
-            is_fresh_trade = not history_logs and trade.entry_touched_at is None
+            # A trade is "fresh" if it has never been evaluated before (no history logs).
+            # This includes trades where entry was touched at creation time (entry_touched_at
+            # is set immediately when entry price equals current price). We must still filter
+            # stale buckets for these trades because the current candle's high/low contains
+            # price data from before the trade existed.
+            is_fresh_trade = not history_logs
             if history_logs:
                 evaluation_anchor = datetime.fromisoformat(history_logs[-1]["timestamp"])
             else:
