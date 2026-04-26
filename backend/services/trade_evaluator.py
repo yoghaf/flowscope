@@ -257,13 +257,52 @@ class TradeEvaluator:
             # ---------------------------------------------------------
             # REAL-TIME EVALUATION (If still open after bucket history)
             # ---------------------------------------------------------
-            if result == "open" and status == "Triggered" and trade.entry_price and trade.entry_price > 0:
+            if result == "open" and trade.entry_price and trade.entry_price > 0:
                 rt_price = await self.signal_service.get_latest_price(trade.symbol, trade_timeframe)
-                if rt_price is not None:
+
+                # Real-time entry touch detection (before candle close)
+                if rt_price is not None and status != "Triggered" and entry_touched_at is None:
+                    entry_crossed_rt = rt_price >= trade.entry_price if direction > 0 else rt_price <= trade.entry_price
+                    if entry_crossed_rt:
+                        status = "Triggered"
+                        entry_touched_at = now
+                        history_logs.append({
+                            "timestamp": now.isoformat(),
+                            "price": rt_price,
+                            "pnl_pct": 0.0,
+                            "event": "entry_touch",
+                            "reason": "Entry touched (realtime)",
+                        })
+                        logger.info(
+                            "RT entry touch trade_id=%s symbol=%s rt_price=%.6f entry=%.6f",
+                            trade.id, trade.symbol, rt_price, trade.entry_price,
+                        )
+
+                if rt_price is not None and status == "Triggered":
                     rt_pnl_pct = ((rt_price - trade.entry_price) / trade.entry_price) * direction * 100
                     pnl_pct = rt_pnl_pct
                     max_profit_pct = max(max_profit_pct, rt_pnl_pct)
                     max_drawdown_pct = min(max_drawdown_pct, rt_pnl_pct)
+
+                    # --- TP1 real-time check (critical: detect TP1 hit between candles) ---
+                    if trade.target_price_1 is not None and not tp1_hit:
+                        rt_hit_tp1 = rt_price >= trade.target_price_1 if direction > 0 else rt_price <= trade.target_price_1
+                        if rt_hit_tp1:
+                            tp1_hit = True
+                            tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
+                            trailing_stop_price = trade.entry_price
+                            entry_features["tp1_pnl_pct"] = round(tp1_pnl_pct, 6)
+                            history_logs.append({
+                                "timestamp": now.isoformat(),
+                                "price": trade.target_price_1,
+                                "pnl_pct": round(tp1_pnl_pct, 4),
+                                "event": "tp1_hit",
+                                "reason": "Take Profit 1 (realtime)",
+                            })
+                            logger.info(
+                                "RT TP1 hit trade_id=%s symbol=%s rt_price=%.6f tp1=%.6f",
+                                trade.id, trade.symbol, rt_price, trade.target_price_1,
+                            )
 
                     rt_hit_target_2 = rt_price >= trade.target_price_2 if trade.target_price_2 and direction > 0 else (rt_price <= trade.target_price_2 if trade.target_price_2 else False)
                     rt_active_stop = trailing_stop_price if (tp1_hit and trailing_stop_price is not None) else trade.invalidation_price

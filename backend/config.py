@@ -122,14 +122,14 @@ class Settings(BaseSettings):
     exchange_timeout_seconds: float = 12.0
     exchange_request_concurrency: int = 12
     websocket_ping_interval: int = 20
-    realtime_price_stream_enabled: bool = False
+    realtime_price_stream_enabled: bool = True
     snapshot_interval_seconds: int = 300
     funding_interval_seconds: int = 60
     long_short_ratio_interval_seconds: int = 60
     history_retention_points: int = 600
     max_symbols_per_stream: int = 80
     signal_emit_threshold: float = 0.02
-    trade_evaluator_interval_seconds: int = 180
+    trade_evaluator_interval_seconds: int = 30
     entry_touch_timeout_buckets: int = 2
     entry_notification_catchup_minutes: int = 60
     trade_signals_active_tag: str | None = "v2_balanced"
