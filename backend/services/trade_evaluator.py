@@ -497,6 +497,19 @@ class TradeEvaluator:
         existing_stop: float | None,
         entry_features: dict[str, object],
     ) -> float | None:
+        # --- Price-based milestone: trailing only activates after price passes
+        # the midpoint between TP1 and TP2. Before that, keep stop at entry
+        # (breakeven) to give the trade room to breathe toward TP2. ---
+        tp1 = getattr(trade, "target_price_1", None)
+        tp2 = getattr(trade, "target_price_2", None)
+        if tp1 is not None and tp2 is not None and abs(tp2 - tp1) > BREAKEVEN_EPSILON:
+            midpoint_fraction = self.settings.continuation_trailing_activation_fraction
+            activation_price = tp1 + (tp2 - tp1) * midpoint_fraction
+            price_past_midpoint = current_price >= activation_price if direction > 0 else current_price <= activation_price
+            if not price_past_midpoint:
+                # Price hasn't reached the activation milestone yet — keep stop at entry (breakeven)
+                return existing_stop if existing_stop is not None else trade.entry_price
+
         trade_timeframe = self._normalize_timeframe(getattr(trade, "timeframe", None))
         atr_fraction = self._current_metric(symbol=trade.symbol, timeframe=trade_timeframe, metric_name="atr")
         if atr_fraction is None or atr_fraction <= BREAKEVEN_EPSILON:

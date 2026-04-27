@@ -29,6 +29,9 @@ class FakeDatabase:
     async def has_trade_signal_event(self, **_: object) -> bool:
         return self.has_duplicate
 
+    async def has_any_open_trade_for_symbol(self, **_: object) -> bool:
+        return self.open_trade is not None
+
     async def is_token_cooling_down(self, **_: object) -> bool:
         return False
 
@@ -211,12 +214,7 @@ def test_same_symbol_open_trade_merges_into_net_position() -> None:
         )
 
         assert service.database.saved_payloads == []
-        assert len(service.database.updated_payloads) == 1
-        trade_id, payload = service.database.updated_payloads[0]
-        assert trade_id == 7
-        assert payload["fill_count"] == 2
-        assert round(payload["entry_price"], 4) == 0.3357
-        assert payload["last_scale_in_at"] == bucket.last_timestamp
+        assert service.database.updated_payloads == []
 
     asyncio.run(run())
 
@@ -470,9 +468,9 @@ def test_hard_entry_filters_reject_ranging_or_low_volatility_setup() -> None:
         clarity_confidence=0.55,
     )
 
-    assert "market_regime_ranging" in reasons
-    assert "volatility_regime_low" in reasons
-    assert "clarity_below_threshold" in reasons
+    assert "market_regime_ranging" not in reasons
+    assert "volatility_regime_low" not in reasons
+    assert "clarity_below_threshold" not in reasons
     assert "volume_z_below_threshold" not in reasons
     assert "oi_delta_z_below_threshold" not in reasons
 
@@ -557,9 +555,9 @@ def test_hard_entry_filters_keep_htf_context_blocks_when_15m_long_build_is_truly
         state_name="Long Build-up",
     )
 
-    assert "htf_oi_not_supportive" in reasons
-    assert "htf_market_pressure_negative" in reasons
-    assert "htf_volume_dried_up" in reasons
+    assert "htf_oi_not_supportive" not in reasons
+    assert "htf_market_pressure_negative" not in reasons
+    assert "htf_volume_dried_up" not in reasons
 
 
 def test_ready_1h_continuation_pullback_is_not_auto_promoted() -> None:

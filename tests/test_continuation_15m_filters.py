@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from backend.config import Settings
 from backend.engines.context_bridge import ContextBridgeEngine
@@ -1093,10 +1093,10 @@ def test_continuation_quality_penalty_reduces_size_for_low_quality_history() -> 
                 mfe_r=0.73,
             ),
             "quality_bucket": "negative",
-            "quality_size_multiplier": service.settings.continuation_quality_negative_multiplier,
+            "quality_size_multiplier": service.settings.continuation_quality_low_multiplier,
             "quality_history_count": 12,
             "recent_loss_streak": 0,
-            "size_multiplier": service.settings.continuation_quality_negative_multiplier,
+            "size_multiplier": service.settings.continuation_quality_low_multiplier,
         }
     }
     action = ActionAssessment(
@@ -1154,7 +1154,7 @@ def test_continuation_quality_penalty_reduces_size_for_low_quality_history() -> 
 
     assert profile["quality_history_count"] == 12
     assert profile["quality_bucket"] == "negative"
-    assert profile["quality_size_multiplier"] == service.settings.continuation_quality_negative_multiplier
+    assert profile["quality_size_multiplier"] == service.settings.continuation_quality_low_multiplier
     assert profile["quality_score"] == expected_quality_score(
         service,
         entry_efficiency=0.44,
@@ -1182,10 +1182,10 @@ def test_continuation_quality_filter_activates_without_minimum_history() -> None
                 mfe_r=0.73,
             ),
             "quality_bucket": "negative",
-            "quality_size_multiplier": service.settings.continuation_quality_negative_multiplier,
+            "quality_size_multiplier": service.settings.continuation_quality_low_multiplier,
             "quality_history_count": 4,
             "recent_loss_streak": 0,
-            "size_multiplier": service.settings.continuation_quality_negative_multiplier,
+            "size_multiplier": service.settings.continuation_quality_low_multiplier,
         }
     }
     action = ActionAssessment(
@@ -1243,7 +1243,7 @@ def test_continuation_quality_filter_activates_without_minimum_history() -> None
 
     assert profile["quality_history_count"] == 4
     assert profile["quality_bucket"] == "negative"
-    assert profile["quality_size_multiplier"] == service.settings.continuation_quality_negative_multiplier
+    assert profile["quality_size_multiplier"] == service.settings.continuation_quality_low_multiplier
     assert execution.position_size_multiplier < control_execution.position_size_multiplier
 
 
@@ -1264,10 +1264,10 @@ def test_continuation_quality_boost_increases_size_for_high_quality_history() ->
                 mfe_r=1.62,
             ),
             "quality_bucket": "positive",
-            "quality_size_multiplier": service.settings.continuation_quality_positive_multiplier,
+            "quality_size_multiplier": service.settings.continuation_quality_high_multiplier,
             "quality_history_count": 16,
             "recent_loss_streak": 0,
-            "size_multiplier": service.settings.continuation_quality_positive_multiplier,
+            "size_multiplier": service.settings.continuation_quality_high_multiplier,
         }
     }
     action = ActionAssessment(
@@ -1325,7 +1325,7 @@ def test_continuation_quality_boost_increases_size_for_high_quality_history() ->
 
     assert profile["quality_history_count"] == 16
     assert profile["quality_bucket"] == "positive"
-    assert profile["quality_size_multiplier"] == service.settings.continuation_quality_positive_multiplier
+    assert profile["quality_size_multiplier"] == service.settings.continuation_quality_high_multiplier
     assert profile["quality_score"] == expected_quality_score(
         service,
         entry_efficiency=0.78,

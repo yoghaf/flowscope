@@ -402,7 +402,7 @@ def test_trade_evaluator_continuation_trail_updates_and_logs_trade_analytics() -
         ]
         database = FakeDatabase(trade, buckets=buckets)
         signal_service = FakeSignalService(buckets, price=103.1, flow_alignment=0.78)
-        settings = Settings(entry_touch_timeout_buckets=2)
+        settings = Settings(entry_touch_timeout_buckets=2, continuation_trailing_activation_fraction=0.0)
 
         evaluator = TradeEvaluator(settings, database, signal_service)
         await evaluator.evaluate()
@@ -465,6 +465,7 @@ def test_trade_evaluator_normalizes_24h_timeframe_and_keeps_hourly_log_cadence()
             max_profit_pct=0.0,
             max_drawdown_pct=0.0,
             entry_touched_at=first_update - timedelta(minutes=1),
+            created_at=first_update - timedelta(hours=25),
             closed_at=None,
             close_reason=None,
             entry_notification_sent_at=None,

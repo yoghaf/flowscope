@@ -213,6 +213,7 @@ class Settings(BaseSettings):
     continuation_choppy_min_compression: float = 0.62
     continuation_choppy_max_abs_price_change: float = 0.007
     continuation_choppy_max_abs_taker_delta: float = 0.025
+    continuation_trailing_activation_fraction: float = 0.50
     continuation_trailing_atr_buffer: float = 0.75
     continuation_trailing_high_vol_multiplier: float = 1.15
     continuation_trailing_low_vol_multiplier: float = 0.90

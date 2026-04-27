@@ -53,7 +53,7 @@ def make_trade(*, created_at: datetime, symbol: str = "EDGEUSDT", timeframe: str
         max_drawdown_pct=-1.0,
         max_profit_pct=6.0,
         engine_tag=None,
-        entry_features={"entry_type": "Continuation Pullback"},
+        entry_features={"entry_type": "Continuation Pullback", "strategy_version": "v2_balanced"},
     )
 
 

@@ -191,6 +191,11 @@ class ExecutionEngine:
             else:
                 bias = "Neutral"
 
+        # --- ROUTE 6: PRE-BREAKDOWN ---
+        elif "Pre-Breakdown" in state_label:
+            setup_type = "Continuation"
+            bias = "Bearish"
+
         # --- FALLTHROUGH ---
         else:
             setup_type = "Accumulation"
@@ -321,7 +326,7 @@ class ExecutionEngine:
         # 1. ENTRTY TIMING & PULLBACK LOGIC
         if action.setup_type == "Continuation":
             # If trend is extremely strong, allow market entry. Otherwise demand a pullback.
-            if structure_strength >= 0.80 and breakout_valid:
+            if (structure_strength >= 0.80 and breakout_valid) or (action.status == "Triggered" and breakout_valid and breakout_touched):
                 entry = current_price
                 pullback_mode = False
             else:
