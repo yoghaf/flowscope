@@ -9,11 +9,36 @@ from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-from backend.config import Settings
+from backend.config import Settings, get_settings
 from backend.models import AlertPreference, Base, DemoTrade, LatestAssetState, MarketData, MarketDataBucket, SignalRecord, TradeSignal
 from backend.schemas import AlertEntry, AssetSnapshot
 
 logger = logging.getLogger(__name__)
+
+
+def get_db_session():
+    """Convenience helper that returns a *sync* SQLAlchemy session.
+
+    Useful for one-off scripts that need quick DB access without going
+    through the full async ``DatabaseManager``.
+
+    Usage::
+
+        from backend.database import get_db_session
+
+        with get_db_session() as session:
+            rows = session.execute(text("SELECT ...")).fetchall()
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    settings = get_settings()
+    # Convert async URL (postgresql+asyncpg://) to sync (postgresql://)
+    url = settings.database_url
+    if "+asyncpg" in url:
+        url = url.replace("+asyncpg", "")
+    engine = create_engine(url, echo=settings.debug)
+    return Session(engine)
 
 
 class DatabaseManager:
