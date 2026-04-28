@@ -1,9 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ArrowDownToLine, ArrowUpRight, Filter, ShieldCheck, ShieldX } from "lucide-react";
+import { Activity, ArrowDownToLine, ArrowUpRight, Filter, ShieldCheck, ShieldX, Settings2, DollarSign, AlertTriangle } from "lucide-react";
 
 import { api } from "@/lib/api";
 import { formatDate, formatTime } from "@/lib/formatters";
@@ -193,8 +193,12 @@ function SetupSummaryCard({
   );
 }
 
+type SizingMode = "capital" | "risk";
+
 export default function PerformancePage() {
+  const [sizingMode, setSizingMode] = useState<SizingMode>("risk");
   const [capitalPerTrade, setCapitalPerTrade] = useState("100");
+  const [riskPerTrade, setRiskPerTrade] = useState("10");
   const [isDownloading, setIsDownloading] = useState(false);
   const [tableFilters, setTableFilters] = useState<TableFilters>(INITIAL_FILTERS);
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
@@ -204,6 +208,13 @@ export default function PerformancePage() {
     return Number.isFinite(value) && value > 0 ? value : 100;
   }, [capitalPerTrade]);
 
+  const parsedRisk = useMemo(() => {
+    const value = Number(riskPerTrade);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }, [riskPerTrade]);
+
+  const activeRisk = sizingMode === "risk" ? parsedRisk : null;
+
   const { data, isLoading } = useQuery({
     queryKey: ["performance", "1h"],
     queryFn: () => api.getPerformance({ symbol: "ALL", timeframe: "1h", snapshotId: "latest" }),
@@ -211,13 +222,14 @@ export default function PerformancePage() {
   });
 
   const { data: tableData, isLoading: isTableLoading } = useQuery({
-    queryKey: ["performance-report-data", parsedCapital],
+    queryKey: ["performance-report-data", parsedCapital, activeRisk],
     queryFn: () =>
       api.getPerformanceReportData({
         symbol: "ALL",
         timeframe: "ALL",
         scope: "all",
         capitalPerTrade: parsedCapital,
+        riskPerTrade: activeRisk,
       }),
     staleTime: 60_000,
   });
@@ -280,6 +292,7 @@ export default function PerformancePage() {
         symbol: "ALL",
         timeframe: "ALL",
         capitalPerTrade: parsedCapital,
+        riskPerTrade: activeRisk,
         format,
       });
       const url = window.URL.createObjectURL(blob);
@@ -327,26 +340,73 @@ export default function PerformancePage() {
       <div className="rounded-2xl border border-white/10 bg-card/50 p-6 backdrop-blur-xl">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
-            <h2 className="text-lg font-semibold text-foreground">Download Performance Report</h2>
+            <div className="flex items-center gap-2">
+              <Settings2 className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold text-foreground">Position Sizing & Report</h2>
+            </div>
             <p className="text-sm text-muted-foreground">
-              Export every token position with RR, planned target profile, assumed modal per trade, quantity, and realized USD PnL.
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Download `HTML Table` kalau ingin laporan yang langsung rapi dibaca. Download `CSV` kalau ingin olah data lebih lanjut di Excel atau Google Sheets.
+              Choose how to calculate your position size: fixed capital per trade, or fixed risk (max loss) per trade.
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <label className="flex flex-col gap-2 text-sm text-muted-foreground">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Modal / Trade (USDT)</span>
-              <input
-                type="number"
-                min="1"
-                step="1"
-                value={capitalPerTrade}
-                onChange={(event) => setCapitalPerTrade(event.target.value)}
-                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary/40 focus:bg-white/10 sm:w-48"
-              />
-            </label>
+            {/* Sizing Mode Toggle */}
+            <div className="flex flex-col gap-2 text-sm text-muted-foreground">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Sizing Mode</span>
+              <div className="flex rounded-xl border border-white/10 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setSizingMode("capital")}
+                  className={`flex items-center gap-1.5 px-4 py-3 text-sm font-semibold transition ${
+                    sizingMode === "capital"
+                      ? "bg-primary/20 text-primary border-r border-white/10"
+                      : "bg-white/5 text-muted-foreground hover:bg-white/10 border-r border-white/10"
+                  }`}
+                >
+                  <DollarSign className="h-3.5 w-3.5" />
+                  Fixed Capital
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSizingMode("risk")}
+                  className={`flex items-center gap-1.5 px-4 py-3 text-sm font-semibold transition ${
+                    sizingMode === "risk"
+                      ? "bg-amber-500/20 text-amber-300"
+                      : "bg-white/5 text-muted-foreground hover:bg-white/10"
+                  }`}
+                >
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Fixed Risk
+                </button>
+              </div>
+            </div>
+
+            {/* Input Field */}
+            {sizingMode === "capital" ? (
+              <label className="flex flex-col gap-2 text-sm text-muted-foreground">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Modal / Trade (USDT)</span>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={capitalPerTrade}
+                  onChange={(event) => setCapitalPerTrade(event.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary/40 focus:bg-white/10 sm:w-48"
+                />
+              </label>
+            ) : (
+              <label className="flex flex-col gap-2 text-sm text-muted-foreground">
+                <span className="text-xs font-semibold uppercase tracking-wider text-amber-400">Max Loss / Trade (USDT)</span>
+                <input
+                  type="number"
+                  min="0.1"
+                  step="0.1"
+                  value={riskPerTrade}
+                  onChange={(event) => setRiskPerTrade(event.target.value)}
+                  className="w-full rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-foreground outline-none transition focus:border-amber-400/40 focus:bg-amber-500/10 sm:w-48"
+                />
+              </label>
+            )}
+
             <div className="flex flex-col gap-2 sm:flex-row">
               <button
                 type="button"
@@ -369,6 +429,16 @@ export default function PerformancePage() {
             </div>
           </div>
         </div>
+
+        {/* Sizing explanation */}
+        {sizingMode === "risk" && parsedRisk && (
+          <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+            <p className="text-sm text-amber-200">
+              <strong>Risk-Based Sizing:</strong> Jika SL di-hit, kerugian maksimal Anda = <strong>${parsedRisk}</strong> per trade.
+              Position size dihitung otomatis berdasarkan jarak SL. Contoh: SL 1% → Size = ${(parsedRisk / 0.01).toLocaleString()} USDT.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">

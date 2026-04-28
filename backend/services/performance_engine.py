@@ -101,6 +101,7 @@ class PerformanceEngine:
         scope: str = "active",
         strategy: str = "v2_balanced",
         capital_per_trade: float = 100.0,
+        risk_per_trade: float | None = None,
     ) -> list[dict[str, object]]:
         filtered = await self._filtered_trades(
             symbol=symbol,
@@ -116,14 +117,12 @@ class PerformanceEngine:
             if not isinstance(entry_features, dict):
                 entry_features = {}
             fill_count = max(getattr(trade, "fill_count", 1) or 1, 1)
-            base_capital = capital_per_trade * fill_count
             allocation_multiplier = 1.0
             try:
                 allocation_multiplier = float(entry_features.get("position_size_multiplier", 1.0) or 1.0)
             except (TypeError, ValueError):
                 allocation_multiplier = 1.0
             allocation_multiplier = max(0.1, allocation_multiplier)
-            effective_capital = base_capital * allocation_multiplier
             entry = trade.entry_price
             invalidation = trade.invalidation_price
             target_1 = trade.target_price_1 or trade.target_price
@@ -135,15 +134,30 @@ class PerformanceEngine:
             rr_tp1 = self._safe_div(reward_tp1, risk_per_unit) if reward_tp1 is not None and risk_per_unit is not None else None
             rr_tp2 = self._safe_div(reward_tp2, risk_per_unit) if reward_tp2 is not None and risk_per_unit is not None else None
 
-            quantity = (effective_capital / entry) if entry and entry > 0 else None
-            risk_amount_usd = quantity * risk_per_unit if quantity is not None and risk_per_unit is not None else None
+            # --- Position Sizing Mode ---
+            if risk_per_trade is not None and risk_per_unit is not None and risk_per_unit > 0 and entry and entry > 0:
+                # RISK-BASED: user sets max loss in USD per trade
+                # quantity = risk_per_trade / risk_per_unit
+                # e.g. risk=$10, SL distance=$0.01 → qty=1000 coins
+                adjusted_risk = risk_per_trade * allocation_multiplier
+                quantity = (adjusted_risk / risk_per_unit) * fill_count
+                effective_capital = quantity * entry
+                base_capital = effective_capital / allocation_multiplier if allocation_multiplier > 0 else effective_capital
+                risk_amount_usd = adjusted_risk * fill_count
+            else:
+                # CAPITAL-BASED (legacy): user sets fixed modal per trade
+                base_capital = capital_per_trade * fill_count
+                effective_capital = base_capital * allocation_multiplier
+                quantity = (effective_capital / entry) if entry and entry > 0 else None
+                risk_amount_usd = quantity * risk_per_unit if quantity is not None and risk_per_unit is not None else None
+
             tp1_reward_usd = quantity * reward_tp1 if quantity is not None and reward_tp1 is not None else None
             tp2_reward_usd = quantity * reward_tp2 if quantity is not None and reward_tp2 is not None else None
-            risk_pct_of_capital = self._safe_div(risk_amount_usd * 100, effective_capital) if risk_amount_usd is not None else None
+            risk_pct_of_capital = self._safe_div(risk_amount_usd * 100, effective_capital) if risk_amount_usd is not None and effective_capital else None
 
-            realized_pnl_usd = effective_capital * (trade.pnl_pct / 100)
-            max_profit_usd = effective_capital * (trade.max_profit_pct / 100)
-            max_drawdown_usd = effective_capital * (trade.max_drawdown_pct / 100)
+            realized_pnl_usd = effective_capital * (trade.pnl_pct / 100) if effective_capital else 0.0
+            max_profit_usd = effective_capital * (trade.max_profit_pct / 100) if effective_capital else 0.0
+            max_drawdown_usd = effective_capital * (trade.max_drawdown_pct / 100) if effective_capital else 0.0
             realized_r_multiple = self._safe_div(realized_pnl_usd, risk_amount_usd) if risk_amount_usd is not None else None
             allocated_r_multiple = realized_r_multiple * allocation_multiplier if realized_r_multiple is not None else None
 
@@ -213,6 +227,7 @@ class PerformanceEngine:
         scope: str = "active",
         strategy: str = "v2_balanced",
         capital_per_trade: float = 100.0,
+        risk_per_trade: float | None = None,
     ) -> str:
         rows = await self._trade_report_rows(
             symbol=symbol,
@@ -221,6 +236,7 @@ class PerformanceEngine:
             scope=scope,
             strategy=strategy,
             capital_per_trade=capital_per_trade,
+            risk_per_trade=risk_per_trade,
         )
 
         base_fields = [
@@ -296,6 +312,7 @@ class PerformanceEngine:
         scope: str = "active",
         strategy: str = "v2_balanced",
         capital_per_trade: float = 100.0,
+        risk_per_trade: float | None = None,
     ) -> PerformanceTradeTableResponse:
         rows = await self._trade_report_rows(
             symbol=symbol,
@@ -304,6 +321,7 @@ class PerformanceEngine:
             scope=scope,
             strategy=strategy,
             capital_per_trade=capital_per_trade,
+            risk_per_trade=risk_per_trade,
         )
         return PerformanceTradeTableResponse(
             generated_at=datetime.now(UTC),
@@ -327,6 +345,7 @@ class PerformanceEngine:
         scope: str = "active",
         strategy: str = "v2_balanced",
         capital_per_trade: float = 100.0,
+        risk_per_trade: float | None = None,
     ) -> str:
         rows = await self._trade_report_rows(
             symbol=symbol,
@@ -335,6 +354,7 @@ class PerformanceEngine:
             scope=scope,
             strategy=strategy,
             capital_per_trade=capital_per_trade,
+            risk_per_trade=risk_per_trade,
         )
         closed_rows = [row for row in rows if row["result"] in {"win", "loss"}]
         wins = sum(1 for row in closed_rows if row["result"] == "win")

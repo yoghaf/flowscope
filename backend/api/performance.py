@@ -31,6 +31,7 @@ async def get_performance_report_data(
     scope: str = Query("active", pattern="^(active|all)$"),
     strategy: str = Query("v2_balanced"),
     capital_per_trade: float = Query(100.0, gt=0),
+    risk_per_trade: float | None = Query(None, gt=0),
 ) -> PerformanceTradeTableResponse:
     performance_engine = request.app.state.signal_service.performance_engine
     return await performance_engine.get_trade_report_table(
@@ -40,6 +41,7 @@ async def get_performance_report_data(
         scope=scope,
         strategy=strategy,
         capital_per_trade=capital_per_trade,
+        risk_per_trade=risk_per_trade,
     )
 
 
@@ -51,6 +53,7 @@ async def download_performance_report(
     setup_type: str | None = Query(None),
     scope: str = Query("active", pattern="^(active|all)$"),
     capital_per_trade: float = Query(100.0, gt=0),
+    risk_per_trade: float | None = Query(None, gt=0),
     format: str = Query("html", pattern="^(html|csv)$"),
 ) -> Response:
     performance_engine = request.app.state.signal_service.performance_engine
@@ -61,6 +64,7 @@ async def download_performance_report(
             setup_type=setup_type,
             scope=scope,
             capital_per_trade=capital_per_trade,
+            risk_per_trade=risk_per_trade,
         )
         media_type = "text/csv"
         extension = "csv"
@@ -71,6 +75,7 @@ async def download_performance_report(
             setup_type=setup_type,
             scope=scope,
             capital_per_trade=capital_per_trade,
+            risk_per_trade=risk_per_trade,
         )
         media_type = "text/html"
         extension = "html"

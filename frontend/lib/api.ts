@@ -135,15 +135,18 @@ export const api = {
     scope?: "active" | "all";
     strategy?: string;
     capitalPerTrade: number;
+    riskPerTrade?: number | null;
   }): Promise<PerformanceTradeTableResponse> {
-    return fetchJson<PerformanceTradeTableResponse>("/performance/report/data", {
+    const params: Record<string, string | number> = {
       symbol: query.symbol ?? "ALL",
       timeframe: query.timeframe ?? "ALL",
-      setup_type: query.setupType,
       scope: query.scope ?? "active",
       strategy: query.strategy ?? "v2_balanced",
       capital_per_trade: query.capitalPerTrade,
-    });
+    };
+    if (query.setupType) params.setup_type = query.setupType;
+    if (query.riskPerTrade && query.riskPerTrade > 0) params.risk_per_trade = query.riskPerTrade;
+    return fetchJson<PerformanceTradeTableResponse>("/performance/report/data", params);
   },
   downloadPerformanceReport(query: {
     symbol?: string;
@@ -151,16 +154,19 @@ export const api = {
     setupType?: string;
     strategy?: string;
     capitalPerTrade: number;
+    riskPerTrade?: number | null;
     format?: "html" | "csv";
   }): Promise<Blob> {
-    return fetchBlob("/performance/report", {
+    const params: Record<string, string | number> = {
       symbol: query.symbol ?? "ALL",
       timeframe: query.timeframe ?? "ALL",
-      setup_type: query.setupType,
       strategy: query.strategy ?? "v2_balanced",
       capital_per_trade: query.capitalPerTrade,
       format: query.format ?? "html",
-    });
+    };
+    if (query.setupType) params.setup_type = query.setupType;
+    if (query.riskPerTrade && query.riskPerTrade > 0) params.risk_per_trade = query.riskPerTrade;
+    return fetchBlob("/performance/report", params);
   },
   getSignalDetail(id: number | string): Promise<any> {
     return fetchJson(`/signals/${id}`);
