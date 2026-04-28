@@ -87,6 +87,7 @@ export default function SignalsPage() {
   const [data, setData] = useState<SignalsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "open" | "closed">("all");
+  const [resultFilter, setResultFilter] = useState<"all" | "win" | "loss">("all");
   const [error, setError] = useState<string | null>(null);
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
@@ -114,7 +115,13 @@ export default function SignalsPage() {
     return () => clearInterval(interval);
   }, [fetchSignals]);
 
-  const signals = useMemo(() => data?.signals ?? [], [data]);
+  const signals = useMemo(() => {
+    const raw = data?.signals ?? [];
+    if (filter === "closed" && resultFilter !== "all") {
+      return raw.filter((s) => s.result === resultFilter);
+    }
+    return raw;
+  }, [data, filter, resultFilter]);
 
   const openSymbols = useMemo(() => {
     return Array.from(
@@ -228,7 +235,10 @@ export default function SignalsPage() {
             <button
               key={f}
               id={`filter-${f}`}
-              onClick={() => setFilter(f)}
+              onClick={() => {
+                setFilter(f);
+                if (f !== "closed") setResultFilter("all");
+              }}
               className={`rounded-xl px-4 py-2 text-sm font-medium capitalize transition-all ${
                 filter === f
                   ? "bg-violet-500/20 text-violet-400 shadow-lg shadow-violet-500/10"
@@ -238,6 +248,31 @@ export default function SignalsPage() {
               {f}
             </button>
           ))}
+
+          {/* Win/Loss sub-filter for closed */}
+          {filter === "closed" && (
+            <>
+              <div className="mx-1 h-6 w-px bg-white/10" />
+              {(["all", "win", "loss"] as const).map((rf) => (
+                <button
+                  key={rf}
+                  id={`result-filter-${rf}`}
+                  onClick={() => setResultFilter(rf)}
+                  className={`rounded-xl px-3 py-2 text-xs font-semibold uppercase transition-all ${
+                    resultFilter === rf
+                      ? rf === "win"
+                        ? "bg-emerald-500/20 text-emerald-400"
+                        : rf === "loss"
+                          ? "bg-rose-500/20 text-rose-400"
+                          : "bg-white/10 text-foreground"
+                      : "text-muted-foreground hover:bg-white/5"
+                  }`}
+                >
+                  {rf === "all" ? "All Results" : rf}
+                </button>
+              ))}
+            </>
+          )}
 
           <div className="ml-2 rounded-xl border border-violet-500/20 bg-violet-500/10 px-3 py-2 text-sm font-medium text-violet-300">
             Strategy: v2_balanced
