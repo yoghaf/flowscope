@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "c:\Code\flowscope\gen_report.py", line 134, in <module>
-    with open("report_output.txt", "w", encoding="utf-8") as f:
-         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-PermissionError: [Errno 13] Permission denied: 'report_output.txt'
