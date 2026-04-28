@@ -136,14 +136,13 @@ class PerformanceEngine:
 
             # --- Position Sizing Mode ---
             if risk_per_trade is not None and risk_per_unit is not None and risk_per_unit > 0 and entry and entry > 0:
-                # RISK-BASED: user sets max loss in USD per trade
-                # quantity = risk_per_trade / risk_per_unit
-                # e.g. risk=$10, SL distance=$0.01 → qty=1000 coins
-                adjusted_risk = risk_per_trade * allocation_multiplier
-                quantity = (adjusted_risk / risk_per_unit) * fill_count
+                # RISK-BASED: user sets exact loss in USD per trade
+                # We ignore internal allocation_multiplier here because the user
+                # explicitly requested a fixed risk amount (e.g., exactly $10 loss if SL hit).
+                quantity = risk_per_trade / risk_per_unit
                 effective_capital = quantity * entry
-                base_capital = effective_capital / allocation_multiplier if allocation_multiplier > 0 else effective_capital
-                risk_amount_usd = adjusted_risk * fill_count
+                base_capital = effective_capital
+                risk_amount_usd = risk_per_trade
             else:
                 # CAPITAL-BASED (legacy): user sets fixed modal per trade
                 base_capital = capital_per_trade * fill_count
