@@ -91,6 +91,14 @@ class TradingBotService:
             return
 
         try:
+            # Check staleness to prevent executing old signals after restarts
+            anchor_time = trade.entry_touched_at or trade.created_at
+            if anchor_time is not None:
+                age_minutes = (datetime.now(UTC) - anchor_time).total_seconds() / 60
+                if age_minutes > 15:
+                    logger.info("🤖 Trade signal for %s is too old (%.1f mins). Skipping demo execution.", trade.symbol, age_minutes)
+                    return
+
             # Check if already have open position for this symbol
             if await self._has_open_position(trade.symbol):
                 logger.info("🤖 Already have open position for %s. Skipping.", trade.symbol)

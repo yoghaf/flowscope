@@ -3970,6 +3970,13 @@ class SignalService:
         bucket: TimeframeBucket,
         state: AssetState,
     ) -> str | None:
+        # 1. TIME-BASED STALENESS
+        # Prevent live Telegram alerts for signals generated from old data (e.g., after bot restarts)
+        if hasattr(state, "timestamp") and state.timestamp is not None:
+            age_minutes = (datetime.now(UTC) - state.timestamp).total_seconds() / 60
+            if age_minutes > 15:
+                return f"signal_too_old_{int(age_minutes)}m"
+
         execution = getattr(state, "execution", None)
         if execution is None or execution.entry_min is None or execution.invalidation is None:
             return None
