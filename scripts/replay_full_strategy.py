@@ -322,6 +322,9 @@ class ReplayDatabase:
         rows.sort(key=lambda bucket: (bucket.symbol, bucket.timeframe, bucket.bucket_start))
         return rows
 
+    async def has_any_open_trade_for_symbol(self, symbol: str) -> bool:
+        return any(t.symbol == symbol and t.result == "open" for t in self._trades)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Replay FlowScope strategy from stored market_data_buckets.")
