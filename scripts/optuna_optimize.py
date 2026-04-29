@@ -157,12 +157,15 @@ def get_baseline_params(settings: Settings) -> dict:
 async def run_replay_with_settings(
     settings: Settings,
     bucket_data: dict[str, dict[str, list]],
+    verbose: bool = False,
 ) -> list[TradeSignal]:
     """Run full replay across all symbols with given settings."""
     all_trades: list[TradeSignal] = []
     next_id = 1
+    total = len(bucket_data)
+    t0 = time.time()
 
-    for symbol, buckets in bucket_data.items():
+    for i, (symbol, buckets) in enumerate(bucket_data.items(), 1):
         trades, _ = await replay_symbol(
             settings=settings,
             symbol=symbol,
@@ -172,6 +175,20 @@ async def run_replay_with_settings(
             t.id = next_id
             next_id += 1
         all_trades.extend(trades)
+
+        if verbose:
+            elapsed = time.time() - t0
+            eta = (elapsed / i) * (total - i) if i > 0 else 0
+            sys.stdout.write(
+                f"\r  [{i:3d}/{total}] {symbol:16s} "
+                f"{len(trades)} trades | "
+                f"{elapsed:.0f}s elapsed, ~{eta:.0f}s remaining   "
+            )
+            sys.stdout.flush()
+
+    if verbose:
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        sys.stdout.flush()
 
     return all_trades
 
@@ -253,7 +270,7 @@ async def async_main(args: argparse.Namespace) -> None:
     baseline_params = get_baseline_params(base_settings)
 
     # 1. Load bucket data
-    print("\n[1/5] Loading market data from database...")
+    print(f"\n[1/5] Loading market data from database ({args.days} days)...")
     db = DatabaseManager(base_settings)
     db.enabled = True
     load_start = time.time()
@@ -270,10 +287,21 @@ async def async_main(args: argparse.Namespace) -> None:
     total_buckets = sum(len(b) for sym in bucket_data.values() for b in sym.values())
     print(f"  Loaded {len(bucket_data)} symbols, {total_buckets:,} buckets in {time.time() - load_start:.1f}s")
 
+    # Limit to top N symbols by bucket count for speed
+    if args.top_symbols > 0 and len(bucket_data) > args.top_symbols:
+        ranked = sorted(
+            bucket_data.items(),
+            key=lambda kv: sum(len(v) for v in kv[1].values()),
+            reverse=True,
+        )
+        bucket_data = dict(ranked[:args.top_symbols])
+        trimmed_buckets = sum(len(b) for sym in bucket_data.values() for b in sym.values())
+        print(f"  Trimmed to top {args.top_symbols} symbols ({trimmed_buckets:,} buckets)")
+
     # 2. Baseline
-    print("\n[2/5] Running baseline replay (current v2_balanced)...")
+    print(f"\n[2/5] Running baseline replay ({len(bucket_data)} symbols)...")
     t0 = time.time()
-    baseline_trades = await run_replay_with_settings(base_settings, bucket_data)
+    baseline_trades = await run_replay_with_settings(base_settings, bucket_data, verbose=True)
     baseline_metrics = score_trades(baseline_trades)
     summary = summarize_trades(baseline_trades)
     print(f"  Replay: {time.time() - t0:.1f}s")
@@ -361,6 +389,7 @@ def main():
     parser = argparse.ArgumentParser(description="Optuna Strategy Optimizer")
     parser.add_argument("--days", type=int, default=14, help="Days of data to replay")
     parser.add_argument("--n-trials", type=int, default=100, help="Optuna trials")
+    parser.add_argument("--top-symbols", type=int, default=50, help="Limit to N most active symbols (0=all)")
     parser.add_argument("--workers", type=int, default=8, help="Replay workers")
     args = parser.parse_args()
     asyncio.run(async_main(args))
