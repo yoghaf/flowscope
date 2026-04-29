@@ -16,6 +16,7 @@ async def get_live_signals(
     status: str = Query("all", pattern="^(all|open|closed)$"),
     scope: str = Query("active", pattern="^(active|all)$"),
     strategy: str = Query("v2_balanced"),
+    regime: str = Query("all", pattern="^(all|Balanced|Trending|Ranging)$"),
     limit: int = Query(50, ge=1, le=200),
 ) -> dict[str, Any]:
     """Return live trade signals with equity simulation."""
@@ -41,6 +42,9 @@ async def get_live_signals(
             t for t in trades
             if isinstance(t.entry_features, dict) and t.entry_features.get("strategy_version", "v1") == strategy
         ]
+
+    if regime and regime != "all":
+        trades = [t for t in trades if t.market_regime == regime]
 
     # Sort newest first
     trades.sort(key=lambda t: t.created_at, reverse=True)

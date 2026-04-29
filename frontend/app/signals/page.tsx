@@ -88,6 +88,7 @@ export default function SignalsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "open" | "closed">("all");
   const [resultFilter, setResultFilter] = useState<"all" | "win" | "loss">("all");
+  const [regimeFilter, setRegimeFilter] = useState<"all" | "Balanced" | "Trending" | "Ranging">("all");
   const [error, setError] = useState<string | null>(null);
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
@@ -98,6 +99,7 @@ export default function SignalsPage() {
         status: filter,
         scope: "active",
         strategy: "v2_balanced",
+        regime: regimeFilter,
         limit: 100,
       });
       setData(json);
@@ -107,7 +109,7 @@ export default function SignalsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, regimeFilter]);
 
   useEffect(() => {
     void fetchSignals();
@@ -273,6 +275,24 @@ export default function SignalsPage() {
               ))}
             </>
           )}
+
+          <div className="mx-1 h-6 w-px bg-white/10" />
+
+          {/* Regime filter */}
+          {(["all", "Balanced", "Trending", "Ranging"] as const).map((regime) => (
+            <button
+              key={regime}
+              id={`regime-filter-${regime.toLowerCase()}`}
+              onClick={() => setRegimeFilter(regime)}
+              className={`rounded-xl px-3 py-2 text-xs font-medium uppercase transition-all ${
+                regimeFilter === regime
+                  ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                  : "text-muted-foreground hover:bg-white/5 border border-transparent"
+              }`}
+            >
+              {regime === "all" ? "All Regimes" : regime}
+            </button>
+          ))}
 
           <div className="ml-2 rounded-xl border border-violet-500/20 bg-violet-500/10 px-3 py-2 text-sm font-medium text-violet-300">
             Strategy: v2_balanced
