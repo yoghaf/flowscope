@@ -199,8 +199,13 @@ def create_objective(
     bucket_data: dict[str, dict[str, list]],
     base_settings: Settings,
     baseline_params: dict,
+    trial_time_estimate: float,
 ):
+    trial_count = [0]
+
     def objective(trial: optuna.Trial) -> float:
+        trial_count[0] += 1
+        t0 = time.time()
         params = {
             "min_clarity_confidence": trial.suggest_float("min_clarity_confidence", 0.45, 0.80, step=0.05),
             "min_volume_z": trial.suggest_float("min_volume_z", 0.50, 2.00, step=0.10),
@@ -221,9 +226,7 @@ def create_objective(
         }
 
         mutated = mutate_settings(base_settings, params)
-        trades = asyncio.get_event_loop().run_until_complete(
-            run_replay_with_settings(mutated, bucket_data)
-        )
+        trades = asyncio.run(run_replay_with_settings(mutated, bucket_data))
         result = score_trades(trades)
 
         # Regularization penalty
@@ -234,6 +237,14 @@ def create_objective(
 
         final = result["score"] - deviation
         trial.set_user_attr("metrics", result)
+
+        elapsed = time.time() - t0
+        print(
+            f"  Trial {trial_count[0]:3d} | "
+            f"WR:{result['winrate']:.0%} Exp:{result['expectancy']:+.3f} "
+            f"Trades:{result['trades']} | "
+            f"{elapsed:.0f}s"
+        )
         return final
 
     return objective
@@ -258,9 +269,39 @@ def export_config(best_params: dict, best_metrics: dict, baseline_metrics: dict)
     return path
 
 
-# ─── Main ────────────────────────────────────────────────────────
+# ─── Async helpers ───────────────────────────────────────────────
 
-async def async_main(args: argparse.Namespace) -> None:
+async def load_data(settings: Settings, days: int, top_symbols: int):
+    """Load bucket data from database."""
+    db = DatabaseManager(settings)
+    db.enabled = True
+    bucket_data = await load_bucket_history(db, None, days=days, limit_per_symbol=0)
+    await db.close()
+
+    if not bucket_data:
+        return {}
+
+    # Limit to top N symbols
+    if top_symbols > 0 and len(bucket_data) > top_symbols:
+        ranked = sorted(
+            bucket_data.items(),
+            key=lambda kv: sum(len(v) for v in kv[1].values()),
+            reverse=True,
+        )
+        bucket_data = dict(ranked[:top_symbols])
+
+    return bucket_data
+
+
+# ─── Main (sync orchestrator) ────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(description="Optuna Strategy Optimizer")
+    parser.add_argument("--days", type=int, default=14, help="Days of data to replay")
+    parser.add_argument("--n-trials", type=int, default=100, help="Optuna trials")
+    parser.add_argument("--top-symbols", type=int, default=50, help="Limit to N most active symbols (0=all)")
+    args = parser.parse_args()
+
     print("=" * 65)
     print("  FLOWSCOPE OPTUNA STRATEGY OPTIMIZER")
     print("  Using LIVE v2_balanced engine + DB market data")
@@ -269,16 +310,10 @@ async def async_main(args: argparse.Namespace) -> None:
     base_settings = get_settings()
     baseline_params = get_baseline_params(base_settings)
 
-    # 1. Load bucket data
+    # 1. Load data (async)
     print(f"\n[1/5] Loading market data from database ({args.days} days)...")
-    db = DatabaseManager(base_settings)
-    db.enabled = True
     load_start = time.time()
-
-    bucket_data = await load_bucket_history(
-        db, None, days=args.days, limit_per_symbol=0,
-    )
-    await db.close()
+    bucket_data = asyncio.run(load_data(base_settings, args.days, args.top_symbols))
 
     if not bucket_data:
         print("  No bucket data found. Exiting.")
@@ -287,24 +322,14 @@ async def async_main(args: argparse.Namespace) -> None:
     total_buckets = sum(len(b) for sym in bucket_data.values() for b in sym.values())
     print(f"  Loaded {len(bucket_data)} symbols, {total_buckets:,} buckets in {time.time() - load_start:.1f}s")
 
-    # Limit to top N symbols by bucket count for speed
-    if args.top_symbols > 0 and len(bucket_data) > args.top_symbols:
-        ranked = sorted(
-            bucket_data.items(),
-            key=lambda kv: sum(len(v) for v in kv[1].values()),
-            reverse=True,
-        )
-        bucket_data = dict(ranked[:args.top_symbols])
-        trimmed_buckets = sum(len(b) for sym in bucket_data.values() for b in sym.values())
-        print(f"  Trimmed to top {args.top_symbols} symbols ({trimmed_buckets:,} buckets)")
-
-    # 2. Baseline
+    # 2. Baseline (async)
     print(f"\n[2/5] Running baseline replay ({len(bucket_data)} symbols)...")
     t0 = time.time()
-    baseline_trades = await run_replay_with_settings(base_settings, bucket_data, verbose=True)
+    baseline_trades = asyncio.run(run_replay_with_settings(base_settings, bucket_data, verbose=True))
+    baseline_elapsed = time.time() - t0
     baseline_metrics = score_trades(baseline_trades)
     summary = summarize_trades(baseline_trades)
-    print(f"  Replay: {time.time() - t0:.1f}s")
+    print(f"  Replay: {baseline_elapsed:.1f}s")
     print(f"  Trades: {summary.trade_count} (W:{summary.win_count} L:{summary.loss_count} BE:{summary.breakeven_count} TO:{summary.timeout_count})")
     print(f"  WR: {baseline_metrics['winrate']:.1%} | Exp: {baseline_metrics['expectancy']:+.4f} | Sharpe: {baseline_metrics['sharpe']:.2f}")
 
@@ -312,9 +337,9 @@ async def async_main(args: argparse.Namespace) -> None:
         print("\n  Not enough trades for optimization. Try more --days.")
         return
 
-    # 3. Optimize
-    print(f"\n[3/5] Running Optuna ({args.n_trials} trials, each = full replay)...")
-    print(f"  Estimated time: {args.n_trials} x {time.time() - t0:.0f}s = ~{args.n_trials * (time.time() - t0) / 60:.0f} min")
+    # 3. Optuna (sync — each trial calls asyncio.run internally)
+    print(f"\n[3/5] Running Optuna ({args.n_trials} trials)...")
+    print(f"  ~{baseline_elapsed:.0f}s per trial, est. total: ~{args.n_trials * baseline_elapsed / 60:.0f} min")
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
     study = optuna.create_study(
@@ -322,25 +347,21 @@ async def async_main(args: argparse.Namespace) -> None:
         study_name="flowscope_v2_optimizer",
         sampler=optuna.samplers.TPESampler(seed=42),
     )
-
-    # Run optimization (blocking)
-    loop = asyncio.get_event_loop()
     study.optimize(
-        create_objective(bucket_data, base_settings, baseline_params),
+        create_objective(bucket_data, base_settings, baseline_params, baseline_elapsed),
         n_trials=args.n_trials,
-        show_progress_bar=True,
     )
 
     best = study.best_trial
     best_params = best.params
     best_metrics = best.user_attrs.get("metrics", {})
 
-    # 4. Validate
+    # 4. Validate (async)
     print("\n[4/5] Re-running best config for validation...")
     best_params_full = dict(baseline_params)
     best_params_full.update(best_params)
     best_settings = mutate_settings(base_settings, best_params_full)
-    val_trades = await run_replay_with_settings(best_settings, bucket_data)
+    val_trades = asyncio.run(run_replay_with_settings(best_settings, bucket_data, verbose=True))
     val_metrics = score_trades(val_trades)
     val_summary = summarize_trades(val_trades)
 
@@ -385,15 +406,6 @@ async def async_main(args: argparse.Namespace) -> None:
     print("=" * 65)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Optuna Strategy Optimizer")
-    parser.add_argument("--days", type=int, default=14, help="Days of data to replay")
-    parser.add_argument("--n-trials", type=int, default=100, help="Optuna trials")
-    parser.add_argument("--top-symbols", type=int, default=50, help="Limit to N most active symbols (0=all)")
-    parser.add_argument("--workers", type=int, default=8, help="Replay workers")
-    args = parser.parse_args()
-    asyncio.run(async_main(args))
-
-
 if __name__ == "__main__":
     main()
+
