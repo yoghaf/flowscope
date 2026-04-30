@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.config import Settings, get_settings
-from backend.models import AlertPreference, Base, DemoTrade, LatestAssetState, MarketData, MarketDataBucket, SignalRecord, TradeSignal
+from backend.models import AlertPreference, Base, LatestAssetState, MarketData, MarketDataBucket, SignalRecord, TradeSignal
 from backend.schemas import AlertEntry, AssetSnapshot
 
 logger = logging.getLogger(__name__)

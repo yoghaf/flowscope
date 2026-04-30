@@ -11,7 +11,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.api.alerts import router as alerts_router
 from backend.api.coin import router as coin_router
 from backend.api.dashboard import router as dashboard_router
-from backend.api.demo_trading import router as demo_trading_router
 from backend.api.performance import router as performance_router
 from backend.api.scanner import router as scanner_router
 from backend.api.signals import router as signals_router
@@ -20,7 +19,6 @@ from backend.database import DatabaseManager
 from backend.schemas import RealtimeEvent
 from backend.services.realtime import RealtimeHub
 from backend.services.signal_service import SignalService
-from backend.services.trading_bot import TradingBotService
 
 logging.basicConfig(level=logging.INFO)
 
@@ -28,7 +26,6 @@ settings = get_settings()
 database = DatabaseManager(settings)
 realtime_hub = RealtimeHub()
 signal_service = SignalService(settings, database, realtime_hub)
-trading_bot = TradingBotService(settings, database)
 
 
 @asynccontextmanager
@@ -38,13 +35,9 @@ async def lifespan(app: FastAPI):
     app.state.db = database
     app.state.realtime_hub = realtime_hub
     app.state.signal_service = signal_service
-    app.state.trading_bot = trading_bot
-    signal_service.trading_bot = trading_bot
     await database.init()
-    await trading_bot.start()
     await signal_service.start()
     yield
-    await trading_bot.stop()
     await signal_service.stop()
     await database.close()
 
@@ -64,7 +57,6 @@ app.include_router(coin_router)
 app.include_router(alerts_router)
 app.include_router(performance_router)
 app.include_router(signals_router)
-app.include_router(demo_trading_router)
 
 
 @app.get("/health")

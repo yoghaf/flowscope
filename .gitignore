@@ -27,4 +27,5 @@ phase*-before-report.csv
 phase*-before-summary.json
 replay-performance-report.csv
 replay-performance-summary.json
+replay_results*.csv
 trade_autopsies/

@@ -211,20 +211,6 @@ export const api = {
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     return url.toString();
   },
-
-  // Demo Trading
-  getDemoPositions(status: string = "all"): Promise<any> {
-    return fetchJson<any>("/api/demo/positions", { status });
-  },
-  getDemoStats(): Promise<any> {
-    return fetchJson<any>("/api/demo/stats");
-  },
-  closeDemoPosition(id: number): Promise<any> {
-    return fetchJson<any>(`/api/demo/close/${id}`, undefined, { method: "POST" });
-  },
-  toggleDemoTrading(): Promise<any> {
-    return fetchJson<any>("/api/demo/toggle", undefined, { method: "POST" });
-  },
 };
 
 export type { RealtimeEvent };
