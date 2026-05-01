@@ -49,6 +49,7 @@ from backend.schemas import (
     SignalType,
     SignalStatus,
     PerformanceResponse,
+    TelegramDestination,
     TelegramTestResponse,
     VolumePoint,
 )
@@ -3167,16 +3168,25 @@ class SignalService:
 
         record = await self.database.get_alert_preferences(user_id)
         if record:
+            raw_destinations = (
+                record.telegram_destinations
+                if hasattr(record, "telegram_destinations") and record.telegram_destinations
+                else []
+            )
             preferences = AlertPreferences(
                 user_id=record.user_id,
                 timeframes=[tf for tf in (record.timeframes or []) if tf in TIMEFRAME_ORDER],
                 signal_types=record.signal_types or list(DEFAULT_SIGNAL_TYPES),
+                market_regimes=self._normalize_market_regimes(
+                    record.market_regimes if hasattr(record, "market_regimes") else []
+                ),
                 watchlist=record.watchlist or [],
                 min_score=record.min_score,
                 debounce_minutes=record.debounce_minutes,
                 enabled=record.enabled,
                 telegram_enabled=record.telegram_enabled,
                 telegram_chat_id=record.telegram_chat_id,
+                telegram_destinations=self._normalize_telegram_destinations(raw_destinations),
                 telegram_configured=self.telegram_notifier.configured,
                 updated_at=record.updated_at,
             )
@@ -3197,6 +3207,8 @@ class SignalService:
 
         if update.signal_types is not None:
             preferences.signal_types = list(update.signal_types)
+        if update.market_regimes is not None:
+            preferences.market_regimes = self._normalize_market_regimes(update.market_regimes)
         if update.timeframes is not None:
             preferences.timeframes = [tf for tf in update.timeframes if tf in TIMEFRAME_ORDER]
         if update.watchlist is not None:
@@ -3209,9 +3221,11 @@ class SignalService:
             preferences.enabled = update.enabled
         if update.telegram_enabled is not None:
             preferences.telegram_enabled = update.telegram_enabled
-        if update.telegram_chat_id is not None:
+        if "telegram_chat_id" in update.model_fields_set:
             chat_id = update.telegram_chat_id.strip() if update.telegram_chat_id else None
             preferences.telegram_chat_id = chat_id or None
+        if update.telegram_destinations is not None:
+            preferences.telegram_destinations = self._normalize_telegram_destinations(update.telegram_destinations)
 
         preferences.updated_at = datetime.now(UTC)
         preferences.telegram_configured = self.telegram_notifier.configured
@@ -3227,12 +3241,26 @@ class SignalService:
             return TelegramTestResponse(ok=False, message="Telegram bot token belum dikonfigurasi di server.")
         if not preferences.telegram_enabled:
             return TelegramTestResponse(ok=False, message="Telegram notifications masih off di preferences user ini.")
-        if not preferences.telegram_chat_id:
-            return TelegramTestResponse(ok=False, message="Telegram chat ID belum diisi.")
 
+        destinations = self._resolve_telegram_destinations(preferences)
+        if not destinations:
+            return TelegramTestResponse(ok=False, message="Tidak ada tujuan Telegram (chat ID / destinations) yang dikonfigurasi.")
         message = self._build_test_telegram_message(user_id)
-        ok, result_message = await self.telegram_notifier.send_message(preferences.telegram_chat_id, message)
-        return TelegramTestResponse(ok=ok, message=result_message)
+        results: list[str] = []
+        any_ok = False
+        for destination in destinations:
+            label = destination.label or destination.chat_id
+            ok, result_message = await self.telegram_notifier.send_message(
+                destination.chat_id,
+                message,
+                message_thread_id=destination.topic_id,
+            )
+            if ok:
+                any_ok = True
+                results.append(f"OK {label}")
+            else:
+                results.append(f"FAIL {label}: {result_message}")
+        return TelegramTestResponse(ok=any_ok, message=" | ".join(results))
 
     async def _ensure_user_initialized(
         self,
@@ -3253,16 +3281,25 @@ class SignalService:
             return
 
         for record in records:
+            raw_destinations = (
+                record.telegram_destinations
+                if hasattr(record, "telegram_destinations") and record.telegram_destinations
+                else []
+            )
             preferences = AlertPreferences(
                 user_id=record.user_id,
                 timeframes=[tf for tf in (record.timeframes or []) if tf in TIMEFRAME_ORDER],
                 signal_types=record.signal_types or list(DEFAULT_SIGNAL_TYPES),
+                market_regimes=self._normalize_market_regimes(
+                    record.market_regimes if hasattr(record, "market_regimes") else []
+                ),
                 watchlist=record.watchlist or [],
                 min_score=record.min_score,
                 debounce_minutes=record.debounce_minutes,
                 enabled=record.enabled,
                 telegram_enabled=record.telegram_enabled,
                 telegram_chat_id=record.telegram_chat_id,
+                telegram_destinations=self._normalize_telegram_destinations(raw_destinations),
                 telegram_configured=self.telegram_notifier.configured,
                 updated_at=record.updated_at,
             )
@@ -3290,29 +3327,29 @@ class SignalService:
         async with self._lock:
             alerts = list(self.alerts)
             for alert in reversed(alerts):
-                if self._should_deliver_alert(user_id, alert, preferences):
+                state = self.states_by_timeframe.get(alert.timeframe, {}).get(alert.symbol)
+                if self._should_deliver_alert(user_id, alert, preferences, state=state):
                     self.user_alerts[user_id].appendleft(alert)
                     self.last_alert_at[(user_id, alert.symbol, alert.timeframe)] = alert.timestamp
 
     def _dispatch_alert(self, alert: AlertEntry, state: AssetState | None = None) -> None:
         for user_id, preferences in self.user_preferences.items():
-            if not self._should_deliver_alert(user_id, alert, preferences):
+            if not self._should_deliver_alert(user_id, alert, preferences, state=state):
                 continue
             self.user_alerts[user_id].appendleft(alert)
             self.last_alert_at[(user_id, alert.symbol, alert.timeframe)] = alert.timestamp
-            if (
-                preferences.telegram_enabled
-                and preferences.telegram_chat_id
-                and self.telegram_notifier.configured
-            ):
-                self._spawn_background_task(
-                    self._send_telegram_alert(
-                        user_id=user_id,
-                        preferences=preferences,
-                        alert=alert,
-                        state=state,
-                    )
+            if not preferences.telegram_enabled or not self.telegram_notifier.configured:
+                continue
+            if not self._resolve_telegram_destinations(preferences):
+                continue
+            self._spawn_background_task(
+                self._send_telegram_alert(
+                    user_id=user_id,
+                    preferences=preferences,
+                    alert=alert,
+                    state=state,
                 )
+            )
 
     def _dispatch_trade_entry_notification(
         self,
@@ -3345,6 +3382,7 @@ class SignalService:
                 timeframe=timeframe,
                 signal=state.signal,
                 preferences=preferences,
+                state=state,
             )
             if block_reason is not None:
                 if user_id != DEFAULT_USER_ID:
@@ -3426,18 +3464,26 @@ class SignalService:
         alert: AlertEntry,
         state: AssetState | None,
     ) -> None:
-        if not preferences.telegram_chat_id:
+        destinations = self._resolve_telegram_destinations(preferences)
+        if not destinations:
             return
         message = self._build_telegram_alert_message(user_id=user_id, alert=alert, state=state)
-        ok, result_message = await self.telegram_notifier.send_message(preferences.telegram_chat_id, message)
-        if not ok:
-            logger.warning(
-                "Telegram alert send failed user=%s symbol=%s timeframe=%s reason=%s",
-                user_id,
-                alert.symbol,
-                alert.timeframe,
-                result_message,
+        for destination in destinations:
+            ok, result_message = await self.telegram_notifier.send_message(
+                destination.chat_id,
+                message,
+                message_thread_id=destination.topic_id,
             )
+            if not ok:
+                logger.warning(
+                    "Telegram alert send failed user=%s chat=%s topic=%s symbol=%s timeframe=%s reason=%s",
+                    user_id,
+                    destination.chat_id,
+                    destination.topic_id,
+                    alert.symbol,
+                    alert.timeframe,
+                    result_message,
+                )
 
     async def _send_telegram_trade_entry_notification(
         self,
@@ -3450,7 +3496,8 @@ class SignalService:
         bucket: TimeframeBucket,
         state: AssetState,
     ) -> None:
-        if not preferences.telegram_chat_id:
+        destinations = self._resolve_telegram_destinations(preferences)
+        if not destinations:
             return
         message = self._build_telegram_trade_entry_message(
             user_id=user_id,
@@ -3459,17 +3506,26 @@ class SignalService:
             bucket=bucket,
             state=state,
         )
-        ok, result_message = await self.telegram_notifier.send_message(preferences.telegram_chat_id, message)
-        if not ok:
-            logger.warning(
-                "Telegram trade-entry send failed user=%s symbol=%s timeframe=%s reason=%s",
-                user_id,
-                symbol,
-                timeframe,
-                result_message,
+        any_sent = False
+        for destination in destinations:
+            ok, result_message = await self.telegram_notifier.send_message(
+                destination.chat_id,
+                message,
+                message_thread_id=destination.topic_id,
             )
-            return
-        if trade_id is not None:
+            if ok:
+                any_sent = True
+            else:
+                logger.warning(
+                    "Telegram trade-entry send failed user=%s chat=%s topic=%s symbol=%s timeframe=%s reason=%s",
+                    user_id,
+                    destination.chat_id,
+                    destination.topic_id,
+                    symbol,
+                    timeframe,
+                    result_message,
+                )
+        if any_sent and trade_id is not None:
             await self.database.update_trade_signal(
                 trade_id,
                 {
@@ -3477,12 +3533,14 @@ class SignalService:
                     "updated_at": datetime.now(UTC),
                 },
             )
-        logger.info(
-            "Telegram trade-entry sent user=%s symbol=%s timeframe=%s",
-            user_id,
-            symbol,
-            timeframe,
-        )
+        if any_sent:
+            logger.info(
+                "Telegram trade-entry sent user=%s symbol=%s timeframe=%s destinations=%d",
+                user_id,
+                symbol,
+                timeframe,
+                len(destinations),
+            )
 
     async def catch_up_trade_entry_notification(self, trade: TradeSignal) -> bool:
         if trade.result != "open" or trade.entry_touched_at is None or trade.entry_notification_sent_at is not None:
@@ -3505,6 +3563,8 @@ class SignalService:
                 timeframe=trade.timeframe,
                 signal=signal,
                 preferences=preferences,
+                state=state,
+                market_regime=trade.market_regime,
             )
             if block_reason is not None:
                 if user_id != DEFAULT_USER_ID:
@@ -3883,6 +3943,7 @@ class SignalService:
         user_id: str,
         alert: AlertEntry,
         preferences: AlertPreferences,
+        state: AssetState | None = None,
     ) -> bool:
         if not preferences.enabled:
             return False
@@ -3894,6 +3955,12 @@ class SignalService:
             return False
         if alert.score < preferences.min_score:
             return False
+        if preferences.market_regimes:
+            if state is None:
+                return False
+            regime = self._market_regime(state.flow_metrics, alert.timeframe)
+            if regime not in preferences.market_regimes:
+                return False
         if preferences.debounce_minutes > 0:
             last = self.last_alert_at.get((user_id, alert.symbol, alert.timeframe))
             if last:
@@ -3909,6 +3976,8 @@ class SignalService:
         timeframe: str,
         signal: SignalType,
         preferences: AlertPreferences,
+        state: AssetState | None = None,
+        market_regime: str | None = None,
     ) -> str | None:
         if not preferences.enabled:
             return "notifications_disabled"
@@ -3916,6 +3985,12 @@ class SignalService:
             return "timeframe_filtered"
         if preferences.signal_types and signal not in preferences.signal_types:
             return "signal_type_filtered"
+        if preferences.market_regimes:
+            regime = market_regime
+            if regime is None and state is not None:
+                regime = SignalService._market_regime(state.flow_metrics, timeframe)
+            if regime not in preferences.market_regimes:
+                return "market_regime_filtered"
         if preferences.watchlist and symbol not in preferences.watchlist:
             return "watchlist_filtered"
         return None
@@ -3927,6 +4002,8 @@ class SignalService:
         timeframe: str,
         signal: SignalType,
         preferences: AlertPreferences,
+        state: AssetState | None = None,
+        market_regime: str | None = None,
     ) -> bool:
         return (
             SignalService._trade_entry_delivery_block_reason(
@@ -3934,6 +4011,8 @@ class SignalService:
                 timeframe=timeframe,
                 signal=signal,
                 preferences=preferences,
+                state=state,
+                market_regime=market_regime,
             )
             is None
         )
@@ -3941,10 +4020,10 @@ class SignalService:
     def _trade_entry_telegram_block_reason(self, preferences: AlertPreferences) -> str | None:
         if not preferences.telegram_enabled:
             return "telegram_disabled"
-        if not preferences.telegram_chat_id:
-            return "telegram_chat_missing"
         if not self.telegram_notifier.configured:
             return "telegram_bot_missing"
+        if not self._resolve_telegram_destinations(preferences):
+            return "telegram_no_destinations"
         return None
 
     def _trade_entry_stale_reason(
@@ -4021,12 +4100,14 @@ class SignalService:
             user_id=user_id,
             timeframes=[],
             signal_types=list(DEFAULT_SIGNAL_TYPES),
+            market_regimes=[],
             watchlist=[],
             min_score=0.0,
             debounce_minutes=10,
             enabled=True,
             telegram_enabled=False,
             telegram_chat_id=None,
+            telegram_destinations=[],
             telegram_configured=False,
             updated_at=None,
         )
@@ -4037,14 +4118,56 @@ class SignalService:
             "user_id": preferences.user_id,
             "timeframes": list(preferences.timeframes),
             "signal_types": list(preferences.signal_types),
+            "market_regimes": list(preferences.market_regimes),
             "watchlist": list(preferences.watchlist),
             "min_score": preferences.min_score,
             "debounce_minutes": preferences.debounce_minutes,
             "enabled": preferences.enabled,
             "telegram_enabled": preferences.telegram_enabled,
             "telegram_chat_id": preferences.telegram_chat_id,
+            "telegram_destinations": [destination.model_dump() for destination in preferences.telegram_destinations],
             "updated_at": preferences.updated_at or datetime.now(UTC),
         }
+
+    @staticmethod
+    def _normalize_market_regimes(regimes: list[str] | tuple[str, ...] | None) -> list[str]:
+        allowed = {"Balanced", "Ranging", "Trending"}
+        return [regime for regime in (regimes or []) if regime in allowed]
+
+    @staticmethod
+    def _normalize_telegram_destinations(destinations: list[object] | None) -> list[TelegramDestination]:
+        normalized: list[TelegramDestination] = []
+        seen: set[tuple[str, int | None]] = set()
+        for item in destinations or []:
+            try:
+                destination = item if isinstance(item, TelegramDestination) else TelegramDestination(**item)  # type: ignore[arg-type]
+            except Exception:
+                continue
+            chat_id = str(destination.chat_id).strip()
+            if not chat_id:
+                continue
+            topic_id = destination.topic_id if isinstance(destination.topic_id, int) and destination.topic_id > 0 else None
+            key = (chat_id, topic_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(
+                TelegramDestination(
+                    chat_id=chat_id,
+                    topic_id=topic_id,
+                    label=str(destination.label or "").strip()[:80],
+                )
+            )
+        return normalized[:20]
+
+    @staticmethod
+    def _resolve_telegram_destinations(preferences: AlertPreferences) -> list[TelegramDestination]:
+        destinations = SignalService._normalize_telegram_destinations(preferences.telegram_destinations)
+        if preferences.telegram_chat_id:
+            chat_id = preferences.telegram_chat_id.strip()
+            if chat_id and not any(destination.chat_id == chat_id and destination.topic_id is None for destination in destinations):
+                destinations.insert(0, TelegramDestination(chat_id=chat_id, label="Default"))
+        return destinations
 
     def _build_timeframe_alert(
         self,
@@ -6469,17 +6592,3 @@ class SignalService:
     def _rank_score(score: float, priority_multiplier: float) -> float:
         return min(1.0, max(0.0, score * max(priority_multiplier, 0.1)))
 
-    @staticmethod
-    def _preferences_payload(preferences: AlertPreferences) -> dict[str, object]:
-        return {
-            "user_id": preferences.user_id,
-            "timeframes": list(preferences.timeframes),
-            "signal_types": preferences.signal_types,
-            "watchlist": preferences.watchlist,
-            "min_score": preferences.min_score,
-            "debounce_minutes": preferences.debounce_minutes,
-            "enabled": preferences.enabled,
-            "telegram_enabled": preferences.telegram_enabled,
-            "telegram_chat_id": preferences.telegram_chat_id,
-            "updated_at": preferences.updated_at or datetime.now(UTC),
-        }

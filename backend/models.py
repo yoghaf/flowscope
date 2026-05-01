@@ -118,12 +118,14 @@ class AlertPreference(Base):
     user_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     timeframes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     signal_types: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    market_regimes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     watchlist: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     min_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     debounce_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     telegram_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     telegram_chat_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    telegram_destinations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -344,16 +344,26 @@ export interface AlertsResponse {
   items: AlertEntry[];
 }
 
+export type MarketRegime = "Trending" | "Ranging" | "Balanced";
+
+export interface TelegramDestination {
+  chat_id: string;
+  topic_id?: number | null;
+  label?: string;
+}
+
 export interface AlertPreferences {
   user_id: string;
   timeframes: Timeframe[];
   signal_types: SignalType[];
+  market_regimes: MarketRegime[];
   watchlist: string[];
   min_score: number;
   debounce_minutes: number;
   enabled: boolean;
   telegram_enabled?: boolean;
   telegram_chat_id?: string | null;
+  telegram_destinations?: TelegramDestination[];
   telegram_configured?: boolean;
   updated_at?: string | null;
 }
@@ -361,12 +371,14 @@ export interface AlertPreferences {
 export interface AlertPreferencesUpdate {
   timeframes?: Timeframe[];
   signal_types?: SignalType[];
+  market_regimes?: MarketRegime[];
   watchlist?: string[];
   min_score?: number;
   debounce_minutes?: number;
   enabled?: boolean;
   telegram_enabled?: boolean;
   telegram_chat_id?: string | null;
+  telegram_destinations?: TelegramDestination[];
 }
 
 export interface TelegramTestResponse {

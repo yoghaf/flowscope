@@ -375,16 +375,24 @@ class AlertsResponse(BaseModel):
     items: list[AlertEntry]
 
 
+class TelegramDestination(BaseModel):
+    chat_id: str
+    topic_id: int | None = None
+    label: str = ""
+
+
 class AlertPreferences(BaseModel):
     user_id: str
     timeframes: list[Literal["15m", "1h", "4h", "24h"]] = Field(default_factory=list)
     signal_types: list[SignalType] = Field(default_factory=list)
+    market_regimes: list[MarketRegime] = Field(default_factory=list)
     watchlist: list[str] = Field(default_factory=list)
     min_score: float = 0.0
     debounce_minutes: int = 10
     enabled: bool = True
     telegram_enabled: bool = False
     telegram_chat_id: str | None = None
+    telegram_destinations: list[TelegramDestination] = Field(default_factory=list)
     telegram_configured: bool = False
     updated_at: datetime | None = None
 
@@ -392,12 +400,14 @@ class AlertPreferences(BaseModel):
 class AlertPreferencesUpdate(BaseModel):
     timeframes: list[Literal["15m", "1h", "4h", "24h"]] | None = None
     signal_types: list[SignalType] | None = None
+    market_regimes: list[MarketRegime] | None = None
     watchlist: list[str] | None = None
     min_score: float | None = None
     debounce_minutes: int | None = None
     enabled: bool | None = None
     telegram_enabled: bool | None = None
     telegram_chat_id: str | None = None
+    telegram_destinations: list[TelegramDestination] | None = None
 
 
 class TelegramTestResponse(BaseModel):

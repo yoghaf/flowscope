@@ -68,6 +68,28 @@ def test_trade_entry_notification_reports_block_reason() -> None:
     assert reason == "timeframe_filtered"
 
 
+def test_trade_entry_notification_respects_market_regime_filter() -> None:
+    preferences = make_preferences(market_regimes=["Balanced"])
+
+    allowed = SignalService._should_deliver_trade_entry_notification(
+        symbol="ONTUSDT",
+        timeframe="15m",
+        signal="Breakout Watch",
+        preferences=preferences,
+        market_regime="Balanced",
+    )
+    blocked = SignalService._trade_entry_delivery_block_reason(
+        symbol="ONTUSDT",
+        timeframe="15m",
+        signal="Breakout Watch",
+        preferences=preferences,
+        market_regime="Trending",
+    )
+
+    assert allowed is True
+    assert blocked == "market_regime_filtered"
+
+
 def test_trade_entry_notification_marks_stale_when_price_is_far_from_entry() -> None:
     service = SignalService.__new__(SignalService)
     service.settings = SimpleNamespace(trade_entry_notification_max_progress_r=0.5)

@@ -22,7 +22,13 @@ class TelegramNotifier:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def send_message(self, chat_id: str, text: str) -> tuple[bool, str]:
+    async def send_message(
+        self,
+        chat_id: str,
+        text: str,
+        *,
+        message_thread_id: int | None = None,
+    ) -> tuple[bool, str]:
         if not self.configured:
             return False, "Telegram bot token is not configured on the server."
 
@@ -31,14 +37,17 @@ class TelegramNotifier:
             return False, "Telegram bot token is missing."
 
         try:
+            body: dict[str, object] = {
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            }
+            if message_thread_id is not None:
+                body["message_thread_id"] = message_thread_id
             response = await self._client.post(
                 f"{self.settings.telegram_api_base.rstrip('/')}/bot{token}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": text,
-                    "parse_mode": "HTML",
-                    "disable_web_page_preview": True,
-                },
+                json=body,
             )
             response.raise_for_status()
             payload = response.json()
@@ -47,7 +56,7 @@ class TelegramNotifier:
                 return False, str(description)
             return True, "Telegram message sent."
         except Exception as exc:  # pragma: no cover - network failure path
-            logger.warning("Telegram send failed chat_id=%s error=%s", chat_id, exc)
+            logger.warning("Telegram send failed chat_id=%s topic=%s error=%s", chat_id, message_thread_id, exc)
             return False, str(exc)
 
     @staticmethod

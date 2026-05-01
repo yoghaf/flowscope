@@ -80,6 +80,18 @@ class DatabaseManager:
                 )
                 await connection.execute(
                     text(
+                        "ALTER TABLE alert_preferences "
+                        "ADD COLUMN IF NOT EXISTS market_regimes JSON NOT NULL DEFAULT '[]'::json"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE alert_preferences "
+                        "ADD COLUMN IF NOT EXISTS telegram_destinations JSON NOT NULL DEFAULT '[]'::json"
+                    )
+                )
+                await connection.execute(
+                    text(
                         "ALTER TABLE trade_signals "
                         "ADD COLUMN IF NOT EXISTS entry_touched_at TIMESTAMPTZ"
                     )
@@ -471,6 +483,8 @@ class DatabaseManager:
                 "enabled": excluded.enabled,
                 "telegram_enabled": excluded.telegram_enabled,
                 "telegram_chat_id": excluded.telegram_chat_id,
+                "market_regimes": excluded.market_regimes,
+                "telegram_destinations": excluded.telegram_destinations,
                 "updated_at": excluded.updated_at,
             },
         )

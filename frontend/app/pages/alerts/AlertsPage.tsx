@@ -3,12 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, ChevronDown, Download, Filter, Layers } from "lucide-react";
+import { Bell, Check, ChevronDown, Download, Filter, Layers, Plus, Trash2 } from "lucide-react";
 
 import SignalBadge from "@/app/components/SignalBadge";
 import { api } from "@/lib/api";
 import { formatDate, formatTime, scoreToPercent, shortSymbol } from "@/lib/formatters";
-import type { AlertPreferencesUpdate, SignalType, Timeframe } from "@/lib/types";
+import type { AlertPreferencesUpdate, MarketRegime, SignalType, TelegramDestination, Timeframe } from "@/lib/types";
 import { getUserId } from "@/lib/user";
 
 const TIMEFRAME_OPTIONS: Timeframe[] = ["15m", "1h", "4h", "24h"];
@@ -20,6 +20,11 @@ const FILTER_OPTIONS: Array<{ value: SignalType; label: string }> = [
   { value: "Neutral", label: "Neutral" },
 ];
 const STRATEGY_OPTIONS = ["All", "v2_balanced"] as const;
+const MARKET_REGIME_OPTIONS: Array<{ value: MarketRegime; label: string; hint: string }> = [
+  { value: "Balanced", label: "Balanced", hint: "highest WR" },
+  { value: "Ranging", label: "Ranging", hint: "range-bound" },
+  { value: "Trending", label: "Trending", hint: "momentum" },
+];
 
 export default function AlertsPage() {
   const queryClient = useQueryClient();
@@ -35,8 +40,13 @@ export default function AlertsPage() {
   const [minScore, setMinScore] = useState(0);
   const [debounceMinutes, setDebounceMinutes] = useState(10);
   const [enabledTypes, setEnabledTypes] = useState<SignalType[]>([]);
+  const [enabledRegimes, setEnabledRegimes] = useState<MarketRegime[]>([]);
   const [telegramEnabled, setTelegramEnabled] = useState(false);
   const [telegramChatId, setTelegramChatId] = useState("");
+  const [telegramDestinations, setTelegramDestinations] = useState<TelegramDestination[]>([]);
+  const [newDestChatId, setNewDestChatId] = useState("");
+  const [newDestTopicId, setNewDestTopicId] = useState("");
+  const [newDestLabel, setNewDestLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [telegramMessage, setTelegramMessage] = useState<string | null>(null);
@@ -68,9 +78,11 @@ export default function AlertsPage() {
     setMinScore(Math.round((preferences.min_score ?? 0) * 100));
     setDebounceMinutes(preferences.debounce_minutes ?? 10);
     setEnabledTypes(preferences.signal_types ?? []);
+    setEnabledRegimes(preferences.market_regimes ?? []);
     setWatchlistInput(preferences.watchlist.map(shortSymbol).join(", "));
     setTelegramEnabled(preferences.telegram_enabled ?? false);
     setTelegramChatId(preferences.telegram_chat_id ?? "");
+    setTelegramDestinations(preferences.telegram_destinations ?? []);
   }, [preferences]);
 
   useEffect(() => {
@@ -148,6 +160,15 @@ export default function AlertsPage() {
     });
   };
 
+  const toggleRegime = (regime: MarketRegime) => {
+    setEnabledRegimes((current) => {
+      if (current.includes(regime)) {
+        return current.filter((item) => item !== regime);
+      }
+      return [...current, regime];
+    });
+  };
+
   const toggleSignalFilter = (signal: SignalType) => {
     setSignalFilters((current) => {
       if (current.includes(signal)) {
@@ -170,11 +191,13 @@ export default function AlertsPage() {
       enabled: notificationsEnabled,
       timeframes: timeframeFilters,
       signal_types: enabledTypes,
+      market_regimes: enabledRegimes,
       watchlist,
       min_score: Math.max(0, Math.min(minScore, 100)) / 100,
       debounce_minutes: Math.max(0, Math.min(debounceMinutes, 1440)),
       telegram_enabled: telegramEnabled,
       telegram_chat_id: telegramChatId.trim() || null,
+      telegram_destinations: telegramDestinations,
     };
 
     try {
@@ -223,6 +246,32 @@ export default function AlertsPage() {
       setTestingTelegram(false);
       setTimeout(() => setTelegramMessage(null), 3000);
     }
+  };
+
+  const handleAddTelegramDestination = () => {
+    const chatId = newDestChatId.trim();
+    if (!chatId) {
+      return;
+    }
+    const parsedTopic = newDestTopicId.trim() ? Number.parseInt(newDestTopicId.trim(), 10) : null;
+    const topicId = parsedTopic !== null && Number.isFinite(parsedTopic) && parsedTopic > 0 ? parsedTopic : null;
+    const label = newDestLabel.trim() || chatId;
+    const exists = telegramDestinations.some(
+      (destination) => destination.chat_id === chatId && (destination.topic_id ?? null) === topicId,
+    );
+    if (!exists) {
+      setTelegramDestinations((current) => [
+        ...current,
+        {
+          chat_id: chatId,
+          topic_id: topicId,
+          label,
+        },
+      ]);
+    }
+    setNewDestChatId("");
+    setNewDestTopicId("");
+    setNewDestLabel("");
   };
 
   return (
@@ -489,24 +538,115 @@ export default function AlertsPage() {
           </div>
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-2">
-            {FILTER_OPTIONS.map((option) => {
-              const active = enabledTypes.includes(option.value);
-              return (
-                <button
-                  key={option.value}
-                  onClick={() => toggleSignalType(option.value)}
-                  className={`rounded-full border px-3 py-1 text-xs font-semibold transition-all ${
-                    active
-                      ? "border-primary/40 bg-primary/10 text-primary"
-                      : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground"
-                  }`}
+        <div className="mt-6 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Telegram Destinations</label>
+            <span className="text-xs text-muted-foreground">{telegramDestinations.length} custom target{telegramDestinations.length === 1 ? "" : "s"}</span>
+          </div>
+
+          {telegramDestinations.length > 0 ? (
+            <div className="grid gap-2 lg:grid-cols-2">
+              {telegramDestinations.map((destination, index) => (
+                <div
+                  key={`${destination.chat_id}-${destination.topic_id ?? "main"}-${index}`}
+                  className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3"
                 >
-                  {option.label}
-                </button>
-              );
-            })}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-foreground">{destination.label || "Telegram Target"}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <code className="truncate">{destination.chat_id}</code>
+                      {destination.topic_id ? <span className="text-cyan-300">Topic #{destination.topic_id}</span> : null}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTelegramDestinations((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-300 transition hover:bg-rose-500/20"
+                    aria-label="Remove Telegram destination"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="grid gap-3 md:grid-cols-[1.3fr_0.7fr_1fr_auto]">
+            <input
+              value={newDestChatId}
+              onChange={(event) => setNewDestChatId(event.target.value)}
+              placeholder="Group/User chat ID, e.g. -100..."
+              className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-foreground transition-all focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            <input
+              value={newDestTopicId}
+              onChange={(event) => setNewDestTopicId(event.target.value)}
+              placeholder="Topic ID"
+              inputMode="numeric"
+              className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-foreground transition-all focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            <input
+              value={newDestLabel}
+              onChange={(event) => setNewDestLabel(event.target.value)}
+              placeholder="Label"
+              className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-foreground transition-all focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            <button
+              type="button"
+              onClick={handleAddTelegramDestination}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-400/20"
+            >
+              <Plus className="h-4 w-4" />
+              Add
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">Untuk grup/topik forum, tambahkan bot ke grup lalu isi chat ID grup dan topic ID tujuan.</p>
+        </div>
+
+        <div className="mt-6 flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Signals</span>
+              {FILTER_OPTIONS.map((option) => {
+                const active = enabledTypes.includes(option.value);
+                return (
+                  <button
+                    key={option.value}
+                    onClick={() => toggleSignalType(option.value)}
+                    className={`rounded-full border px-3 py-1 text-xs font-semibold transition-all ${
+                      active
+                        ? "border-primary/40 bg-primary/10 text-primary"
+                        : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Regime</span>
+              {MARKET_REGIME_OPTIONS.map((option) => {
+                const active = enabledRegimes.includes(option.value);
+                return (
+                  <button
+                    key={option.value}
+                    onClick={() => toggleRegime(option.value)}
+                    className={`rounded-full border px-3 py-1 text-xs font-semibold transition-all ${
+                      active
+                        ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+                        : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground"
+                    }`}
+                    title={option.hint}
+                  >
+                    {option.label}
+                    {option.value === "Balanced" ? <span className="ml-1 text-[10px] opacity-80">WR+</span> : null}
+                  </button>
+                );
+              })}
+              {enabledRegimes.length === 0 ? <span className="text-xs text-muted-foreground">All regimes</span> : null}
+            </div>
           </div>
 
           <div className="flex items-center gap-3">
