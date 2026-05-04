@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import time
 from collections import Counter, defaultdict
 from collections.abc import Iterable
@@ -74,6 +75,88 @@ class ReplayDiagnostics:
 @dataclass(slots=True)
 class ReplaySoftGateConfig:
     enabled: bool = False
+
+
+@dataclass(slots=True)
+class ReplayBiasOverrideConfig:
+    reverse_regimes: frozenset[str] = frozenset()
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.reverse_regimes)
+
+
+def _normalize_regime_name(value: object) -> str | None:
+    text = str(value or "").strip().lower()
+    mapping = {
+        "balanced": "Balanced",
+        "ranging": "Ranging",
+        "trending": "Trending",
+    }
+    return mapping.get(text)
+
+
+def _parse_reverse_regimes(raw_value: str) -> frozenset[str]:
+    if not raw_value or raw_value.strip().lower() in {"", "none"}:
+        return frozenset()
+
+    regimes: set[str] = set()
+    invalid: set[str] = set()
+    for chunk in raw_value.split(","):
+        normalized = _normalize_regime_name(chunk)
+        if normalized is None:
+            stripped = chunk.strip()
+            if stripped:
+                invalid.add(stripped)
+            continue
+        regimes.add(normalized)
+
+    if invalid:
+        allowed = ", ".join(["Balanced", "Trending", "Ranging"])
+        invalid_list = ", ".join(sorted(invalid))
+        raise ValueError(f"Unsupported reverse regime(s): {invalid_list}. Allowed: {allowed}.")
+    return frozenset(regimes)
+
+
+def _reverse_bias(bias: str) -> str:
+    if bias == "Bullish":
+        return "Bearish"
+    if bias == "Bearish":
+        return "Bullish"
+    return bias
+
+
+def _install_replay_bias_override(
+    service: SignalService,
+    *,
+    config: ReplayBiasOverrideConfig,
+) -> None:
+    if not config.enabled:
+        return
+
+    original_build_action = service.execution_engine.build_action
+
+    def build_action_with_override(*args, **kwargs):
+        action = original_build_action(*args, **kwargs)
+        if action is None or action.bias not in {"Bullish", "Bearish"}:
+            return action
+
+        metrics = kwargs.get("metrics")
+        timeframe = kwargs.get("timeframe")
+        if metrics is None or not isinstance(timeframe, str):
+            return action
+
+        regime = _normalize_regime_name(service._market_regime(metrics, timeframe))
+        if regime not in config.reverse_regimes:
+            return action
+        return service._action_with_bias(action, _reverse_bias(action.bias))
+
+    service.execution_engine.build_action = build_action_with_override
+
+
+def _safe_console_text(value: object) -> str:
+    return str(value).encode("ascii", "backslashreplace").decode("ascii")
+
 
 def _context_soft_gate_reasons(
     payload: dict[str, object],
@@ -348,6 +431,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Replay-only soft gate using context-reason combos; does not affect live engine.",
     )
+    parser.add_argument(
+        "--reverse-regimes",
+        default="",
+        help="Comma-separated market regimes whose Bullish/Bearish actions should be flipped during replay only.",
+    )
     return parser.parse_args()
 
 
@@ -401,7 +489,8 @@ async def load_bucket_history(
                         grouped[symbol][timeframe].append(TimeframeBucket.from_record(dict(row)))
             
             # Print inline progress since this can take a few seconds
-            sys.stdout.write(f"\r  Loaded {symbol} ({len(grouped)}/{len(target_symbols)})")
+            display_symbol = _safe_console_text(symbol)
+            sys.stdout.write(f"\r  Loaded {display_symbol} ({len(grouped)}/{len(target_symbols)})")
             sys.stdout.flush()
 
     # Clear inline progress
@@ -417,6 +506,7 @@ async def replay_symbol(
     symbol: str,
     buckets: dict[str, list[TimeframeBucket]],
     context_soft_gate_enabled: bool = False,
+    bias_override: ReplayBiasOverrideConfig | None = None,
 ) -> tuple[list[TradeSignal], ReplayDiagnostics]:
     diagnostics = ReplayDiagnostics(
         stage_counts=Counter(),
@@ -449,6 +539,10 @@ async def replay_symbol(
     )
     service = SignalService(settings, replay_db, RealtimeHub())
     service.symbols = [symbol]
+    _install_replay_bias_override(
+        service,
+        config=bias_override or ReplayBiasOverrideConfig(),
+    )
     seen_filter_events: set[tuple[str, datetime, str, bool, tuple[str, ...]]] = set()
     seen_15m_candidate_events: set[tuple[datetime, str, str, str, str, tuple[str, ...]]] = set()
     seen_strategy_candidate_events: set[tuple[str, datetime, str, str, str, str, tuple[str, ...]]] = set()
@@ -864,6 +958,7 @@ async def _replay_one(
     progress: dict[str, int],
     start_time: float,
     context_soft_gate_enabled: bool,
+    bias_override: ReplayBiasOverrideConfig,
 ) -> tuple[str, list[TradeSignal], ReplayDiagnostics]:
     """Replay a single symbol under the concurrency semaphore."""
     async with semaphore:
@@ -872,13 +967,15 @@ async def _replay_one(
             symbol=symbol,
             buckets=buckets,
             context_soft_gate_enabled=context_soft_gate_enabled,
+            bias_override=bias_override,
         )
         progress["done"] += 1
         elapsed = time.time() - start_time
         total_buckets = sum(len(v) for v in buckets.values())
+        display_symbol = _safe_console_text(symbol)
         print(
             f"  [{progress['done']:3d}/{progress['total']:3d}] "
-            f"{symbol:16s}  {len(trades):2d} trade(s)  "
+            f"{display_symbol:16s}  {len(trades):2d} trade(s)  "
             f"{total_buckets:4d} buckets  "
             f"({elapsed:.0f}s elapsed)"
         )
@@ -887,9 +984,19 @@ async def _replay_one(
 
 async def main() -> int:
     args = parse_args()
+    logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.engine.Engine").setLevel(logging.WARNING)
     settings = get_settings()
     source_db = DatabaseManager(settings)
     source_db.enabled = True
+    try:
+        bias_override = ReplayBiasOverrideConfig(
+            reverse_regimes=_parse_reverse_regimes(args.reverse_regimes),
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 2
 
     symbol_filter = None
     if args.symbols.strip().upper() != "ALL":
@@ -911,6 +1018,9 @@ async def main() -> int:
     total_buckets = sum(len(b) for sym in grouped.values() for b in sym.values())
     print(f"Loaded {len(grouped)} symbols, {total_buckets:,} buckets in {time.time() - load_start:.1f}s")
     print(f"Replaying with {args.workers} concurrent workers...")
+    if bias_override.enabled:
+        regimes_label = ", ".join(sorted(bias_override.reverse_regimes))
+        print(f"Replay bias override active for regimes: {regimes_label}")
     print()
 
     # ── Concurrent symbol replay ──
@@ -927,6 +1037,7 @@ async def main() -> int:
             progress,
             replay_start,
             bool(args.context_soft_gate),
+            bias_override,
         )
         for symbol in sorted(grouped)
     ]
@@ -1066,6 +1177,7 @@ async def main() -> int:
         "workers": args.workers,
         "days": args.days,
         "context_soft_gate_enabled": bool(args.context_soft_gate),
+        "reverse_regimes": sorted(bias_override.reverse_regimes),
         "summary": {
             "trade_count": summary.trade_count,
             "open_count": summary.open_count,
@@ -1108,6 +1220,8 @@ async def main() -> int:
     print(f"  Symbols:   {len(grouped)}")
     if args.days > 0:
         print(f"  Window:    Last {args.days} days")
+    if bias_override.enabled:
+        print(f"  Reverse:   {', '.join(sorted(bias_override.reverse_regimes))}")
     print(f"  Trades:    {summary.trade_count}")
     print(f"  Wins:      {summary.win_count}")
     print(f"  Losses:    {summary.loss_count}")

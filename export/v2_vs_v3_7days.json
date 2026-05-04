@@ -1,0 +1,22 @@
+{
+  "v2_balanced": {
+    "total_trades": 73,
+    "winrate": "35.6%",
+    "winrate_trending": "33.3%",
+    "winrate_ranging": "0.0%",
+    "winrate_balanced": "46.2%",
+    "profit_factor": "0.69",
+    "net_profit_pct": "-33.7%",
+    "max_drawdown_pct": "50.2%"
+  },
+  "v3_adaptive": {
+    "total_trades": 68,
+    "winrate": "39.7%",
+    "winrate_trending": "39.5%",
+    "winrate_ranging": "0.0%",
+    "winrate_balanced": "48.0%",
+    "profit_factor": "0.84",
+    "net_profit_pct": "-14.6%",
+    "max_drawdown_pct": "38.1%"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "overall": {
+    "winrate": 0.4375,
+    "total_trades": 64,
+    "avg_pnl": -1.0947355588769976,
+    "max_drawdown": 83.56135452101384,
+    "date_range": {
+      "start": "2026-04-22T05:35:35.115611+00:00",
+      "end": "2026-04-30T03:55:13.790198+00:00"
+    }
+  },
+  "by_regime": {
+    "Balanced": {
+      "winrate": 0.6785714285714286,
+      "count": 28
+    },
+    "Trending": {
+      "winrate": 0.21428571428571427,
+      "count": 28
+    },
+    "Ranging": {
+      "winrate": 0.375,
+      "count": 8
+    }
+  },
+  "by_signal_type": {
+    "Continuation": {
+      "winrate": 0.4375,
+      "count": 64
+    }
+  },
+  "by_confidence": {
+    "High (>=0.85)": {
+      "winrate": 0.3684210526315789,
+      "count": 38
+    },
+    "Medium (0.75-0.85)": {
+      "winrate": 0.5384615384615384,
+      "count": 26
+    },
+    "Low (<0.75)": {
+      "winrate": 0,
+      "count": 0
+    }
+  }
+}
