@@ -5564,6 +5564,7 @@ class SignalService:
         state_name: str | None = None,
     ) -> list[str]:
         reasons: list[str] = []
+        is_v3 = getattr(self.settings, "strategy_version", "") == "v3_adaptive"
         regime = self._market_regime(flow_metrics, timeframe)
         volatility = self._volatility_regime(flow_metrics, timeframe)
         volume_z = getattr(flow_metrics, f"volume_z_{timeframe}", None)
@@ -5608,7 +5609,7 @@ class SignalService:
         ):
             reasons.append("continuation_choppy_regime")
         if action.bias == "Bearish":
-            if not self.settings.entry_filter_allow_shorts:
+            if not is_v3 and not self.settings.entry_filter_allow_shorts:
                 # Dynamic context: only allow logic-defying short blocks if BTC is not Bearish
                 if self._global_btc_trend() != "Bearish":
                     reasons.append("short_direction_disabled")
@@ -5618,12 +5619,14 @@ class SignalService:
         # Removed young coin checks for Intraday mode
         # Removed 24H ATR filter to catch 15m localized bursts
         # Removed 4H Volume drop filter because localized 15m volume matters more in intraday
-        if not is_trap_setup and flow_metrics.volume_z_15m is not None and flow_metrics.volume_z_15m > self.settings.entry_filter_max_volume_z_15m:
-            reasons.append("exhaustion_volume_climax")
-        if not is_trap_setup and flow_metrics.oi_delta_z_15m is not None and flow_metrics.oi_delta_z_15m > self.settings.entry_filter_max_oi_delta_z_15m:
-            reasons.append("exhaustion_oi_climax")
-        if not is_trap_setup and flow_metrics.liq_pressure_1h > self.settings.entry_filter_max_liq_pressure_1h:
-            reasons.append("exhaustion_liq_climax")
+        is_v3 = getattr(self.settings, "strategy_version", "") == "v3_adaptive"
+        if not is_v3:
+            if not is_trap_setup and flow_metrics.volume_z_15m is not None and flow_metrics.volume_z_15m > self.settings.entry_filter_max_volume_z_15m:
+                reasons.append("exhaustion_volume_climax")
+            if not is_trap_setup and flow_metrics.oi_delta_z_15m is not None and flow_metrics.oi_delta_z_15m > self.settings.entry_filter_max_oi_delta_z_15m:
+                reasons.append("exhaustion_oi_climax")
+            if not is_trap_setup and flow_metrics.liq_pressure_1h > self.settings.entry_filter_max_liq_pressure_1h:
+                reasons.append("exhaustion_liq_climax")
 
         # --- OVERCROWDED POSITIONING GUARD ---
         # Block Breakout/Continuation entries when crowd is already max-positioned.
@@ -5634,7 +5637,9 @@ class SignalService:
             if action.bias == "Bullish" and ls_level_15m > 2.0:
                 reasons.append("overcrowded_long_positioning")
             elif action.bias == "Bearish" and ls_level_15m < 0.5:
-                reasons.append("overcrowded_short_positioning")
+                is_v3 = getattr(self.settings, "strategy_version", "") == "v3_adaptive"
+                if not is_v3:
+                    reasons.append("overcrowded_short_positioning")
             if action.bias == "Bullish" and funding_lvl_15m >= 0.0004:
                 reasons.append("funding_extreme_long_premium")
             elif action.bias == "Bearish" and funding_lvl_15m <= -0.0004:
@@ -5680,7 +5685,14 @@ class SignalService:
         bucket: TimeframeBucket | None = None,
         execution: ExecutionPlan | None = None,
     ) -> list[str]:
-        if action.setup_type != "Continuation" or action.bias == "Neutral":
+        # Deteksi V3
+        is_v3 = getattr(self.settings, "strategy_version", "") == "v3_adaptive"
+
+        allowed_setups = {"Continuation"}
+        if is_v3:
+            allowed_setups.add("Trap")
+
+        if action.setup_type not in allowed_setups or action.bias == "Neutral":
             return []
 
         direction = 1 if action.bias == "Bullish" else -1
@@ -5713,10 +5725,14 @@ class SignalService:
         is_long = action.bias == "Bullish"
         htf_trend = market_interpretation.higher_timeframe_trend
         clarity = market_interpretation.clarity_confidence
-        if is_long and htf_trend == "Bearish":
-            reasons.append("continuation_higher_timeframe_not_aligned")
-        elif not is_long and htf_trend == "Bullish":
-            reasons.append("continuation_higher_timeframe_not_aligned")
+        is_trap = action.setup_type == "Trap"
+        skip_trend_filter = is_v3 and is_trap
+
+        if not skip_trend_filter:
+            if is_long and htf_trend == "Bearish":
+                reasons.append("continuation_higher_timeframe_not_aligned")
+            elif not is_long and htf_trend == "Bullish":
+                reasons.append("continuation_higher_timeframe_not_aligned")
             
         if not is_15m_pullback and not taker_available:
             reasons.append("continuation_taker_unavailable")

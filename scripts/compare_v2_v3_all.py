@@ -135,15 +135,29 @@ async def run_comparison():
         async def process_symbol(symbol):
             nonlocal processed_count
             async with semaphore:
-                trades, _ = await replay_symbol(
+                trades, diag = await replay_symbol(
                     settings=settings_obj,
                     symbol=symbol,
                     buckets=buckets_by_symbol[symbol]
                 )
                 
+                # Debug logging khusus untuk v3_ema
+                if version_name == "v3_ema":
+                    for samples in diag.strategy_bias_samples.values():
+                        for s in samples:
+                            if s.get("bias") == "Bearish":
+                                rejected_reasons = s.get("reasons", [])
+                                if rejected_reasons:
+                                    print(f"[KANDIDAT SHORT] {symbol} | {s.get('market_state')} | Setup: {s.get('entry_type')} | Status: {s.get('signal_status')} | Reasons ditolak: {rejected_reasons}", flush=True)
+
                 # Apply Post-Replay Filtering (except for V2)
                 if version_name != "v2_balanced":
-                    trades = filter_trades(trades, use_ema=use_ema)
+                    filtered_trades = filter_trades(trades, use_ema=use_ema)
+                    if version_name == "v3_ema":
+                        for t in filtered_trades:
+                            if t.bias == "Bearish":
+                                print(f"[SHORT MASUK] {t.symbol} | {t.timeframe} | Setup: {t.setup_type}", flush=True)
+                    trades = filtered_trades
                 
                 processed_count += 1
                 if processed_count % 20 == 0 or processed_count == total_symbols:
@@ -203,11 +217,12 @@ async def run_comparison():
     csv_path = REPO_ROOT / "export" / "v2_v3_all_trades_detail.csv"
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
-        writer.writerow(["Version", "Symbol", "Timeframe", "Setup", "Regime", "Confidence", "Bias", "PnL_Pct", "Result"])
+        writer.writerow(["Version", "Symbol", "Timeframe", "Setup", "Regime", "Confidence", "Bias", "Position", "PnL_Pct", "Result"])
         for v in versions:
             for t in results[v]["trades"]:
                 if t.result in ["win", "loss", "open"]:
-                    writer.writerow([v, t.symbol, t.timeframe, t.setup_type, t.market_regime, round(getattr(t, 'confidence', 0.0) or 0.0, 4), t.bias, round(t.pnl_pct, 4) if t.pnl_pct else 0.0, t.result])
+                    pos = "Long" if t.bias == "Bullish" else "Short" if t.bias == "Bearish" else "Unknown"
+                    writer.writerow([v, t.symbol, t.timeframe, t.setup_type, t.market_regime, round(getattr(t, 'confidence', 0.0) or 0.0, 4), t.bias, pos, round(t.pnl_pct, 4) if t.pnl_pct else 0.0, t.result])
     print(f"\n[DONE] Detailed CSV saved to: {csv_path}")
 
 if __name__ == "__main__":
