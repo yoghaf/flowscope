@@ -5,6 +5,7 @@ export type SignalType =
   | "Breakout Watch"
   | "Short Squeeze"
   | "Long Squeeze"
+  | "Continuation"
   | "Neutral";
 export type DataStatus = "VALID" | "NO_DATA" | "INSUFFICIENT_HISTORY";
 export type SignalStatus = "VALID_SIGNAL" | "NO_SIGNAL" | "NO_DATA";
@@ -263,7 +264,13 @@ export interface AssetSnapshot {
   action_status?: "Building" | "Ready" | "Triggered" | null;
   action_confidence_label?: "High" | "Medium" | "Low" | null;
   action_opportunity_score?: number | null;
-  setup_type?: "Squeeze" | "Trap" | "Accumulation" | "Breakout" | "Continuation" | null;
+  setup_type?:
+    | "Squeeze"
+    | "Trap"
+    | "Accumulation"
+    | "Breakout"
+    | "Continuation"
+    | null;
   tf_conflict?: boolean;
   breakdown: ScoreBreakdown;
   exchange_count: number;
@@ -273,6 +280,128 @@ export interface AssetSnapshot {
   phase_score?: number;
   phase_confidence?: number;
   market_interpretation?: MarketInterpretationSnapshot | null;
+}
+
+// Demo Trading Types
+export type SetupType =
+  | "Continuation"
+  | "Trap"
+  | "Squeeze"
+  | "Breakout"
+  | "Accumulation";
+export type TradeSide = "Long" | "Short";
+export type DemoStatusType = "running" | "stopped" | "error";
+
+export interface DemoStatus {
+  is_running: boolean;
+  status: DemoStatusType;
+  balance: number;
+  balance_change: number;
+  start_time: string | null;
+  last_update: string;
+  message: string;
+}
+
+export interface DemoPosition {
+  id: number | string;
+  symbol: string;
+  side: TradeSide;
+  size: number;
+  entry_price: number;
+  current_price: number;
+  unrealized_pnl: number;
+  setup_type: SetupType;
+  entry_time: string;
+  age_hours: number;
+  // Additional Binance position fields
+  mark_price?: number;
+  break_even_price?: number;
+  liquidation_price?: number;
+  leverage?: number;
+  margin_type?: "CROSS" | "ISOLATED";
+  isolated_margin?: number;
+  notional?: number;
+  position_amt?: number;
+  // Enhanced display fields
+  roe?: number;
+  margin_ratio?: number;
+  maintenance_margin?: number;
+}
+
+export interface DemoTrade {
+  id: number;
+  symbol: string;
+  side: TradeSide;
+  size: number;
+  entry_price: number;
+  exit_price: number | null;
+  pnl: number | null;
+  r_multiple: number | null;
+  setup_type: SetupType;
+  entry_time: string;
+  exit_time: string | null;
+  exit_reason: string | null;
+}
+
+export interface SignalEvent {
+  id?: number;
+  symbol: string;
+  side: TradeSide;
+  setup_type: SetupType;
+  message: string;
+  timestamp: string;
+  status: "open" | "closed";
+  entry_price?: number;
+  size?: number;
+  pnl?: number | null;
+  clarity?: number | null;
+}
+
+// Binance Open Order interface
+export interface BinanceOpenOrder {
+  orderId: number;
+  symbol: string;
+  side: "BUY" | "SELL";
+  type: "LIMIT" | "MARKET" | "STOP" | "TAKE_PROFIT" | "STOP_MARKET" | "TAKE_PROFIT_MARKET";
+  status: "NEW" | "PARTIALLY_FILLED" | "FILLED" | "CANCELED" | "EXPIRED" | "REJECTED";
+  price: number;
+  qty: number;
+  executedQty: number;
+  timeInForce?: string;
+  createTime?: number;
+  updateTime?: number;
+}
+
+// Binance Order History interface
+export interface BinanceOrderHistory {
+  orderId: number;
+  symbol: string;
+  side: "BUY" | "SELL";
+  type: string;
+  status: string;
+  price: number;
+  qty: number;
+  executedQty: number;
+  avgPrice?: number;
+  timeInForce?: string;
+  createTime?: number;
+  updateTime?: number;
+}
+
+// Binance User Trade interface (filled orders with PnL)
+export interface BinanceUserTrade {
+  id: number;
+  orderId: number;
+  symbol: string;
+  side: "BUY" | "SELL";
+  price: number;
+  qty: number;
+  realizedPnl: number;
+  commission: number;
+  commissionAsset: string;
+  time: number;
+  buyer: boolean;
+  maker: boolean;
 }
 
 export interface DashboardMetrics {

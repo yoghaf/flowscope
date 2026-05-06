@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -72,13 +72,6 @@ export default function SignalDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Live Price State
-  const [livePrice, setLivePrice] = useState<number | null>(null);
-  const [wsStatus, setWsStatus] = useState<
-    "connecting" | "connected" | "disconnected"
-  >("disconnected");
-  const wsRef = useRef<WebSocket | null>(null);
-
   const loadTrade = useCallback(
     async (background = false) => {
       try {
@@ -111,51 +104,14 @@ export default function SignalDetailPage() {
     if (!id || trade?.result !== "open") return;
 
     const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
       void loadTrade(true);
-    }, 60000);
+    }, 15000);
 
     return () => clearInterval(interval);
   }, [id, loadTrade, trade?.result]);
-
-  // Binance WebSocket for Live Price
-  useEffect(() => {
-    if (!trade || trade.result !== "open") return;
-
-    const symbol =
-      typeof trade.symbol === "string" ? trade.symbol.toLowerCase() : "";
-    if (!symbol) return;
-
-    const wsUrl = `wss://fstream.binance.com/ws/${symbol}@ticker`;
-
-    const connectWs = () => {
-      setWsStatus("connecting");
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => setWsStatus("connected");
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.c) {
-            setLivePrice(parseFloat(data.c));
-          }
-        } catch (e) {}
-      };
-      ws.onclose = () => {
-        setWsStatus("disconnected");
-        // Reconnect after 3s
-        setTimeout(connectWs, 3000);
-      };
-    };
-
-    connectWs();
-
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-    };
-  }, [trade?.result, trade?.symbol]);
 
   if (loading) {
     return (
@@ -220,6 +176,20 @@ export default function SignalDetailPage() {
     C: "bg-slate-500/15 text-slate-400",
   };
 
+  const livePrice = asNumber(trade.monitor_price);
+  const monitorSource =
+    typeof trade.monitor_source === "string" ? trade.monitor_source : "unavailable";
+  const monitorUpdatedAt =
+    typeof trade.monitor_price_at === "string" ? trade.monitor_price_at : null;
+  const monitorPnlPct = asNumber(trade.monitor_pnl_pct);
+  const monitorR = asNumber(trade.monitor_r);
+  const monitorStatus =
+    livePrice !== null
+      ? monitorSource === "latest_bucket"
+        ? "Backend delayed"
+        : "Backend live"
+      : "Waiting for price";
+
   // Calculate live distance
   const currentPrice =
     isOpen && livePrice !== null
@@ -236,12 +206,17 @@ export default function SignalDetailPage() {
   };
 
   const livePnl =
-    currentPrice !== null && entryPrice !== null
+    monitorPnlPct !== null
+      ? monitorPnlPct
+      : currentPrice !== null && entryPrice !== null
       ? ((currentPrice - entryPrice) / entryPrice) * 100 * (isBullish ? 1 : -1)
       : 0;
 
-  const historyLogs = Array.isArray(trade?.history_logs)
-    ? trade.history_logs
+  const timelineSource = Array.isArray(trade?.timeline_logs)
+    ? trade.timeline_logs
+    : trade?.history_logs;
+  const historyLogs = Array.isArray(timelineSource)
+    ? timelineSource
         .filter(
           (log: unknown): log is Record<string, unknown> =>
             Boolean(log) && typeof log === "object",
@@ -337,26 +312,30 @@ export default function SignalDetailPage() {
               </h2>
               <div className="flex items-center gap-1.5 ml-2">
                 <div
-                  className={`h-2 w-2 rounded-full ${wsStatus === "connected" ? "bg-emerald-500 animate-pulse" : "bg-slate-500"}`}
+                  className={`h-2 w-2 rounded-full ${livePrice !== null ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`}
                 />
                 <span className="text-xs text-muted-foreground">
-                  {wsStatus === "connected" ? "Binance Live" : wsStatus}
+                  {monitorStatus}
                 </span>
               </div>
             </div>
-            {livePrice !== null && (
-              <div className="text-right">
-                <p className="text-2xl font-bold tabular-nums">
-                  ${formatPrice(livePrice)}
-                </p>
-                <p
-                  className={`text-sm font-semibold ${livePnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}
-                >
-                  {livePnl >= 0 ? "+" : ""}
-                  {livePnl.toFixed(2)}% from entry
-                </p>
-              </div>
-            )}
+            <div className="text-right">
+              <p className="text-2xl font-bold tabular-nums">
+                {livePrice !== null ? `$${formatPrice(livePrice)}` : "Waiting"}
+              </p>
+              <p
+                className={`text-sm font-semibold ${livePnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}
+              >
+                {livePrice !== null ? `${livePnl >= 0 ? "+" : ""}${livePnl.toFixed(2)}% from entry` : "No backend tick yet"}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-4">
+            <LiveMetric label="Source" value={monitorSource.replace("_", " ")} />
+            <LiveMetric label="Updated" value={monitorUpdatedAt ? timeAgo(monitorUpdatedAt) : "--"} />
+            <LiveMetric label="Current R" value={monitorR === null ? "--" : `${monitorR >= 0 ? "+" : ""}${monitorR.toFixed(2)}R`} tone={monitorR !== null && monitorR < 0 ? "rose" : "emerald"} />
+            <LiveMetric label="Entry" value={formatPrice(entryPrice)} />
           </div>
 
           {livePrice !== null &&
@@ -748,8 +727,7 @@ export default function SignalDetailPage() {
       </div>
 
       {/* Trade Timeline (History Logs) */}
-      {historyLogs.length > 0 && (
-        <div className="mt-8 rounded-2xl border border-white/10 bg-card p-6 shadow-sm">
+      <div className="mt-8 rounded-2xl border border-white/10 bg-card p-6 shadow-sm">
           <div className="mb-6 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Clock className="h-5 w-5 text-blue-400" />
@@ -760,6 +738,11 @@ export default function SignalDetailPage() {
             </span>
           </div>
 
+          {historyLogs.length === 0 ? (
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-8 text-center text-sm text-muted-foreground">
+              No monitor samples yet. The backend will add telemetry as the evaluator scans this trade.
+            </div>
+          ) : (
           <div className="relative space-y-0 pl-4">
             {/* Vertical timeline line */}
             <div className="absolute bottom-0 left-[23px] top-4 w-px bg-white/10" />
@@ -773,6 +756,7 @@ export default function SignalDetailPage() {
               const logTakerRatio = asNumber(log.taker_ratio);
               const logLongShortRatio = asNumber(log.long_short_ratio);
               const logFunding = asNumber(log.funding);
+              const logR = asNumber(log.r_multiple);
               const pnlColor =
                 logPnl > 0
                   ? "text-emerald-400"
@@ -844,6 +828,19 @@ export default function SignalDetailPage() {
                           {logPnl}%
                         </p>
                       </div>
+                      {logR !== null && (
+                        <div>
+                          <p className="text-[10px] uppercase text-muted-foreground">
+                            R Multiple
+                          </p>
+                          <p
+                            className={`font-mono text-sm font-bold ${logR > 0 ? "text-emerald-400" : logR < 0 ? "text-rose-400" : "text-foreground"}`}
+                          >
+                            {logR > 0 ? "+" : ""}
+                            {logR.toFixed(2)}R
+                          </p>
+                        </div>
+                      )}
                       {logVolume !== null && (
                         <div>
                           <p className="text-[10px] uppercase text-muted-foreground">
@@ -906,8 +903,8 @@ export default function SignalDetailPage() {
               );
             })}
           </div>
+          )}
         </div>
-      )}
     </div>
   );
 }
@@ -917,6 +914,34 @@ function Badge({ label, value }: { label: string; value: string }) {
     <div className="flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1 text-xs">
       <span className="text-muted-foreground">{label}:</span>
       <span className="font-semibold text-foreground">{value}</span>
+    </div>
+  );
+}
+
+function LiveMetric({
+  label,
+  value,
+  tone = "slate",
+}: {
+  label: string;
+  value: string;
+  tone?: "slate" | "emerald" | "rose";
+}) {
+  const toneClass =
+    tone === "emerald"
+      ? "text-emerald-300"
+      : tone === "rose"
+        ? "text-rose-300"
+        : "text-foreground";
+
+  return (
+    <div className="rounded-xl border border-white/5 bg-black/20 px-3 py-2">
+      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </p>
+      <p className={`mt-1 text-sm font-semibold capitalize tabular-nums ${toneClass}`}>
+        {value}
+      </p>
     </div>
   );
 }

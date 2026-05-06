@@ -1,0 +1,25 @@
+{
+  "backtest_date": "2026-05-05T13:57:05.368817+00:00",
+  "days": 30,
+  "symbols": 364,
+  "strategy": "V3 EMA (Trial 24)",
+  "parameters": {
+    "strategy_version": "v3_adaptive",
+    "entry_filter_min_abs_oi_delta_z": 0.897,
+    "entry_filter_min_volume_z": 1.707,
+    "continuation_min_flow_alignment": 0.874,
+    "entry_filter_max_compression_score_15m": 0.441,
+    "entry_filter_min_history_1h": 67,
+    "entry_filter_min_clarity_confidence": 0.806
+  },
+  "metrics": {
+    "total_trades": 326,
+    "wins": 135,
+    "losses": 191,
+    "winrate": 41.41104294478527,
+    "net_pnl_pct": -2.121819864463608,
+    "gross_profit": 349.4475883038776,
+    "gross_loss": 351.5694081683412,
+    "profit_factor": 0.993964719867072
+  }
+}

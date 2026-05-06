@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, ChevronDown, Download, Filter, Layers, Plus, Trash2 } from "lucide-react";
+import { Bell, Check, ChevronDown, Download, Filter, Plus, Trash2 } from "lucide-react";
 
 import SignalBadge from "@/app/components/SignalBadge";
 import { api } from "@/lib/api";
@@ -15,11 +15,11 @@ const TIMEFRAME_OPTIONS: Timeframe[] = ["15m", "1h", "4h", "24h"];
 const FILTER_OPTIONS: Array<{ value: SignalType; label: string }> = [
   { value: "Accumulation", label: "Accumulation" },
   { value: "Breakout Watch", label: "Breakout Watch" },
+  { value: "Continuation", label: "Continuation" },
   { value: "Short Squeeze", label: "Short Squeeze" },
   { value: "Long Squeeze", label: "Long Squeeze" },
   { value: "Neutral", label: "Neutral" },
 ];
-const STRATEGY_OPTIONS = ["All", "v2_balanced"] as const;
 const MARKET_REGIME_OPTIONS: Array<{ value: MarketRegime; label: string; hint: string }> = [
   { value: "Balanced", label: "Balanced", hint: "highest WR" },
   { value: "Ranging", label: "Ranging", hint: "range-bound" },
@@ -51,8 +51,6 @@ export default function AlertsPage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [telegramMessage, setTelegramMessage] = useState<string | null>(null);
   const [testingTelegram, setTestingTelegram] = useState(false);
-  const [strategyFilter, setStrategyFilter] = useState<string>("All");
-
   const { data, isLoading, isError } = useQuery({
     queryKey: ["alerts", userId, timeframeFilters.join(",")],
     queryFn: () =>
@@ -398,23 +396,6 @@ export default function AlertsPage() {
                 ) : null}
               </div>
             </div>
-
-            <div className="flex items-center gap-3">
-              <Layers className="h-4 w-4 text-muted-foreground" />
-              <label className="text-sm font-medium text-muted-foreground">Strategy:</label>
-              <select
-                id="strategy-filter"
-                value={strategyFilter}
-                onChange={(e) => setStrategyFilter(e.target.value)}
-                className="min-w-[150px] rounded-xl border border-white/10 bg-[#0B0F14] px-4 py-2 font-medium text-foreground transition-all hover:border-primary/40 focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/50"
-              >
-                {STRATEGY_OPTIONS.map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt === "All" ? "All Versions" : opt}
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
 
           <div className="flex items-center gap-3">
@@ -607,6 +588,18 @@ export default function AlertsPage() {
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className="mr-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Signals</span>
+              <button
+                type="button"
+                onClick={() => setEnabledTypes([])}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold transition-all ${
+                  enabledTypes.length === 0
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground"
+                }`}
+                title="No signal filter"
+              >
+                All Signals
+              </button>
               {FILTER_OPTIONS.map((option) => {
                 const active = enabledTypes.includes(option.value);
                 return (
@@ -627,6 +620,18 @@ export default function AlertsPage() {
 
             <div className="flex flex-wrap items-center gap-2">
               <span className="mr-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Regime</span>
+              <button
+                type="button"
+                onClick={() => setEnabledRegimes([])}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold transition-all ${
+                  enabledRegimes.length === 0
+                    ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+                    : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground"
+                }`}
+                title="No regime filter"
+              >
+                All Regimes
+              </button>
               {MARKET_REGIME_OPTIONS.map((option) => {
                 const active = enabledRegimes.includes(option.value);
                 return (
@@ -645,7 +650,6 @@ export default function AlertsPage() {
                   </button>
                 );
               })}
-              {enabledRegimes.length === 0 ? <span className="text-xs text-muted-foreground">All regimes</span> : null}
             </div>
           </div>
 

@@ -50,8 +50,6 @@ Jalankan ini di PowerShell:
 
 ```powershell
 cd C:\Code\flowscope
-python -m venv venv
-venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn backend.main:app --reload --port 8000
 ```
@@ -134,8 +132,7 @@ Kalau `psql` tidak dikenali di PowerShell, biasanya PostgreSQL `bin` belum masuk
 Jalankan ini di PowerShell dari root project:
 
 ```powershell
-python -m venv venv
-venv\Scripts\activate
+cd C:\Code\flowscope
 pip install -r requirements.txt
 uvicorn backend.main:app --reload --port 8000
 ```

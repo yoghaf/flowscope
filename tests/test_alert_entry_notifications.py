@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone, timedelta
 UTC = timezone.utc
 from types import SimpleNamespace
@@ -149,6 +150,48 @@ def test_trade_entry_notification_marks_stale_when_price_is_far_from_entry() -> 
     reason = service._trade_entry_stale_reason(bucket=bucket, state=state)
 
     assert reason == "price_already_far_from_entry"
+
+
+def test_trade_entry_catch_up_skips_when_notification_is_in_flight() -> None:
+    async def run() -> None:
+        service = SignalService.__new__(SignalService)
+        service.settings = SimpleNamespace(entry_notification_catchup_minutes=60)
+        service.pending_trade_entry_notifications = {42: 1}
+
+        now = datetime.now(UTC)
+        trade = SimpleNamespace(
+            id=42,
+            result="open",
+            entry_touched_at=now,
+            entry_notification_sent_at=None,
+            created_at=now,
+            symbol="ONTUSDT",
+            timeframe="15m",
+        )
+
+        queued = await service.catch_up_trade_entry_notification(trade)
+
+        assert queued is False
+        assert service.pending_trade_entry_notifications == {42: 1}
+
+    asyncio.run(run())
+
+
+def test_trade_entry_notification_reservation_waits_for_all_send_tasks() -> None:
+    service = SignalService.__new__(SignalService)
+
+    assert service._reserve_trade_entry_notification(trade_id=99) is True
+    assert service._reserve_trade_entry_notification(trade_id=99) is False
+
+    service._track_trade_entry_notification_task(trade_id=99)
+    service._track_trade_entry_notification_task(trade_id=99)
+    service._release_trade_entry_notification(trade_id=99)
+
+    assert service._reserve_trade_entry_notification(trade_id=99) is False
+
+    service._release_trade_entry_notification(trade_id=99)
+
+    assert service._reserve_trade_entry_notification(trade_id=99) is True
 
 
 def test_trade_entry_message_includes_entry_type() -> None:

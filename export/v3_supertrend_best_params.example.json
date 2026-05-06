@@ -1,0 +1,14 @@
+{
+  "supertrend_atr": 14,
+  "supertrend_mult": 2.8,
+  "ai_threshold": 65,
+  "rr_ratio": 2.5,
+  "entry_filter_min_abs_oi_delta_z": 0.897,
+  "entry_filter_min_volume_z": 1.707,
+  "continuation_min_flow_alignment": 0.874,
+  "entry_filter_max_compression_score_15m": 0.441,
+  "entry_filter_min_history_1h": 67,
+  "entry_filter_min_clarity_confidence": 0.806,
+  "price_break_1h": 0.037,
+  "use_ema_filter": true
+}

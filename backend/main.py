@@ -14,6 +14,7 @@ from backend.api.dashboard import router as dashboard_router
 from backend.api.performance import router as performance_router
 from backend.api.scanner import router as scanner_router
 from backend.api.signals import router as signals_router
+from backend.api.demo_trading import router as demo_router
 from backend.config import get_settings
 from backend.database import DatabaseManager
 from backend.schemas import RealtimeEvent
@@ -57,6 +58,7 @@ app.include_router(coin_router)
 app.include_router(alerts_router)
 app.include_router(performance_router)
 app.include_router(signals_router)
+app.include_router(demo_router)
 
 
 @app.get("/health")
@@ -81,3 +83,4 @@ async def market_socket(websocket: WebSocket) -> None:
         await realtime_hub.disconnect(websocket)
     except Exception:
         await realtime_hub.disconnect(websocket)
+

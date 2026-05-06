@@ -1,0 +1,33 @@
+{
+  "comparison_date": "2026-05-05T13:33:27.534895+00:00",
+  "days": 30,
+  "symbols": 364,
+  "v3_ema": {
+    "version": "V3 EMA",
+    "total_trades": 326,
+    "wins": 135,
+    "losses": 191,
+    "winrate": 41.41104294478527,
+    "net_pnl_pct": -2.121819864463608,
+    "gross_profit": 349.4475883038776,
+    "gross_loss": 351.5694081683412,
+    "profit_factor": 0.993964719867072
+  },
+  "v3_supertrend": {
+    "version": "V3 SuperTrend",
+    "total_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "winrate": 0.0,
+    "net_pnl_pct": 0.0,
+    "gross_profit": 0.0,
+    "gross_loss": 0.0,
+    "profit_factor": 0.0
+  },
+  "v3_supertrend_params": {
+    "supertrend_atr": 7,
+    "supertrend_mult": 3.9,
+    "ai_threshold": 79,
+    "rr_ratio": 3.1
+  }
+}

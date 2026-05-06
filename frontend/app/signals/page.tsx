@@ -1,24 +1,29 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import {
   Activity,
-  TrendingUp,
-  TrendingDown,
-  Target,
-  Shield,
-  Zap,
-  RefreshCw,
-  Clock,
-  CheckCircle2,
-  XCircle,
-  ArrowUpRight,
-  ArrowDownRight,
-  Loader2,
+  Archive,
   BarChart3,
   Brain,
+  CalendarDays,
+  CheckCircle2,
+  Clock,
+  Loader2,
+  RefreshCw,
+  Search,
+  Shield,
+  Target,
+  TrendingDown,
+  TrendingUp,
 } from "lucide-react";
 import { api } from "@/lib/api";
+
+type StatusFilter = "all" | "open" | "closed";
+type ResultFilter = "all" | "win" | "loss" | "breakeven" | "timeout";
+type RegimeFilter = "all" | "Balanced" | "Trending" | "Ranging";
 
 interface Signal {
   id: number;
@@ -46,33 +51,97 @@ interface Signal {
   strategy_version: string;
   position_size_multiplier: number;
   confidence_score: number;
+  opened_at: string | null;
+  cohort_month: string;
   created_at: string | null;
   closed_at: string | null;
   close_reason: string | null;
+  monitor_price?: number | null;
+  monitor_price_at?: string | null;
+  monitor_source?: string | null;
+  monitor_pnl_pct?: number | null;
+  monitor_r?: number | null;
+  distance_to_stop_pct?: number | null;
+  distance_to_tp1_pct?: number | null;
+  distance_to_tp2_pct?: number | null;
+}
+
+interface SignalSummary {
+  total_signals: number;
+  total_closed: number;
+  closed_trades: number;
+  wins: number;
+  losses: number;
+  breakevens: number;
+  timeouts: number;
+  winrate: number;
+  open_trades: number;
+  realized_pnl_pct: number;
+  avg_realized_pnl_pct: number;
+  report_status: "Live" | "Final" | string;
+}
+
+interface MonthOption {
+  value: string;
+  label: string;
+  total_signals: number;
+  open_trades: number;
+  closed_trades: number;
+  report_status: "Live" | "Final" | string;
 }
 
 interface SignalsData {
   generated_at: string;
-  total: number;
-  summary: {
-    total_closed: number;
-    wins: number;
-    losses: number;
-    winrate: number;
-    open_trades: number;
-  };
+  selected_month: string;
+  selected_month_label: string;
+  available_months: MonthOption[];
+  monthly_summary: SignalSummary;
+  active_open_signals: Signal[];
+  monthly_signals: Signal[];
   signals: Signal[];
 }
 
+function currentMonthKey() {
+  const now = new Date();
+  const month = `${now.getMonth() + 1}`.padStart(2, "0");
+  return `${now.getFullYear()}-${month}`;
+}
+
+function monthLabel(month: string) {
+  const [year, rawMonth] = month.split("-");
+  const monthIndex = Number(rawMonth) - 1;
+  if (!year || !Number.isFinite(monthIndex)) return month;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "long",
+    year: "numeric",
+  }).format(new Date(Number(year), monthIndex, 1));
+}
+
 function formatPrice(price: number | null) {
-  if (price === null || price === undefined) return "—";
+  if (price === null || price === undefined) return "--";
   return price < 1
     ? price.toPrecision(4)
-    : price.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    : price.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+function formatPercent(value: number | null | undefined, suffix = "%") {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "--";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}${suffix}`;
+}
+
+function formatDateTime(dateStr: string | null) {
+  if (!dateStr) return "--";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(dateStr));
 }
 
 function timeAgo(dateStr: string | null) {
-  if (!dateStr) return "—";
+  if (!dateStr) return "--";
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
@@ -83,24 +152,30 @@ function timeAgo(dateStr: string | null) {
   return `${days}d ago`;
 }
 
+function isClosedResult(result: string) {
+  return result === "win" || result === "loss" || result === "breakeven" || result === "timeout";
+}
+
 export default function SignalsPage() {
   const [data, setData] = useState<SignalsData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<"all" | "open" | "closed">("all");
-  const [resultFilter, setResultFilter] = useState<"all" | "win" | "loss">("all");
-  const [regimeFilter, setRegimeFilter] = useState<"all" | "Balanced" | "Trending" | "Ranging">("all");
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
+  const [regimeFilter, setRegimeFilter] = useState<RegimeFilter>("all");
+  const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
   const fetchSignals = useCallback(async () => {
     try {
       setLoading(true);
       const json = await api.getLiveSignals({
-        status: filter,
+        status: "all",
         scope: "active",
         strategy: "v2_balanced",
         regime: regimeFilter,
-        limit: 100,
+        month: selectedMonth,
+        limit: 200,
       });
       setData(json);
       setError(null);
@@ -109,7 +184,7 @@ export default function SignalsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, regimeFilter]);
+  }, [regimeFilter, selectedMonth]);
 
   useEffect(() => {
     void fetchSignals();
@@ -117,275 +192,202 @@ export default function SignalsPage() {
     return () => clearInterval(interval);
   }, [fetchSignals]);
 
-  const signals = useMemo(() => {
-    const raw = data?.signals ?? [];
-    if (filter === "closed" && resultFilter !== "all") {
-      return raw.filter((s) => s.result === resultFilter);
-    }
-    return raw;
-  }, [data, filter, resultFilter]);
+  const monthlySignals = useMemo(() => data?.monthly_signals ?? data?.signals ?? [], [data]);
+  const activeOpenSignals = useMemo(() => data?.active_open_signals ?? [], [data]);
 
-  const openSymbols = useMemo(() => {
-    return Array.from(
-      new Set(
-        signals
-          .filter((signal) => signal.result === "open")
-          .map((signal) => signal.symbol.toLowerCase()),
-      ),
-    ).sort();
-  }, [signals]);
+  const filteredMonthlySignals = useMemo(() => {
+    const term = search.trim().toUpperCase();
+    return monthlySignals.filter((signal) => {
+      if (statusFilter === "open" && signal.result !== "open") return false;
+      if (statusFilter === "closed" && !isClosedResult(signal.result)) return false;
+      if (statusFilter === "closed" && resultFilter !== "all" && signal.result !== resultFilter) return false;
+      if (term && !signal.symbol.toUpperCase().includes(term)) return false;
+      return true;
+    });
+  }, [monthlySignals, resultFilter, search, statusFilter]);
 
-  useEffect(() => {
-    if (!openSymbols.length) {
-      setLivePrices({});
-      return;
-    }
-
-    const activeSymbols = new Set(
-      openSymbols.map((symbol) => symbol.toUpperCase()),
-    );
-    setLivePrices((current) =>
-      Object.fromEntries(
-        Object.entries(current).filter(([symbol]) => activeSymbols.has(symbol)),
-      ),
-    );
-
-    const wsUrl = `wss://fstream.binance.com/stream?streams=${openSymbols.map((symbol) => `${symbol}@ticker`).join("/")}`;
-    let websocket: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let disposed = false;
-
-    const connect = () => {
-      if (disposed) return;
-
-      websocket = new WebSocket(wsUrl);
-      websocket.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          const ticker = payload?.data;
-          const symbol =
-            typeof ticker?.s === "string" ? ticker.s.toUpperCase() : null;
-          const nextPrice = Number(ticker?.c);
-          if (!symbol || !Number.isFinite(nextPrice)) return;
-
-          setLivePrices((current) => {
-            if (current[symbol] === nextPrice) {
-              return current;
-            }
-            return {
-              ...current,
-              [symbol]: nextPrice,
-            };
-          });
-        } catch {}
-      };
-      websocket.onclose = () => {
-        if (disposed) return;
-        reconnectTimer = setTimeout(connect, 3000);
-      };
-    };
-
-    connect();
-
-    return () => {
-      disposed = true;
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-      }
-      if (websocket) {
-        websocket.close();
-      }
-    };
-  }, [openSymbols]);
-
-  const filteredSummary = useMemo(() => {
-    const closed = signals.filter(
-      (s) => s.result === "win" || s.result === "loss",
-    );
-    const wins = closed.filter((s) => s.result === "win").length;
-    const losses = closed.filter((s) => s.result === "loss").length;
-    const winrate = closed.length > 0 ? (wins / closed.length) * 100 : 0;
-    return {
-      total_closed: closed.length,
-      wins,
-      losses,
-      winrate: Math.round(winrate * 10) / 10,
-      open_trades: signals.filter((s) => s.result === "open").length,
-    };
-  }, [signals]);
+  const summary = data?.monthly_summary;
+  const months =
+    data?.available_months?.length
+      ? data.available_months
+      : [
+          {
+            value: selectedMonth,
+            label: monthLabel(selectedMonth),
+            total_signals: 0,
+            open_trades: 0,
+            closed_trades: 0,
+            report_status: "Live",
+          },
+        ];
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 shadow-lg shadow-violet-500/25">
-              <Brain className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">AI Signals</h1>
-              <p className="text-sm text-muted-foreground">
-                Live trade signals powered by FlowScope V14 Engine
-              </p>
-            </div>
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-violet-500/20 bg-violet-500/10 text-violet-300">
+            <Brain className="h-5 w-5" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">AI Signals</h1>
+            <p className="text-sm text-muted-foreground">
+              {data?.selected_month_label ?? monthLabel(selectedMonth)} cohort
+            </p>
           </div>
         </div>
+
         <div className="flex flex-wrap items-center gap-2">
-          {/* Status filter */}
-          {(["all", "open", "closed"] as const).map((f) => (
-            <button
-              key={f}
-              id={`filter-${f}`}
-              onClick={() => {
-                setFilter(f);
-                if (f !== "closed") setResultFilter("all");
-              }}
-              className={`rounded-xl px-4 py-2 text-sm font-medium capitalize transition-all ${
-                filter === f
-                  ? "bg-violet-500/20 text-violet-400 shadow-lg shadow-violet-500/10"
-                  : "text-muted-foreground hover:bg-white/5"
-              }`}
-            >
-              {f}
-            </button>
-          ))}
+          <select
+            value={selectedMonth}
+            onChange={(event) => setSelectedMonth(event.target.value)}
+            className="h-10 rounded-lg border border-white/10 bg-card px-3 text-sm text-foreground outline-none transition focus:border-violet-500/50"
+          >
+            {months.map((month) => (
+              <option key={month.value} value={month.value}>
+                {month.label} ({month.total_signals})
+              </option>
+            ))}
+          </select>
 
-          {/* Win/Loss sub-filter for closed */}
-          {filter === "closed" && (
-            <>
-              <div className="mx-1 h-6 w-px bg-white/10" />
-              {(["all", "win", "loss"] as const).map((rf) => (
-                <button
-                  key={rf}
-                  id={`result-filter-${rf}`}
-                  onClick={() => setResultFilter(rf)}
-                  className={`rounded-xl px-3 py-2 text-xs font-semibold uppercase transition-all ${
-                    resultFilter === rf
-                      ? rf === "win"
-                        ? "bg-emerald-500/20 text-emerald-400"
-                        : rf === "loss"
-                          ? "bg-rose-500/20 text-rose-400"
-                          : "bg-white/10 text-foreground"
-                      : "text-muted-foreground hover:bg-white/5"
-                  }`}
-                >
-                  {rf === "all" ? "All Results" : rf}
-                </button>
-              ))}
-            </>
-          )}
-
-          <div className="mx-1 h-6 w-px bg-white/10" />
-
-          {/* Regime filter */}
-          {(["all", "Balanced", "Trending", "Ranging"] as const).map((regime) => (
-            <button
-              key={regime}
-              id={`regime-filter-${regime.toLowerCase()}`}
-              onClick={() => setRegimeFilter(regime)}
-              className={`rounded-xl px-3 py-2 text-xs font-medium uppercase transition-all ${
-                regimeFilter === regime
-                  ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
-                  : "text-muted-foreground hover:bg-white/5 border border-transparent"
-              }`}
-            >
-              {regime === "all" ? "All Regimes" : regime}
-            </button>
-          ))}
-
-          <div className="ml-2 rounded-xl border border-violet-500/20 bg-violet-500/10 px-3 py-2 text-sm font-medium text-violet-300">
-            Strategy: v2_balanced
-          </div>
+          <select
+            value={regimeFilter}
+            onChange={(event) => setRegimeFilter(event.target.value as RegimeFilter)}
+            className="h-10 rounded-lg border border-white/10 bg-card px-3 text-sm text-foreground outline-none transition focus:border-violet-500/50"
+          >
+            <option value="all">All Regimes</option>
+            <option value="Balanced">Balanced</option>
+            <option value="Trending">Trending</option>
+            <option value="Ranging">Ranging</option>
+          </select>
 
           <button
             id="refresh-signals"
             onClick={fetchSignals}
-            className="ml-2 rounded-xl p-2.5 text-muted-foreground transition hover:bg-white/5 hover:text-foreground"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 text-muted-foreground transition hover:bg-white/5 hover:text-foreground"
+            title="Refresh"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </button>
         </div>
       </div>
 
-      {/* Summary cards */}
-      {data && (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <StatCard
-            icon={<Activity className="h-4 w-4" />}
-            label="Open Trades"
-            value={filteredSummary.open_trades}
-            color="blue"
-          />
-          <StatCard
-            icon={<CheckCircle2 className="h-4 w-4" />}
-            label="Wins"
-            value={filteredSummary.wins}
-            color="emerald"
-          />
-          <StatCard
-            icon={<XCircle className="h-4 w-4" />}
-            label="Losses"
-            value={filteredSummary.losses}
-            color="rose"
-          />
-          <StatCard
-            icon={<Target className="h-4 w-4" />}
-            label="Winrate"
-            value={`${filteredSummary.winrate}%`}
-            color={
-              filteredSummary.winrate >= 60
-                ? "emerald"
-                : filteredSummary.winrate >= 50
-                  ? "amber"
-                  : "rose"
-            }
-          />
-        </div>
-      )}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <StatCard icon={<CalendarDays className="h-4 w-4" />} label="Opened" value={summary?.total_signals ?? 0} />
+        <StatCard icon={<CheckCircle2 className="h-4 w-4" />} label="Closed" value={summary?.closed_trades ?? 0} tone="emerald" />
+        <StatCard icon={<Activity className="h-4 w-4" />} label="Still Open" value={summary?.open_trades ?? 0} tone="blue" />
+        <StatCard icon={<Target className="h-4 w-4" />} label="Win Rate" value={`${summary?.winrate ?? 0}%`} tone={summary && summary.winrate >= 55 ? "emerald" : "amber"} />
+        <StatCard icon={<BarChart3 className="h-4 w-4" />} label="Realized" value={formatPercent(summary?.realized_pnl_pct)} tone={(summary?.realized_pnl_pct ?? 0) >= 0 ? "emerald" : "rose"} />
+        <StatCard icon={<Archive className="h-4 w-4" />} label="Report" value={summary?.report_status ?? "Live"} tone={summary?.report_status === "Final" ? "slate" : "violet"} />
+      </div>
 
-      {/* Error state */}
-      {error && (
-        <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-6 text-center">
-          <p className="text-rose-400">{error}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Make sure the backend is running and accessible.
-          </p>
-        </div>
-      )}
-
-      {/* Loading state */}
-      {loading && !data && (
-        <div className="flex flex-col items-center justify-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-violet-400" />
-          <p className="mt-4 text-muted-foreground">Loading signals...</p>
-        </div>
-      )}
-
-      {/* Empty state */}
-      {data && signals.length === 0 && (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-white/5 bg-card/50 py-20">
-          <Zap className="h-12 w-12 text-muted-foreground/30" />
-          <p className="mt-4 text-lg font-medium text-muted-foreground">
-            No signals yet
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground/60">
-            No `v2_balanced` signals are available yet.
-          </p>
-        </div>
-      )}
-
-      {/* Signals list */}
-      {data && signals.length > 0 && (
-        <div className="space-y-4">
-          {signals.map((signal) => (
-            <SignalCard
-              key={signal.id}
-              signal={signal}
-              livePrice={livePrices[signal.symbol] ?? null}
-            />
+      <div className="flex flex-col gap-3 border-y border-white/10 py-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          {(["all", "open", "closed"] as const).map((status) => (
+            <button
+              key={status}
+              onClick={() => {
+                setStatusFilter(status);
+                if (status !== "closed") setResultFilter("all");
+              }}
+              className={`h-9 rounded-lg px-3 text-sm font-medium capitalize transition ${
+                statusFilter === status
+                  ? "bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/30"
+                  : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+              }`}
+            >
+              {status}
+            </button>
           ))}
+
+          {statusFilter === "closed" && (
+            <>
+              <div className="mx-1 h-6 w-px bg-white/10" />
+              {(["all", "win", "loss", "breakeven", "timeout"] as const).map((result) => (
+                <button
+                  key={result}
+                  onClick={() => setResultFilter(result)}
+                  className={`h-9 rounded-lg px-3 text-xs font-semibold uppercase transition ${
+                    resultFilter === result
+                      ? "bg-white/10 text-foreground ring-1 ring-white/15"
+                      : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                  }`}
+                >
+                  {result === "all" ? "All Results" : result}
+                </button>
+              ))}
+            </>
+          )}
         </div>
+
+        <label className="relative block w-full max-w-xs">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search symbol"
+            className="h-10 w-full rounded-lg border border-white/10 bg-card pl-9 pr-3 text-sm outline-none transition placeholder:text-muted-foreground focus:border-violet-500/50"
+          />
+        </label>
+      </div>
+
+      {error && (
+        <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-300">
+          {error}
+        </div>
+      )}
+
+      {loading && !data ? (
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+          <Loader2 className="h-8 w-8 animate-spin text-violet-300" />
+          <p className="mt-3 text-sm">Loading signals...</p>
+        </div>
+      ) : (
+        <>
+          <section className="space-y-3">
+            <SectionHeader
+              title="Open Signals"
+              meta={`${activeOpenSignals.length} active`}
+              icon={<Activity className="h-4 w-4" />}
+            />
+            {activeOpenSignals.length === 0 ? (
+              <EmptyState text="No open signals" />
+            ) : (
+              <div className="space-y-2">
+                {activeOpenSignals.map((signal) => (
+                  <SignalRow
+                    key={`active-${signal.id}`}
+                    signal={signal}
+                    livePrice={signal.monitor_price ?? null}
+                    selectedMonth={selectedMonth}
+                    showCohort
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <SectionHeader
+              title={`Signals Opened In ${data?.selected_month_label ?? monthLabel(selectedMonth)}`}
+              meta={`${filteredMonthlySignals.length} shown`}
+              icon={<CalendarDays className="h-4 w-4" />}
+            />
+            {filteredMonthlySignals.length === 0 ? (
+              <EmptyState text="No signals for this view" />
+            ) : (
+              <div className="space-y-2">
+                {filteredMonthlySignals.map((signal) => (
+                  <SignalRow
+                    key={`monthly-${signal.id}`}
+                    signal={signal}
+                    livePrice={signal.monitor_price ?? null}
+                    selectedMonth={selectedMonth}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        </>
       )}
     </div>
   );
@@ -395,326 +397,202 @@ function StatCard({
   icon,
   label,
   value,
-  color,
+  tone = "slate",
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: string | number;
-  color: string;
+  tone?: "slate" | "blue" | "emerald" | "rose" | "amber" | "violet";
 }) {
-  const colorMap: Record<string, string> = {
-    blue: "from-blue-500/20 to-blue-600/5 text-blue-400 border-blue-500/10",
-    emerald:
-      "from-emerald-500/20 to-emerald-600/5 text-emerald-400 border-emerald-500/10",
-    rose: "from-rose-500/20 to-rose-600/5 text-rose-400 border-rose-500/10",
-    amber:
-      "from-amber-500/20 to-amber-600/5 text-amber-400 border-amber-500/10",
+  const toneMap: Record<string, string> = {
+    slate: "border-white/10 bg-card text-foreground",
+    blue: "border-blue-500/20 bg-blue-500/5 text-blue-300",
+    emerald: "border-emerald-500/20 bg-emerald-500/5 text-emerald-300",
+    rose: "border-rose-500/20 bg-rose-500/5 text-rose-300",
+    amber: "border-amber-500/20 bg-amber-500/5 text-amber-300",
+    violet: "border-violet-500/20 bg-violet-500/5 text-violet-300",
   };
 
   return (
-    <div
-      className={`rounded-2xl border bg-gradient-to-br p-5 ${colorMap[color] ?? colorMap.blue}`}
-    >
-      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider opacity-80">
+    <div className={`rounded-lg border p-4 ${toneMap[tone]}`}>
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         {icon}
         {label}
       </div>
-      <p className="mt-2 text-2xl font-bold">{value}</p>
+      <p className="mt-2 text-2xl font-bold tabular-nums">{value}</p>
     </div>
   );
 }
 
-import Link from "next/link";
+function SectionHeader({
+  title,
+  meta,
+  icon,
+}: {
+  title: string;
+  meta: string;
+  icon: ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2">
+        <span className="text-violet-300">{icon}</span>
+        <h2 className="text-base font-semibold">{title}</h2>
+      </div>
+      <span className="rounded-lg border border-white/10 px-2 py-1 text-xs font-medium text-muted-foreground">
+        {meta}
+      </span>
+    </div>
+  );
+}
 
-function SignalCard({
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-card/50 px-4 py-10 text-center text-sm text-muted-foreground">
+      {text}
+    </div>
+  );
+}
+
+function SignalRow({
   signal,
   livePrice,
+  selectedMonth,
+  showCohort = false,
 }: {
   signal: Signal;
   livePrice: number | null;
+  selectedMonth: string;
+  showCohort?: boolean;
 }) {
   const isBullish = signal.bias === "Bullish";
   const isOpen = signal.result === "open";
   const isWin = signal.result === "win";
-  const size = signal.position_size_multiplier;
-  const confScore = signal.confidence_score;
   const livePnl =
-    isOpen && livePrice !== null && signal.entry_price
-      ? ((livePrice - signal.entry_price) / signal.entry_price) *
-        100 *
-        (isBullish ? 1 : -1)
-      : null;
+    isOpen && signal.monitor_pnl_pct !== undefined
+      ? signal.monitor_pnl_pct
+      : isOpen && livePrice !== null && signal.entry_price
+        ? ((livePrice - signal.entry_price) / signal.entry_price) * 100 * (isBullish ? 1 : -1)
+        : null;
 
-  const resultColors: Record<string, string> = {
-    open: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-    win: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-    loss: "bg-rose-500/10 text-rose-400 border-rose-500/20",
-    breakeven: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-    timeout: "bg-slate-500/10 text-slate-400 border-slate-500/20",
-  };
-
-  const qualityColors: Record<string, string> = {
-    A: "bg-emerald-500/15 text-emerald-400",
-    B: "bg-amber-500/15 text-amber-400",
-    C: "bg-slate-500/15 text-slate-400",
-  };
-
-  const sizeColor = size >= 1.0 ? "text-emerald-400" : "text-slate-400";
-  const confColor =
-    confScore >= 0.75
-      ? "text-emerald-400"
-      : confScore >= 0.5
-        ? "text-amber-400"
-        : "text-slate-400";
+  const resultTone =
+    signal.result === "win"
+      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
+      : signal.result === "loss"
+        ? "border-rose-500/20 bg-rose-500/10 text-rose-300"
+        : signal.result === "open"
+          ? "border-blue-500/20 bg-blue-500/10 text-blue-300"
+          : "border-amber-500/20 bg-amber-500/10 text-amber-300";
 
   return (
     <Link
       href={`/signals/${signal.id}`}
       id={`signal-${signal.id}`}
-      className={`block group relative overflow-hidden rounded-2xl border transition-all duration-300 hover:scale-[1.005] hover:shadow-xl ${
-        isOpen
-          ? "border-violet-500/20 bg-gradient-to-br from-violet-500/5 to-card/80 shadow-lg shadow-violet-500/5"
-          : "border-white/5 bg-card/50 hover:border-white/10"
-      }`}
+      className="grid gap-4 rounded-lg border border-white/10 bg-card/70 p-4 transition hover:border-violet-500/35 hover:bg-card lg:grid-cols-[minmax(220px,1.2fr)_minmax(260px,1.4fr)_minmax(180px,0.9fr)_minmax(140px,0.7fr)]"
     >
-      {/* Glow for open trades */}
-      {isOpen && (
-        <div className="absolute -right-20 -top-20 h-40 w-40 rounded-full bg-violet-500/10 blur-3xl" />
-      )}
-
-      <div className="relative p-6">
-        {/* Top row */}
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div
-              className={`flex h-11 w-11 items-center justify-center rounded-xl ${
-                isBullish
-                  ? "bg-emerald-500/15 text-emerald-400"
-                  : "bg-rose-500/15 text-rose-400"
-              }`}
-            >
-              {isBullish ? (
-                <TrendingUp className="h-5 w-5" />
-              ) : (
-                <TrendingDown className="h-5 w-5" />
-              )}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-lg font-bold">{signal.symbol}</span>
-                <span
-                  className={`rounded-lg px-2 py-0.5 text-[10px] font-semibold uppercase ${qualityColors[signal.quality_score] ?? qualityColors.C}`}
-                >
-                  {signal.quality_score}-Grade
-                </span>
-                <span
-                  className={`rounded-lg border px-2 py-0.5 text-[10px] font-semibold uppercase ${resultColors[signal.result] ?? resultColors.open}`}
-                >
-                  {signal.result}
-                </span>
-                {signal.strategy_version &&
-                  signal.strategy_version !== "unknown" && (
-                    <span className="rounded-lg bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-violet-400 border border-violet-500/20">
-                      {signal.strategy_version}
-                    </span>
-                  )}
-              </div>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {signal.setup_type} · {signal.timeframe} ·{" "}
-                {signal.market_regime} · <Clock className="inline h-3 w-3" />{" "}
-                {timeAgo(signal.created_at)}
-              </p>
-            </div>
-          </div>
-          <div className="text-right space-y-1">
-            <div className="flex items-center gap-1 text-sm font-semibold">
-              <BarChart3 className="h-3.5 w-3.5 text-violet-400" />
-              <span className="text-violet-400">{signal.confidence}%</span>
-            </div>
-            <p className="text-[10px] text-muted-foreground">Confidence</p>
-            <div className="flex items-center gap-2 text-[10px]">
-              <span className={`font-semibold ${sizeColor}`}>
-                {size.toFixed(2)}x
-              </span>
-              <span className="text-muted-foreground">Size</span>
-            </div>
-            {confScore > 0 && (
-              <div className="flex items-center gap-2 text-[10px]">
-                <span className={`font-semibold ${confColor}`}>
-                  {Math.round(confScore * 100)}%
-                </span>
-                <span className="text-muted-foreground">Score</span>
-              </div>
-            )}
-          </div>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${
+              isBullish ? "bg-emerald-500/10 text-emerald-300" : "bg-rose-500/10 text-rose-300"
+            }`}
+          >
+            {isBullish ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+          </span>
+          <span className="truncate text-base font-bold">{signal.symbol}</span>
+          <span className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase ${resultTone}`}>
+            {signal.result}
+          </span>
+          <span className="rounded-md border border-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+            {signal.quality_score}
+          </span>
         </div>
-
-        {isOpen && (
-          <div className="mt-4 flex flex-wrap items-center gap-4 rounded-xl border border-blue-500/10 bg-blue-500/[0.04] px-4 py-3">
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                Live Price
-              </p>
-              <p className="mt-1 text-sm font-semibold tabular-nums text-blue-300">
-                {livePrice !== null ? formatPrice(livePrice) : "Connecting..."}
-              </p>
-            </div>
-            {livePnl !== null && (
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Live PnL
-                </p>
-                <p
-                  className={`mt-1 text-sm font-semibold tabular-nums ${livePnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}
-                >
-                  {livePnl >= 0 ? "+" : ""}
-                  {livePnl.toFixed(2)}%
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Price levels */}
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <PriceBox
-            label="Entry"
-            value={formatPrice(signal.entry_price)}
-            icon={<ArrowUpRight className="h-3 w-3" />}
-          />
-          <PriceBox
-            label={
-              signal.tp1_hit && signal.trailing_stop_price
-                ? "Trail Stop"
-                : "Stop Loss"
-            }
-            value={formatPrice(
-              signal.tp1_hit && signal.trailing_stop_price
-                ? signal.trailing_stop_price
-                : signal.invalidation_price,
-            )}
-            icon={
-              <Shield
-                className={`h-3 w-3 ${signal.tp1_hit && signal.trailing_stop_price ? "text-amber-400" : "text-rose-400"}`}
-              />
-            }
-            danger={!signal.tp1_hit || !signal.trailing_stop_price}
-          />
-          <PriceBox
-            label="TP1"
-            value={formatPrice(signal.target_price_1)}
-            icon={<Target className="h-3 w-3 text-emerald-400" />}
-            success
-            hit={signal.tp1_hit}
-          />
-          <PriceBox
-            label="TP2"
-            value={formatPrice(signal.target_price_2)}
-            icon={<Target className="h-3 w-3 text-emerald-400" />}
-            success
-          />
+        <p className="mt-2 text-xs text-muted-foreground">
+          {signal.setup_type} / {signal.timeframe} / {signal.market_regime}
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+          <Clock className="h-3 w-3" />
+          <span>{timeAgo(signal.opened_at ?? signal.created_at)}</span>
+          <span>{formatDateTime(signal.opened_at ?? signal.created_at)}</span>
+          {showCohort && signal.cohort_month !== selectedMonth ? (
+            <span className="rounded-md bg-white/5 px-2 py-0.5">
+              Opened {monthLabel(signal.cohort_month)}
+            </span>
+          ) : null}
         </div>
+      </div>
 
-        {/* PnL bar for closed trades */}
-        {!isOpen && (
-          <div className="mt-4 flex items-center gap-4 rounded-xl bg-white/[0.02] px-4 py-3">
-            <div className="flex items-center gap-1.5">
-              {isWin ? (
-                <ArrowUpRight className="h-4 w-4 text-emerald-400" />
-              ) : (
-                <ArrowDownRight className="h-4 w-4 text-rose-400" />
-              )}
-              <span
-                className={`text-sm font-bold ${isWin ? "text-emerald-400" : "text-rose-400"}`}
-              >
-                {signal.pnl_pct > 0 ? "+" : ""}
-                {signal.pnl_pct}%
-              </span>
-            </div>
-            <div className="h-4 w-px bg-white/10" />
-            <span className="text-xs text-muted-foreground">
-              Max Profit:{" "}
-              <span className="text-emerald-400/80">
-                +{signal.max_profit_pct}%
-              </span>
-            </span>
-            <span className="text-xs text-muted-foreground">
-              Max DD:{" "}
-              <span className="text-rose-400/80">
-                -{signal.max_drawdown_pct}%
-              </span>
-            </span>
-            {signal.close_reason && (
-              <>
-                <div className="h-4 w-px bg-white/10" />
-                <span className="text-xs text-muted-foreground">
-                  Reason:{" "}
-                  <span className="text-foreground/70">
-                    {signal.close_reason}
-                  </span>
-                </span>
-              </>
-            )}
-          </div>
-        )}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Metric label="Entry" value={formatPrice(signal.entry_price)} />
+        <Metric
+          label={signal.tp1_hit && signal.trailing_stop_price ? "Trail" : "Stop"}
+          value={formatPrice(signal.tp1_hit && signal.trailing_stop_price ? signal.trailing_stop_price : signal.invalidation_price)}
+          tone="rose"
+          icon={<Shield className="h-3 w-3" />}
+        />
+        <Metric label="TP1" value={formatPrice(signal.target_price_1)} tone="emerald" icon={<Target className="h-3 w-3" />} />
+        <Metric label="TP2" value={formatPrice(signal.target_price_2)} tone="emerald" icon={<Target className="h-3 w-3" />} />
+      </div>
 
-        {/* Data Insights */}
-        {signal.insights && signal.insights.length > 0 && (
-          <div className="mt-4 rounded-xl border border-violet-500/10 bg-violet-500/[0.03] p-4">
-            <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-violet-400">
-              <Brain className="h-3.5 w-3.5" />
-              Data Insights
-            </div>
-            <ul className="space-y-1">
-              {signal.insights.map((insight, i) => (
-                <li
-                  key={i}
-                  className="text-xs leading-relaxed text-foreground/70"
-                >
-                  {insight}
-                </li>
-              ))}
-            </ul>
-          </div>
+      <div className="grid grid-cols-2 gap-2">
+            <Metric label="Confidence" value={`${signal.confidence}%`} tone="violet" />
+            <Metric label="Size" value={`${signal.position_size_multiplier.toFixed(2)}x`} />
+        {isOpen ? (
+          <>
+            <Metric label="Backend Price" value={livePrice !== null ? formatPrice(livePrice) : "Waiting"} tone="blue" />
+            <Metric label="Live PnL" value={livePnl === null ? "--" : formatPercent(livePnl)} tone={livePnl !== null && livePnl < 0 ? "rose" : "emerald"} />
+          </>
+        ) : (
+          <>
+            <Metric label="Closed" value={formatDateTime(signal.closed_at)} />
+            <Metric label="PnL" value={formatPercent(signal.pnl_pct)} tone={isWin ? "emerald" : "rose"} />
+          </>
         )}
+      </div>
+
+      <div className="flex flex-col justify-between gap-3 lg:text-right">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Result</p>
+          <p className={`mt-1 text-lg font-bold ${signal.pnl_pct >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+            {isOpen ? "Open" : formatPercent(signal.pnl_pct)}
+          </p>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          <p>Max profit {formatPercent(signal.max_profit_pct)}</p>
+          <p>Max DD {formatPercent(signal.max_drawdown_pct)}</p>
+          {signal.close_reason ? <p>{signal.close_reason}</p> : null}
+        </div>
       </div>
     </Link>
   );
 }
 
-function PriceBox({
+function Metric({
   label,
   value,
+  tone = "slate",
   icon,
-  danger,
-  success,
-  hit,
 }: {
   label: string;
   value: string;
-  icon?: React.ReactNode;
-  danger?: boolean;
-  success?: boolean;
-  hit?: boolean;
+  tone?: "slate" | "blue" | "emerald" | "rose" | "violet";
+  icon?: ReactNode;
 }) {
+  const toneMap: Record<string, string> = {
+    slate: "text-foreground",
+    blue: "text-blue-300",
+    emerald: "text-emerald-300",
+    rose: "text-rose-300",
+    violet: "text-violet-300",
+  };
+
   return (
-    <div
-      className={`rounded-xl px-3 py-2.5 ${
-        hit
-          ? "bg-emerald-500/10 ring-1 ring-emerald-500/20"
-          : danger
-            ? "bg-rose-500/5"
-            : success
-              ? "bg-emerald-500/5"
-              : "bg-white/[0.03]"
-      }`}
-    >
-      <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+    <div className="min-w-0 rounded-lg bg-white/[0.03] px-3 py-2">
+      <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {icon}
         {label}
-        {hit && <CheckCircle2 className="h-3 w-3 text-emerald-400" />}
       </div>
-      <p className="mt-1 text-sm font-semibold tabular-nums">{value}</p>
+      <p className={`mt-1 truncate text-sm font-semibold tabular-nums ${toneMap[tone]}`}>{value}</p>
     </div>
   );
 }

@@ -1,0 +1,3 @@
+# Binance Demo Trading Requirements
+python-binance>=1.0.19
+ccxt>=4.0.0

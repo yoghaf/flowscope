@@ -184,9 +184,19 @@ class MarketInterpreterEngine:
         ll = current_low < prior_low * (1.0 - STRUCTURE_TOLERANCE) if prior_low > 0 else False
         momentum = self._short_window_momentum(recent_window)
         momentum_threshold = max(float(profile["price_flat"]) * 0.5, 0.001)
+        
+        # V3 Adaptive: Turunkan threshold 40% untuk deteksi Seller Dominant (lebih mudah detect Bearish)
+        from backend.config import get_settings
+        try:
+            settings = get_settings()
+            is_v3 = getattr(settings, "strategy_version", "") == "v3_adaptive"
+        except:
+            is_v3 = False
+        
+        threshold = momentum_threshold * 0.6 if is_v3 else momentum_threshold  # 40% lebih rendah untuk V3
         if hh and hl and momentum > momentum_threshold:
             return "Buyer Dominant"
-        if lh and ll and momentum < -momentum_threshold:
+        if lh and ll and momentum < -threshold:
             return "Seller Dominant"
         return "Neutral"
 

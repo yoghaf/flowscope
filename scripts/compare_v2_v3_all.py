@@ -1,4 +1,5 @@
 
+import argparse
 import asyncio
 import json
 import logging
@@ -101,16 +102,20 @@ def filter_trades(trades, use_ema=False):
     return filtered
 
 async def run_comparison():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--days", type=int, default=7)
+    args = parser.parse_args()
+    
     settings_v2 = get_settings()
     settings_v2.debug = False
     db = DatabaseManager(settings_v2)
     
-    print("\n[INGEST] Loading 7-day history for all symbols...", flush=True)
+    print(f"\n[INGEST] Loading {args.days}-day history for all symbols...", flush=True)
     import io
     orig_stdout = sys.stdout
     sys.stdout = io.StringIO()
     try:
-        buckets_by_symbol = await load_bucket_history(db, symbols=None, days=7, limit_per_symbol=0)
+        buckets_by_symbol = await load_bucket_history(db, symbols=None, days=args.days, limit_per_symbol=0)
     finally:
         sys.stdout = orig_stdout
         

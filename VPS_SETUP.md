@@ -3,6 +3,7 @@
 Panduan ini berisi langkah-langkah utuh untuk menjalankan **Flowscope** (Backend, Database, dan Frontend) di server VPS Linux (Ubuntu 22.04 / 24.04). Sistem dirancang agar dapat menyala 24/7 tanpa henti (otomatis hidup kembali saat server restart).
 
 ## Persiapan Server
+
 1. Login ke VPS Anda via SSH.
 2. Update sistem dasar:
    ```bash
@@ -14,7 +15,8 @@ Panduan ini berisi langkah-langkah utuh untuk menjalankan **Flowscope** (Backend
    ```
 
 ## 1. Install PostgreSQL & Redis
-Flowscope menggunakan PostgreSQL untuk merekam *history* aliran uang yang masif dan Redis untuk caching cepat (opsional namun disarankan).
+
+Flowscope menggunakan PostgreSQL untuk merekam _history_ aliran uang yang masif dan Redis untuk caching cepat (opsional namun disarankan).
 
 ```bash
 # Install Database & Cache
@@ -24,7 +26,8 @@ sudo apt install postgresql postgresql-contrib redis-server -y
 sudo -u postgres psql
 ```
 
-Dalam *prompt* PostgreSQL (`postgres=#`), ketikkan:
+Dalam _prompt_ PostgreSQL (`postgres=#`), ketikkan:
+
 ```sql
 CREATE DATABASE flowscope;
 CREATE USER flowdb_user WITH PASSWORD 'password_super_kuat';
@@ -38,6 +41,7 @@ GRANT ALL PRIVILEGES ON DATABASE flowscope TO flowdb_user;
 ## 2. Install Python dan Node.js
 
 **Install Node.js (via NVM):**
+
 ```bash
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 source ~/.bashrc
@@ -46,14 +50,16 @@ nvm use 20
 ```
 
 **Install Python & PM2:**
+
 ```bash
-sudo apt install python3.11 python3.11-venv python3-pip -y
+sudo apt install python3.11 python3-pip -y
 npm install -g pm2
 ```
 
 ## 3. Clone Repository & Setup Lingkungan
 
 Misalkan kita meletakkan repo di `/var/www/flowscope`:
+
 ```bash
 sudo mkdir -p /var/www/flowscope
 sudo chown -R $USER:$USER /var/www/flowscope
@@ -67,30 +73,27 @@ cd /var/www/flowscope
 
 ## 4. Setup Backend (FastAPI / Uvicorn)
 
-1. Buat Virtual Environment:
+1. Install dependensi:
    ```bash
    cd /var/www/flowscope/backend
-   python3.11 -m venv venv
-   source venv/bin/activate
+   pip3 install -r requirements.txt
    ```
-2. Install dependensi:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Sesuaikan file `.env` untuk config database yang menggunakan kredensial PostgreSQL yang baru Anda buat. Tambahkan juga aturan CORS untuk mengizinkan web Anda meremote data.
+2. Sesuaikan file `.env` untuk config database yang menggunakan kredensial PostgreSQL yang baru Anda buat. Tambahkan juga aturan CORS untuk mengizinkan web Anda meremote data.
    ```ini
    DATABASE_URL=postgresql://flowdb_user:password_super_kuat@localhost:5432/flowscope
    FLOWSCOPE_CORS_ORIGINS=http://IP_VPS_ANDA:3000,http://IP_VPS_ANDA,http://localhost:3000
    ```
-4. Verifikasi bahwa database dapat bermigrasi dan backend menyala normal:
-   ```bash
-   python -m uvicorn main:app --host 0.0.0.0 --port 8000
-   ```
-   *(Tekan CTRL+C jika log terlihat hijau dan API sudah jalan)*
+3. Verifikasi bahwa database dapat bermigrasi dan backend menyala normal:
 
-5. **Jalankan Backend Secara Permanen via PM2:**
    ```bash
-   pm2 start "source venv/bin/activate && python -m uvicorn main:app --host 0.0.0.0 --port 8000" --name flowscope-backend
+   python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
+   ```
+
+   _(Tekan CTRL+C jika log terlihat hijau dan API sudah jalan)_
+
+4. **Jalankan Backend Secara Permanen via PM2:**
+   ```bash
+   pm2 start "python3 -m uvicorn main:app --host 0.0.0.0 --port 8000" --name flowscope-backend
    ```
 
 ---
@@ -110,12 +113,11 @@ cd /var/www/flowscope
    ```bash
    echo "NEXT_PUBLIC_API_URL=http://IP_VPS_ANDA:8000" > .env.local
    ```
-4. Lakukan Build untuk *Production*:
+4. Lakukan Build untuk _Production_:
    ```bash
    npm run build
    ```
-   *(Setiap kali kamu mengubah IP/URL di `.env.local`, kamu wajib melakukan `npm run build` ulang)*.
-   
+   _(Setiap kali kamu mengubah IP/URL di `.env.local`, kamu wajib melakukan `npm run build` ulang)_.
 5. **Jalankan Frontend Secara Permanen via PM2:**
    ```bash
    pm2 start npm --name "flowscope-frontend" -- start
@@ -124,6 +126,7 @@ cd /var/www/flowscope
 ## 6. Menyimpan PM2 agar Otomatis Startup
 
 Agar PM2 akan kembali menghidupkan Backend dan Frontend saat server restart/mati tiba-tiba:
+
 ```bash
 pm2 save
 pm2 startup
@@ -135,11 +138,13 @@ pm2 startup
 ## 7. Expose ke Publik dengan Nginx Reverse Proxy (Opsional tapi Wajib untuk Akses Domain)
 
 Buat file konfigurasi nginx:
+
 ```bash
 sudo nano /etc/nginx/sites-available/flowscope
 ```
 
 Isikan rancangan berikut (ganti domain.com dengan IP/Domain Anda):
+
 ```nginx
 server {
     listen 80;
@@ -167,6 +172,7 @@ server {
 ```
 
 Aktifkan konfigurasi dan restart nginx:
+
 ```bash
 sudo ln -s /etc/nginx/sites-available/flowscope /etc/nginx/sites-enabled/
 sudo nginx -t

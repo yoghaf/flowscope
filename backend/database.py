@@ -11,9 +11,30 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from backend.config import Settings, get_settings
 from backend.models import AlertPreference, Base, LatestAssetState, MarketData, MarketDataBucket, SignalRecord, TradeSignal
-from backend.schemas import AlertEntry, AssetSnapshot
+from backend.models_demo import DemoSession, DemoTrade
+from backend.schemas import AssetSnapshot
 
 logger = logging.getLogger(__name__)
+
+
+async def get_database() -> DatabaseManager:
+    """Dependency that provides DatabaseManager instance.
+    
+    Used by FastAPI endpoints for database operations.
+    
+    Usage::
+    
+        from backend.database import get_database
+        
+        @router.get("/example")
+        async def example(db: DatabaseManager = Depends(get_database)):
+            # Use db instance
+            pass
+    """
+    settings = get_settings()
+    db = DatabaseManager(settings)
+    await db.init()
+    return db
 
 
 def get_db_session():
@@ -155,6 +176,75 @@ class DatabaseManager:
                         "CREATE INDEX IF NOT EXISTS ix_trade_signals_engine_tag "
                         "ON trade_signals (engine_tag)"
                     )
+                )
+                # Migration: Check if demo_trades has correct schema (check session_id column exists)
+                # Only drop and recreate if schema is outdated
+                result = await connection.execute(text("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name = 'demo_trades' AND column_name = 'session_id'
+                """))
+                has_session_id = result.fetchone() is not None
+                
+                if not has_session_id:
+                    # Schema outdated, drop and recreate
+                    logger.info("Demo tables have outdated schema, recreating...")
+                    await connection.execute(text("DROP TABLE IF EXISTS demo_trades CASCADE"))
+                    await connection.execute(text("DROP TABLE IF EXISTS demo_sessions CASCADE"))
+                
+                # Create demo trading tables if not exist
+                await connection.execute(
+                    text("""
+                        CREATE TABLE IF NOT EXISTS demo_trades (
+                            id SERIAL PRIMARY KEY,
+                            session_id VARCHAR(80) NOT NULL,
+                            symbol VARCHAR(20) NOT NULL,
+                            signal_type VARCHAR(40) NOT NULL,
+                            bias VARCHAR(12) NOT NULL,
+                            setup_type VARCHAR(20) NOT NULL,
+                            confidence DOUBLE PRECISION NOT NULL,
+                            side VARCHAR(4) NOT NULL,
+                            entry_price DOUBLE PRECISION NOT NULL,
+                            quantity DOUBLE PRECISION NOT NULL,
+                            stop_loss DOUBLE PRECISION,
+                            take_profit DOUBLE PRECISION,
+                            position_size_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                            order_id INTEGER,
+                            exit_price DOUBLE PRECISION,
+                            exit_reason VARCHAR(80),
+                            pnl DOUBLE PRECISION,
+                            pnl_pct DOUBLE PRECISION,
+                            status VARCHAR(16) NOT NULL DEFAULT 'OPEN',
+                            timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            closed_at TIMESTAMPTZ,
+                            extra_data JSON NOT NULL DEFAULT '{}'::json
+                        )
+                    """)
+                )
+                await connection.execute(
+                    text("""
+                        CREATE TABLE IF NOT EXISTS demo_sessions (
+                            id SERIAL PRIMARY KEY,
+                            session_id VARCHAR(80) UNIQUE NOT NULL,
+                            initial_balance DOUBLE PRECISION NOT NULL,
+                            final_balance DOUBLE PRECISION,
+                            total_trades INTEGER NOT NULL DEFAULT 0,
+                            winning_trades INTEGER NOT NULL DEFAULT 0,
+                            losing_trades INTEGER NOT NULL DEFAULT 0,
+                            description VARCHAR(255),
+                            started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            ended_at TIMESTAMPTZ,
+                            status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE'
+                        )
+                    """)
+                )
+                await connection.execute(
+                    text("CREATE INDEX IF NOT EXISTS idx_demo_trades_session ON demo_trades(session_id)")
+                )
+                await connection.execute(
+                    text("CREATE INDEX IF NOT EXISTS idx_demo_trades_symbol ON demo_trades(symbol)")
+                )
+                await connection.execute(
+                    text("CREATE INDEX IF NOT EXISTS idx_demo_trades_status ON demo_trades(status)")
                 )
             self.enabled = True
         except Exception as exc:
@@ -298,10 +388,27 @@ class DatabaseManager:
             return None
 
         async with self.session_factory() as session:
-            result = await session.execute(insert(TradeSignal).values(payload).returning(TradeSignal.id))
-            await session.commit()
-            row = result.first()
-            return row[0] if row else None
+            async with session.begin():
+                symbol = str(payload.get("symbol") or "").strip().upper()
+                result_value = str(payload.get("result") or "").strip().lower()
+                if symbol and result_value == "open":
+                    await session.execute(
+                        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+                        {"lock_key": f"trade_signal_open:{symbol}"},
+                    )
+                    existing = await session.execute(
+                        select(TradeSignal.id)
+                        .where(func.upper(TradeSignal.symbol) == symbol)
+                        .where(TradeSignal.result == "open")
+                        .limit(1)
+                    )
+                    if existing.first() is not None:
+                        logger.info("Skipping trade signal insert symbol=%s reason=active_position_exists", symbol)
+                        return None
+
+                result = await session.execute(insert(TradeSignal).values(payload).returning(TradeSignal.id))
+                row = result.first()
+                return row[0] if row else None
 
     async def update_trade_signal(self, trade_id: int, payload: dict[str, object]) -> None:
         if not self.enabled:
@@ -396,10 +503,13 @@ class DatabaseManager:
     ) -> bool:
         if not self.enabled:
             return False
+        symbol_key = symbol.strip().upper()
+        if not symbol_key:
+            return False
 
         statement = (
             select(TradeSignal.id)
-            .where(TradeSignal.symbol == symbol)
+            .where(func.upper(TradeSignal.symbol) == symbol_key)
             .where(TradeSignal.result == "open")
             .limit(1)
         )
@@ -589,3 +699,103 @@ class DatabaseManager:
         async with self.session_factory() as session:
             result = await session.scalars(statement)
             return list(result)
+
+    async def save_demo_trade(self, trade_record: dict[str, object]) -> None:
+        """Save a demo trade record to database."""
+        if not self.enabled:
+            return
+
+        async with self.session_factory() as session:
+            from sqlalchemy import insert
+            await session.execute(insert(DemoTrade).values(trade_record))
+            await session.commit()
+
+    async def update_demo_trade(
+        self,
+        symbol: str,
+        exit_price: float,
+        pnl: float,
+        reason: str,
+        status: str = "CLOSED",
+    ) -> None:
+        """Update a demo trade on close."""
+        if not self.enabled:
+            return
+
+        async with self.session_factory() as session:
+            from sqlalchemy import update
+            from sqlalchemy import and_
+            
+            stmt = (
+                update(DemoTrade)
+                .where(and_(DemoTrade.symbol == symbol, DemoTrade.status == "OPEN"))
+                .values(
+                    exit_price=exit_price,
+                    exit_reason=reason,
+                    pnl=pnl,
+                    pnl_pct=(pnl / exit_price * 100) if exit_price > 0 else 0,
+                    status=status,
+                    closed_at=datetime.now(UTC),
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+    async def get_demo_trades_by_session(self, session_id: str) -> list[dict]:
+        """Get all demo trades for a session."""
+        if not self.enabled:
+            return []
+
+        async with self.session_factory() as session:
+            from sqlalchemy import select
+            result = await session.execute(
+                select(DemoTrade).where(DemoTrade.session_id == session_id).order_by(DemoTrade.timestamp.desc())
+            )
+            trades = result.scalars().all()
+            return [t.__dict__ for t in trades if not t.__dict__.get('_sa_instance_state')]
+
+    async def log_demo_session_start(self, session_id: str, initial_balance: float, description: str | None = None) -> None:
+        """Log demo session start."""
+        if not self.enabled:
+            return
+
+        async with self.session_factory() as session:
+            from sqlalchemy import insert
+            await session.execute(
+                insert(DemoSession).values(
+                    session_id=session_id,
+                    initial_balance=initial_balance,
+                    description=description,
+                )
+            )
+            await session.commit()
+
+    async def log_demo_session_end(
+        self,
+        session_id: str,
+        total_trades: int,
+        winning_trades: int,
+        losing_trades: int,
+    ) -> None:
+        """Log demo session end."""
+        if not self.enabled:
+            return
+
+        async with self.session_factory() as session:
+            from sqlalchemy import update
+            from sqlalchemy import and_
+            
+            # Get final balance from latest trade or session
+            stmt = (
+                update(DemoSession)
+                .where(DemoSession.session_id == session_id)
+                .values(
+                    total_trades=total_trades,
+                    winning_trades=winning_trades,
+                    losing_trades=losing_trades,
+                    ended_at=datetime.now(UTC),
+                    status="COMPLETED",
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()

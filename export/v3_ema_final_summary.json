@@ -1,0 +1,30 @@
+{
+  "backtest_date": "2026-05-05T14:52:38.039674+00:00",
+  "days": 30,
+  "symbols": 364,
+  "strategy": "V3 EMA (Trial 24) FINAL \u2014 Fixed",
+  "parameters": {
+    "strategy_version": "v3_adaptive",
+    "entry_filter_min_abs_oi_delta_z": 0.897,
+    "entry_filter_min_volume_z": 1.707,
+    "continuation_min_flow_alignment": 0.874,
+    "entry_filter_max_compression_score_15m": 0.441,
+    "entry_filter_min_history_1h": 67,
+    "entry_filter_min_clarity_confidence": 0.806
+  },
+  "fixes_applied": [
+    "BUG FIX #1: One-position rule menggunakan exit_timestamp untuk overlap detection",
+    "BUG FIX #2: EntryTimestamp & ExitTimestamp ditambahkan ke CSV",
+    "BUG FIX #3: EMA filter cek crossing DAN posisi harga vs EMA30"
+  ],
+  "metrics": {
+    "total_trades": 234,
+    "wins": 100,
+    "losses": 134,
+    "winrate": 42.73504273504273,
+    "net_pnl_pct": -2.059079996850843,
+    "gross_profit": 269.2237564583034,
+    "gross_loss": 271.28283645515427,
+    "profit_factor": 0.9924098405053677
+  }
+}

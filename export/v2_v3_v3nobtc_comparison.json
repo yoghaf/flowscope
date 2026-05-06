@@ -1,0 +1,28 @@
+{
+  "generated_at": "2026-05-04T15:27:11.292426+00:00",
+  "strategies": {
+    "v2_balanced": "v2_balanced",
+    "v3_ema": "v3_adaptive (Trial 24 + EMA)",
+    "v3_ema_no_btc": "v3_ema_no_btc (Trial 24 + EMA + No BTC)"
+  },
+  "statistics": {
+    "v2_balanced": {
+      "trades": 73,
+      "winrate": "35.6%",
+      "pf": "0.69",
+      "pnl": "-33.7%"
+    },
+    "v3_ema": {
+      "trades": 55,
+      "winrate": "43.6%",
+      "pf": "1.16",
+      "pnl": "+9.8%"
+    },
+    "v3_ema_no_btc": {
+      "trades": 55,
+      "winrate": "43.6%",
+      "pf": "1.16",
+      "pnl": "+9.8%"
+    }
+  }
+}

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FlowScope Demo Trading - Binance Testnet</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>🚀 FlowScope Demo Trading</h1>
+        <p class="subtitle">Binance Testnet Paper Trading</p>
+      </header>
+
+      <!-- Control Panel -->
+      <section class="control-panel">
+        <div class="status-indicator" id="statusIndicator">
+          <span class="status-dot"></span>
+          <span id="statusText">Disconnected</span>
+        </div>
+
+        <div class="controls">
+          <button id="btnStart" class="btn btn-success" onclick="startDemo()">
+            ▶ Start Demo
+          </button>
+          <button
+            id="btnStop"
+            class="btn btn-danger"
+            onclick="stopDemo()"
+            disabled
+          >
+            ⏹ Stop Demo
+          </button>
+          <button
+            id="btnRefresh"
+            class="btn btn-primary"
+            onclick="refreshStatus()"
+          >
+            🔄 Refresh
+          </button>
+        </div>
+      </section>
+
+      <!-- Statistics Cards -->
+      <section class="stats-grid">
+        <div class="stat-card">
+          <h3>Balance</h3>
+          <p class="stat-value" id="statBalance">$0.00</p>
+        </div>
+        <div class="stat-card">
+          <h3>Unrealized PnL</h3>
+          <p class="stat-value" id="statPnL">$0.00</p>
+        </div>
+        <div class="stat-card">
+          <h3>Total Trades</h3>
+          <p class="stat-value" id="statTrades">0</p>
+        </div>
+        <div class="stat-card">
+          <h3>Win Rate</h3>
+          <p class="stat-value" id="statWinrate">0%</p>
+        </div>
+      </section>
+
+      <!-- Equity Curve -->
+      <section class="chart-section">
+        <h2>Equity Curve</h2>
+        <canvas id="equityChart"></canvas>
+      </section>
+
+      <!-- Active Positions -->
+      <section class="table-section">
+        <h2>Active Positions</h2>
+        <table id="positionsTable">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Size</th>
+              <th>Entry Price</th>
+              <th>Mark Price</th>
+              <th>PnL</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="positionsBody">
+            <tr>
+              <td colspan="7" class="empty-message">No active positions</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Recent Trades Log -->
+      <section class="table-section">
+        <h2>Recent Trades</h2>
+        <table id="tradesTable">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Symbol</th>
+              <th>Signal</th>
+              <th>Bias</th>
+              <th>Setup</th>
+              <th>Entry</th>
+              <th>PnL</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="tradesBody">
+            <tr>
+              <td colspan="8" class="empty-message">No trades yet</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Signal Execution Log -->
+      <section class="log-section">
+        <h2>Signal Log</h2>
+        <div id="signalLog" class="signal-log">
+          <div class="log-entry info">Waiting for signals...</div>
+        </div>
+      </section>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     )
     frontend_url: str = "http://localhost:3000"
 
+    # Binance Testnet API Configuration (Demo Trading)
+    binance_testnet_api_key: str = ""
+    binance_testnet_api_secret: str = ""
+
     universe_size: int = 120
     default_symbols: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [
@@ -274,6 +278,9 @@ class Settings(BaseSettings):
     binance_ws_url: str = "wss://fstream.binance.com"
     bybit_rest_url: str = "https://api.bybit.com"
     okx_rest_url: str = "https://www.okx.com"
+
+    # V3 EMA No BTC variant - removes dependency on BTC global trend
+    entry_filter_use_global_btc_trend: bool = True
 
     @field_validator("cors_origins", "default_symbols", mode="before")
     @classmethod

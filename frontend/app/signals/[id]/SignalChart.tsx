@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createChart, ColorType, CandlestickSeries, type Time } from "lightweight-charts";
+import { api } from "@/lib/api";
 
 interface SignalChartProps {
   symbol: string;
@@ -31,7 +32,7 @@ export function SignalChart({ symbol, entryPrice, tp1, tp2, sl, bias, timeframe,
     if (!chartContainerRef.current) return;
 
     // Convert internal timeframe to Binance interval
-    const intervalMap: Record<string, string> = {
+    const intervalMap: Record<string, "15m" | "1h" | "4h" | "1d"> = {
       "15m": "15m",
       "1h": "1h",
       "4h": "4h",
@@ -69,26 +70,19 @@ export function SignalChart({ symbol, entryPrice, tp1, tp2, sl, bias, timeframe,
     const fetchKlines = async () => {
       try {
         setLoading(true);
-        // Clean symbol (remove perps formatting if any, usually Binance uses BTCUSDT)
         const cleanSymbol = symbol.replace(/[^A-Z0-9]/g, "").toUpperCase();
-        
-        // Fetch 500 candles before and after
-        const response = await fetch(
-          `https://api.binance.com/api/v3/klines?symbol=${cleanSymbol}&interval=${interval}&limit=1000`
-        );
-        
-        if (!response.ok) {
-          throw new Error(`Binance API error: ${response.statusText}`);
-        }
-        
-        const data = await response.json();
-        
-        const klines: Kline[] = data.map((d: any) => ({
-          time: Math.floor(d[0] / 1000) as Time,
-          open: parseFloat(d[1]),
-          high: parseFloat(d[2]),
-          low: parseFloat(d[3]),
-          close: parseFloat(d[4]),
+        const data = await api.getSignalKlines({
+          symbol: cleanSymbol,
+          interval,
+          limit: 1000,
+        });
+
+        const klines: Kline[] = data.items.map((item) => ({
+          time: item.time as Time,
+          open: item.open,
+          high: item.high,
+          low: item.low,
+          close: item.close,
         }));
 
         candlestickSeries.setData(klines);

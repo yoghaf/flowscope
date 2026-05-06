@@ -38,8 +38,12 @@ class TradeEvaluator:
             # is set immediately when entry price equals current price). We must still filter
             # stale buckets for these trades because the current candle's high/low contains
             # price data from before the trade existed.
-            is_fresh_trade = not history_logs
-            if history_logs:
+            has_evaluation_sample = any(
+                isinstance(log, dict) and log.get("event") in {"update", "tp1_hit", "close"}
+                for log in history_logs
+            )
+            is_fresh_trade = not has_evaluation_sample
+            if history_logs and has_evaluation_sample:
                 evaluation_anchor = datetime.fromisoformat(history_logs[-1]["timestamp"])
             else:
                 evaluation_anchor = getattr(trade, "last_scale_in_at", None) or trade.entry_touched_at or trade.timestamp
@@ -142,15 +146,25 @@ class TradeEvaluator:
                         should_log = True
                 
                 if should_log:
+                    current_r = pnl_pct / risk_pct if risk_pct and risk_pct > BREAKEVEN_EPSILON else None
+                    mfe_r = max_profit_pct / risk_pct if risk_pct and risk_pct > BREAKEVEN_EPSILON else None
+                    mae_r = max_drawdown_pct / risk_pct if risk_pct and risk_pct > BREAKEVEN_EPSILON else None
                     history_logs.append({
                         "timestamp": bucket_time.isoformat(),
                         "price": price,
                         "pnl_pct": round(pnl_pct, 4),
+                        "r_multiple": round(current_r, 4) if current_r is not None else None,
+                        "mfe_r": round(mfe_r, 4) if mfe_r is not None else None,
+                        "mae_r": round(mae_r, 4) if mae_r is not None else None,
+                        "risk_pct": round(risk_pct, 6) if risk_pct is not None else None,
                         "volume": bucket.spot_volume_delta + bucket.futures_volume_delta,
                         "oi": bucket.open_interest_close,
                         "funding": bucket.funding_rate_close,
                         "long_short_ratio": getattr(bucket, "long_short_ratio_close", None),
                         "taker_ratio": getattr(bucket, "taker_buy_sell_ratio_close", None),
+                        "flow_alignment": self._current_flow_alignment(symbol=trade.symbol, timeframe=trade_timeframe),
+                        "market_regime": getattr(trade, "market_regime", None),
+                        "volatility_regime": getattr(trade, "volatility_regime", None),
                         "event": "update",
                     })
 
@@ -174,6 +188,8 @@ class TradeEvaluator:
                             "timestamp": bucket.last_timestamp.isoformat(),
                             "price": trade.target_price_1,
                             "pnl_pct": round(tp1_pnl_pct, 4),
+                            "r_multiple": round(tp1_pnl_pct / risk_pct, 4) if risk_pct and risk_pct > BREAKEVEN_EPSILON else None,
+                            "risk_pct": round(risk_pct, 6) if risk_pct is not None else None,
                             "event": "tp1_hit",
                             "reason": "Take Profit 1"
                         })
@@ -187,6 +203,8 @@ class TradeEvaluator:
                             "timestamp": bucket.last_timestamp.isoformat(),
                             "price": trade.target_price_1,
                             "pnl_pct": round(tp1_pnl_pct, 4),
+                            "r_multiple": round(tp1_pnl_pct / risk_pct, 4) if risk_pct and risk_pct > BREAKEVEN_EPSILON else None,
+                            "risk_pct": round(risk_pct, 6) if risk_pct is not None else None,
                             "event": "tp1_hit",
                             "reason": "Take Profit 1"
                         })
@@ -287,6 +305,8 @@ class TradeEvaluator:
                             "timestamp": now.isoformat(),
                             "price": rt_price,
                             "pnl_pct": 0.0,
+                            "r_multiple": 0.0,
+                            "risk_pct": round(risk_pct, 6) if risk_pct is not None else None,
                             "event": "entry_touch",
                             "reason": "Entry touched (realtime)",
                         })
@@ -327,6 +347,8 @@ class TradeEvaluator:
                                 "timestamp": now.isoformat(),
                                 "price": trade.target_price_1,
                                 "pnl_pct": round(tp1_pnl_pct, 4),
+                                "r_multiple": round(tp1_pnl_pct / risk_pct, 4) if risk_pct and risk_pct > BREAKEVEN_EPSILON else None,
+                                "risk_pct": round(risk_pct, 6) if risk_pct is not None else None,
                                 "event": "tp1_hit",
                                 "reason": "Take Profit 1 (realtime)",
                             })
@@ -423,6 +445,8 @@ class TradeEvaluator:
                     "timestamp": closed_at.isoformat() if closed_at else now.isoformat(),
                     "price": exit_price if exit_price is not None else price,
                     "pnl_pct": round(pnl_pct, 4),
+                    "r_multiple": round(pnl_pct / risk_pct, 4) if risk_pct and risk_pct > BREAKEVEN_EPSILON else None,
+                    "risk_pct": round(risk_pct, 6) if risk_pct is not None else None,
                     "event": "close",
                     "reason": close_reason or "Unknown",
                 })
