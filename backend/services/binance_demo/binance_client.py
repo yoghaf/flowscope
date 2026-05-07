@@ -253,6 +253,9 @@ class BinanceTestnetClient:
         price: float | None = None,
         stop_price: float | None = None,
         time_in_force: str = "GTC",
+        reduce_only: bool = False,
+        working_type: str | None = "MARK_PRICE",
+        new_order_resp_type: str | None = "RESULT",
     ) -> dict[str, Any]:
         """
         Place an order on Binance Testnet.
@@ -285,6 +288,10 @@ class BinanceTestnetClient:
                 "type": order_type,
                 "quantity": quantity,
             }
+            if reduce_only:
+                order_params["reduceOnly"] = "true"
+            if new_order_resp_type:
+                order_params["newOrderRespType"] = new_order_resp_type
 
             if order_type in ["LIMIT", "STOP_LIMIT"]:
                 if price is None:
@@ -296,6 +303,8 @@ class BinanceTestnetClient:
                 if stop_price is None:
                     raise ValueError("Stop price required for STOP orders")
                 order_params["stopPrice"] = stop_price
+                if working_type:
+                    order_params["workingType"] = working_type
 
             order = self.client.futures_create_order(**order_params)
 
@@ -310,6 +319,8 @@ class BinanceTestnetClient:
                 "type": order.get("type"),
                 "quantity": float(order.get("origQty", 0)),
                 "price": float(order.get("price", 0)),
+                "avg_price": float(order.get("avgPrice", 0) or 0),
+                "stop_price": float(order.get("stopPrice", 0) or 0),
                 "status": order.get("status"),
                 "time": datetime.fromtimestamp(
                     order.get("updateTime", 0) / 1000, UTC
@@ -357,6 +368,7 @@ class BinanceTestnetClient:
                     "executedQty": float(order.get("executedQty", 0)),
                     "status": order.get("status"),
                     "timeInForce": order.get("timeInForce"),
+                    "reduceOnly": str(order.get("reduceOnly", "false")).lower() == "true",
                     "time": create_time,
                     "createTime": create_time,
                     "updateTime": order.get("updateTime"),
@@ -528,6 +540,20 @@ class BinanceTestnetClient:
         except BinanceAPIException as e:
             logger.error(f"Error canceling order: {e}")
             return {"error": str(e), "success": False}
+
+    async def cancel_all_open_orders(self, symbol: str) -> list[dict[str, Any]]:
+        """Cancel all open futures orders for one symbol."""
+        if not self.connected:
+            raise RuntimeError("Not connected to Binance Testnet")
+
+        open_orders = await self.get_open_orders(symbol=symbol)
+        results: list[dict[str, Any]] = []
+        for order in open_orders:
+            order_id = order.get("orderId")
+            if order_id is None:
+                continue
+            results.append(await self.cancel_order(symbol=symbol, order_id=int(order_id)))
+        return results
 
     async def get_symbol_info(self, symbol: str) -> dict[str, Any] | None:
         """

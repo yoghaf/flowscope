@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 
+type StageTone = "blue" | "emerald" | "amber" | "rose" | "slate";
+
 function asNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -45,14 +47,14 @@ function asStringArray(value: unknown): string[] {
 }
 
 function formatPrice(price: number | null) {
-  if (price === null || price === undefined) return "—";
+  if (price === null || price === undefined) return "--";
   return price < 1
     ? price.toPrecision(4)
     : price.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
 function timeAgo(dateStr: string | null) {
-  if (!dateStr) return "—";
+  if (!dateStr) return "--";
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
@@ -61,6 +63,104 @@ function timeAgo(dateStr: string | null) {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   return `${days}d ago`;
+}
+
+const stageBadgeClasses: Record<StageTone, string> = {
+  blue: "border-blue-500/20 bg-blue-500/10 text-blue-300",
+  emerald: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+  amber: "border-amber-500/20 bg-amber-500/10 text-amber-300",
+  rose: "border-rose-500/20 bg-rose-500/10 text-rose-300",
+  slate: "border-white/10 bg-white/5 text-muted-foreground",
+};
+
+const stagePanelClasses: Record<StageTone, string> = {
+  blue: "border-blue-500/20 bg-blue-500/5",
+  emerald: "border-emerald-500/25 bg-emerald-500/5",
+  amber: "border-amber-500/25 bg-amber-500/5",
+  rose: "border-rose-500/25 bg-rose-500/5",
+  slate: "border-white/10 bg-white/[0.03]",
+};
+
+function tradeCloseReason(trade: any) {
+  return typeof trade?.close_reason === "string" ? trade.close_reason.toLowerCase() : "";
+}
+
+function tradeHitTp2(trade: any) {
+  const reason = tradeCloseReason(trade);
+  return trade?.result !== "open" && (reason.includes("target 2") || reason.includes("tp2"));
+}
+
+function tradeHitInvalidation(trade: any) {
+  return trade?.result !== "open" && tradeCloseReason(trade).includes("invalidation");
+}
+
+function tradeHitBreakevenStop(trade: any) {
+  return trade?.result !== "open" && tradeCloseReason(trade).includes("breakeven sl");
+}
+
+function tradeHitTrailStop(trade: any) {
+  return trade?.result !== "open" && tradeCloseReason(trade).includes("trail stop");
+}
+
+function resolveTradeStage(trade: any): { label: string; detail: string; tone: StageTone } {
+  if (trade?.result === "open") {
+    return trade?.tp1_hit
+      ? { label: "TP1 Hit", detail: "Stop already moved to entry. Position is watching TP2.", tone: "emerald" }
+      : { label: "Watching", detail: "Position is waiting for TP1 or SL.", tone: "blue" };
+  }
+
+  if (tradeHitTp2(trade)) {
+    return { label: "TP2 Hit", detail: "Final target reached and position is closed.", tone: "emerald" };
+  }
+
+  if (tradeHitInvalidation(trade)) {
+    return { label: "SL Hit", detail: "Price reached invalidation stop loss.", tone: "rose" };
+  }
+
+  if (tradeHitBreakevenStop(trade)) {
+    return { label: "BE Stop", detail: "TP1 was hit, then remaining position stopped at entry.", tone: "amber" };
+  }
+
+  if (tradeHitTrailStop(trade)) {
+    return { label: "Trail Stop", detail: "TP1 was hit, then trailing stop closed the remainder.", tone: "amber" };
+  }
+
+  if (trade?.result === "timeout") {
+    return { label: "Timeout", detail: trade?.close_reason ?? "Entry was not touched before timeout.", tone: "slate" };
+  }
+
+  if (trade?.result === "win" && trade?.tp1_hit) {
+    return { label: "TP Win", detail: "TP1 or TP exit was recorded, but close reason is missing.", tone: "emerald" };
+  }
+
+  if (trade?.result === "breakeven") {
+    return { label: "Breakeven", detail: trade?.close_reason ?? "Position closed flat.", tone: "amber" };
+  }
+
+  if (trade?.result === "loss") {
+    return { label: "Risk Exit", detail: trade?.close_reason ?? "Position closed in loss.", tone: "rose" };
+  }
+
+  const pnlPct = asNumber(trade?.pnl_pct) ?? 0;
+  return {
+    label: String(trade?.result ?? "Closed"),
+    detail: trade?.close_reason ?? "Position is closed.",
+    tone: pnlPct >= 0 ? "emerald" : "rose",
+  };
+}
+
+function timelineStage(log: any): { label: string; tone: StageTone } {
+  const event = typeof log?.event === "string" ? log.event : "";
+  const reason = typeof log?.reason === "string" ? log.reason.toLowerCase() : "";
+  if (event === "tp1_hit") return { label: "TP1 Hit", tone: "emerald" };
+  if (event !== "close") return { label: "Monitor Update", tone: "blue" };
+  if (reason.includes("target 2") || reason.includes("tp2")) return { label: "TP2 Hit", tone: "emerald" };
+  if (reason.includes("invalidation")) return { label: "SL Hit", tone: "rose" };
+  if (reason.includes("breakeven sl")) return { label: "BE Stop", tone: "amber" };
+  if (reason.includes("trail stop")) return { label: "Trail Stop", tone: "amber" };
+  if (reason.includes("timeout") || reason.includes("never touched")) return { label: "Timeout", tone: "slate" };
+  const pnlPct = asNumber(log?.pnl_pct) ?? 0;
+  return { label: log?.reason || "Closed", tone: pnlPct >= 0 ? "emerald" : "rose" };
 }
 
 export default function SignalDetailPage() {
@@ -139,6 +239,21 @@ export default function SignalDetailPage() {
   const isBullish = trade.bias === "Bullish";
   const isOpen = trade.result === "open";
   const isWin = trade.result === "win";
+  const stage = resolveTradeStage(trade);
+  const tp2Hit = tradeHitTp2(trade);
+  const slHit = tradeHitInvalidation(trade);
+  const beStopHit = tradeHitBreakevenStop(trade);
+  const trailStopHit = tradeHitTrailStop(trade);
+  const stopHit = slHit || beStopHit || trailStopHit;
+  const stopLabel = slHit
+    ? "SL Hit"
+    : beStopHit
+      ? "BE Stop Hit"
+      : trailStopHit
+        ? "Trail Stop Hit"
+        : trade.tp1_hit
+          ? "Trailing Stop"
+          : "Stop Loss";
   const tradeSymbol =
     typeof trade.symbol === "string" ? trade.symbol : "UNKNOWN";
   const entryPrice = asNumber(trade.entry_price);
@@ -273,6 +388,11 @@ export default function SignalDetailPage() {
               >
                 {trade.result}
               </span>
+              <span
+                className={`rounded-lg border px-2.5 py-1 text-xs font-semibold uppercase ${stageBadgeClasses[stage.tone]}`}
+              >
+                {stage.label}
+              </span>
               {trade.strategy_version !== "unknown" && (
                 <span className="rounded-lg border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 text-xs font-semibold uppercase text-violet-400">
                   {trade.strategy_version}
@@ -297,6 +417,36 @@ export default function SignalDetailPage() {
             <div className="text-xs text-muted-foreground/70">
               Entry hit at {new Date(trade.entry_touched_at).toLocaleString()}
             </div>
+          )}
+        </div>
+      </div>
+
+      <div className={`rounded-2xl border p-4 ${stagePanelClasses[stage.tone]}`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${stageBadgeClasses[stage.tone]}`}>
+              {stage.tone === "rose" ? (
+                <XCircle className="h-4 w-4" />
+              ) : stage.tone === "emerald" ? (
+                <CheckCircle2 className="h-4 w-4" />
+              ) : stage.tone === "amber" ? (
+                <Shield className="h-4 w-4" />
+              ) : (
+                <Activity className="h-4 w-4" />
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Position Status
+              </p>
+              <h2 className="mt-1 text-xl font-bold">{stage.label}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{stage.detail}</p>
+            </div>
+          </div>
+          {trade.close_reason && (
+            <span className={`rounded-lg border px-3 py-1.5 text-xs font-semibold uppercase ${stageBadgeClasses[stage.tone]}`}>
+              {trade.close_reason}
+            </span>
           )}
         </div>
       </div>
@@ -415,19 +565,33 @@ export default function SignalDetailPage() {
             <p className="mt-1 text-xl font-bold">{formatPrice(entryPrice)}</p>
           </div>
           <div
-            className={`rounded-xl p-4 ring-1 ${trade.tp1_hit && activeStopPrice !== null ? "bg-amber-500/5 ring-amber-500/10" : "bg-rose-500/5 ring-rose-500/10"}`}
+            className={`rounded-xl p-4 ring-1 ${
+              slHit
+                ? "bg-rose-500/10 ring-rose-500/30"
+                : beStopHit || trailStopHit || (trade.tp1_hit && activeStopPrice !== null)
+                  ? "bg-amber-500/10 ring-amber-500/25"
+                  : "bg-rose-500/5 ring-rose-500/10"
+            }`}
           >
             <div className="flex items-center justify-between">
               <p
-                className={`text-xs font-medium uppercase ${trade.tp1_hit ? "text-amber-400" : "text-rose-400"}`}
+                className={`text-xs font-medium uppercase ${slHit ? "text-rose-300" : trade.tp1_hit || beStopHit || trailStopHit ? "text-amber-400" : "text-rose-400"}`}
               >
-                {trade.tp1_hit ? "Trailing Stop" : "Stop Loss"}
+                {stopLabel}
               </p>
-              {trade.tp1_hit && <Shield className="h-3 w-3 text-amber-400" />}
+              {slHit ? (
+                <XCircle className="h-3 w-3 text-rose-300" />
+              ) : (trade.tp1_hit || beStopHit || trailStopHit) ? (
+                <Shield className="h-3 w-3 text-amber-400" />
+              ) : null}
             </div>
             <p className="mt-1 text-xl font-bold">
               {formatPrice(activeStopPrice)}
             </p>
+            <MiniStatus
+              label={stopHit ? "Triggered" : "Armed"}
+              tone={slHit ? "rose" : stopHit ? "amber" : "slate"}
+            />
             {trade.tp1_hit && activeStopPrice !== invalidationPrice && (
               <p className="mt-0.5 text-[10px] text-muted-foreground line-through">
                 SL: {formatPrice(invalidationPrice)}
@@ -455,24 +619,48 @@ export default function SignalDetailPage() {
             <p className="mt-1 text-xl font-bold">
               {formatPrice(targetPrice1)}
             </p>
+            <MiniStatus
+              label={trade.tp1_hit ? "Hit" : isOpen ? "Pending" : "Not Hit"}
+              tone={trade.tp1_hit ? "emerald" : "slate"}
+            />
             {currentPrice && !trade.tp1_hit && (
               <p className="mt-1 text-xs text-emerald-400/70">
                 {getDistanceStr(targetPrice1, currentPrice)}
               </p>
             )}
           </div>
-          <div className="rounded-xl bg-emerald-500/5 p-4 ring-1 ring-emerald-500/10">
-            <p className="text-xs font-medium uppercase text-emerald-400">
-              Take Profit 2
-            </p>
+          <div
+            className={`rounded-xl p-4 ring-1 ${
+              tp2Hit
+                ? "bg-emerald-500/10 ring-emerald-500/30"
+                : "bg-emerald-500/5 ring-emerald-500/10"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium uppercase text-emerald-400">
+                {tp2Hit ? "TP2 Hit" : "Take Profit 2"}
+              </p>
+              {tp2Hit && <CheckCircle2 className="h-3 w-3 text-emerald-300" />}
+            </div>
             <p className="mt-1 text-xl font-bold">
               {formatPrice(targetPrice2)}
             </p>
+            <MiniStatus
+              label={tp2Hit ? "Hit" : isOpen ? "Target" : "Not Hit"}
+              tone={tp2Hit ? "emerald" : "slate"}
+            />
           </div>
         </div>
 
         {!isOpen && (
           <div className="mt-6 flex flex-wrap items-center gap-4 rounded-xl bg-white/[0.02] p-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Closed By:</span>
+              <span className={`rounded-md border px-2 py-0.5 text-xs font-bold uppercase ${stageBadgeClasses[stage.tone]}`}>
+                {stage.label}
+              </span>
+            </div>
+            <div className="h-4 w-px bg-white/10" />
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Final PnL:</span>
               <span
@@ -616,7 +804,7 @@ export default function SignalDetailPage() {
               </p>
               <p className="mt-1 text-lg font-bold">
                 {positionSizeMultiplier === null
-                  ? "â€”"
+                  ? "--"
                   : `${positionSizeMultiplier.toFixed(2)}x`}
               </p>
             </div>
@@ -750,6 +938,7 @@ export default function SignalDetailPage() {
             {historyLogs.map((log: any, index: number) => {
               const isClose = log.event === "close";
               const isTp1 = log.event === "tp1_hit";
+              const logStage = timelineStage(log);
               const logPnl = asNumber(log.pnl_pct) ?? 0;
               const logVolume = asNumber(log.volume);
               const logOi = asNumber(log.oi);
@@ -764,18 +953,24 @@ export default function SignalDetailPage() {
                     ? "text-rose-400"
                     : "text-foreground";
 
-              let dotColor = "bg-blue-500";
-              let cardBg = "bg-white/[0.02] border-white/5";
-              if (isClose) {
-                dotColor = logPnl > 0 ? "bg-emerald-500" : "bg-rose-500";
-                cardBg =
-                  logPnl > 0
-                    ? "bg-emerald-500/5 border-emerald-500/20"
-                    : "bg-rose-500/5 border-rose-500/20";
-              } else if (isTp1) {
-                dotColor = "bg-emerald-400";
-                cardBg = "bg-emerald-400/5 border-emerald-400/20";
-              }
+              const dotColor =
+                logStage.tone === "emerald"
+                  ? "bg-emerald-500"
+                  : logStage.tone === "rose"
+                    ? "bg-rose-500"
+                    : logStage.tone === "amber"
+                      ? "bg-amber-400"
+                      : logStage.tone === "slate"
+                        ? "bg-slate-500"
+                        : "bg-blue-500";
+              const cardBg =
+                logStage.tone === "emerald"
+                  ? "bg-emerald-500/5 border-emerald-500/20"
+                  : logStage.tone === "rose"
+                    ? "bg-rose-500/5 border-rose-500/20"
+                    : logStage.tone === "amber"
+                      ? "bg-amber-500/5 border-amber-500/20"
+                      : "bg-white/[0.02] border-white/5";
 
               return (
                 <div key={index} className="relative flex gap-6 pb-6 last:pb-0">
@@ -794,16 +989,11 @@ export default function SignalDetailPage() {
                           second: "2-digit",
                         })}
                       </p>
-                      {isClose && (
+                      {(isClose || isTp1) && (
                         <span
-                          className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${logPnl > 0 ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"}`}
+                          className={`rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${stageBadgeClasses[logStage.tone]}`}
                         >
-                          {log.reason || "Closed"}
-                        </span>
-                      )}
-                      {isTp1 && (
-                        <span className="rounded-md bg-emerald-400/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300">
-                          🎯 Partial TP1 Hit
+                          {logStage.label}
                         </span>
                       )}
                     </div>
@@ -943,6 +1133,20 @@ function LiveMetric({
         {value}
       </p>
     </div>
+  );
+}
+
+function MiniStatus({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: StageTone;
+}) {
+  return (
+    <span className={`mt-2 inline-flex rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase ${stageBadgeClasses[tone]}`}>
+      {label}
+    </span>
   );
 }
 

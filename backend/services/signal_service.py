@@ -3043,6 +3043,14 @@ class SignalService:
                 bucket=bucket,
                 state=asset_state,
             )
+            await self._maybe_execute_demo_trade(
+                symbol=symbol,
+                timeframe=timeframe,
+                action=action,
+                execution=execution,
+                confidence=clarity_confidence,
+                position_size_multiplier=float(features["position_size_multiplier"]),
+            )
             
             expectancy = self.setup_expectancy.get(action.setup_type, 0.0)
             if execution.quality_score == "A" and expectancy > 0:
@@ -3052,6 +3060,60 @@ class SignalService:
                     symbol,
                     action.bias,
                 )
+
+    async def _maybe_execute_demo_trade(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        action: ActionAssessment,
+        execution: ExecutionPlan,
+        confidence: float,
+        position_size_multiplier: float,
+    ) -> None:
+        """Send freshly triggered AI signals to demo trading when enabled."""
+        try:
+            from backend.api.demo_trading import get_demo_engine, get_demo_settings
+
+            demo_settings = get_demo_settings()
+            if not demo_settings.auto_execute:
+                return
+            if timeframe not in set(demo_settings.enabled_timeframes):
+                return
+            if action.setup_type not in set(demo_settings.enabled_setups):
+                return
+
+            demo_engine = get_demo_engine()
+            if demo_engine is None or not demo_engine.running:
+                logger.info("Demo auto-execute skipped for %s: demo session not running", symbol)
+                return
+
+            result = await demo_engine.execute_signal(
+                symbol=symbol,
+                signal_type=str(getattr(action, "signal", action.setup_type)),
+                bias=action.bias,
+                setup_type=action.setup_type,
+                confidence=confidence,
+                entry_price=execution.entry_min,
+                stop_loss=execution.invalidation,
+                take_profit=execution.target,
+                take_profit_1=execution.target_1,
+                take_profit_2=execution.target_2,
+                position_size_multiplier=position_size_multiplier,
+                risk_usdt=demo_settings.risk_usdt,
+                max_slippage_pct=demo_settings.max_slippage_pct,
+                max_entry_drift_pct=demo_settings.max_entry_drift_pct,
+                max_market_tp1_progress_pct=demo_settings.max_market_tp1_progress_pct,
+                max_pullback_tp1_progress_pct=demo_settings.max_pullback_tp1_progress_pct,
+                entry_mode=demo_settings.entry_mode,
+                tp1_close_pct=demo_settings.tp1_close_pct,
+            )
+            if result.get("success"):
+                logger.info("Demo auto-execute opened %s result=%s", symbol, result)
+            else:
+                logger.warning("Demo auto-execute rejected %s: %s", symbol, result.get("error"))
+        except Exception:
+            logger.exception("Demo auto-execute failed for symbol=%s timeframe=%s", symbol, timeframe)
 
     @staticmethod
     def _execution_levels_sane(

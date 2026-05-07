@@ -374,6 +374,48 @@ export const api = {
     }>("/demo/signals");
     return response.data || response.signals || [];
   },
+  async getDemoSettings() {
+    return fetchJson<{
+      auto_execute: boolean;
+      risk_usdt: number;
+      entry_mode: "market_only" | "market_pullback_limit";
+      max_entry_drift_pct: number;
+      max_market_tp1_progress_pct: number;
+      max_pullback_tp1_progress_pct: number;
+      tp1_close_pct: number;
+      enabled_timeframes: string[];
+      enabled_setups: string[];
+    }>("/demo/settings");
+  },
+  async updateDemoSettings(payload: {
+    auto_execute?: boolean;
+    risk_usdt?: number;
+    entry_mode?: "market_only" | "market_pullback_limit";
+    max_entry_drift_pct?: number;
+    max_market_tp1_progress_pct?: number;
+    max_pullback_tp1_progress_pct?: number;
+    tp1_close_pct?: number;
+    enabled_timeframes?: string[];
+    enabled_setups?: string[];
+  }) {
+    return fetchJson<{
+      auto_execute: boolean;
+      risk_usdt: number;
+      entry_mode: "market_only" | "market_pullback_limit";
+      max_entry_drift_pct: number;
+      max_market_tp1_progress_pct: number;
+      max_pullback_tp1_progress_pct: number;
+      tp1_close_pct: number;
+      enabled_timeframes: string[];
+      enabled_setups: string[];
+    }>("/demo/settings", undefined, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  },
   async startDemo() {
     const response = await fetchJson<{ success: boolean; data?: any }>(
       "/demo/start",

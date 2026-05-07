@@ -24,6 +24,7 @@ import { api } from "@/lib/api";
 type StatusFilter = "all" | "open" | "closed";
 type ResultFilter = "all" | "win" | "loss" | "breakeven" | "timeout";
 type RegimeFilter = "all" | "Balanced" | "Trending" | "Ranging";
+type OutcomeTone = "blue" | "emerald" | "amber" | "rose" | "slate";
 
 interface Signal {
   id: number;
@@ -154,6 +155,153 @@ function timeAgo(dateStr: string | null) {
 
 function isClosedResult(result: string) {
   return result === "win" || result === "loss" || result === "breakeven" || result === "timeout";
+}
+
+const outcomeToneClasses: Record<OutcomeTone, string> = {
+  blue: "border-blue-500/20 bg-blue-500/10 text-blue-300",
+  emerald: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+  amber: "border-amber-500/20 bg-amber-500/10 text-amber-300",
+  rose: "border-rose-500/20 bg-rose-500/10 text-rose-300",
+  slate: "border-white/10 bg-white/5 text-muted-foreground",
+};
+
+function closeReason(signal: Pick<Signal, "close_reason">) {
+  return (signal.close_reason ?? "").toLowerCase();
+}
+
+function hitTp2(signal: Pick<Signal, "result" | "close_reason">) {
+  const reason = closeReason(signal);
+  return signal.result !== "open" && (reason.includes("target 2") || reason.includes("tp2"));
+}
+
+function hitInvalidation(signal: Pick<Signal, "result" | "close_reason">) {
+  return signal.result !== "open" && closeReason(signal).includes("invalidation");
+}
+
+function hitBreakevenStop(signal: Pick<Signal, "result" | "close_reason">) {
+  return signal.result !== "open" && closeReason(signal).includes("breakeven sl");
+}
+
+function hitTrailStop(signal: Pick<Signal, "result" | "close_reason">) {
+  return signal.result !== "open" && closeReason(signal).includes("trail stop");
+}
+
+function signalOutcome(signal: Signal): { label: string; detail: string; tone: OutcomeTone } {
+  if (signal.result === "open") {
+    return signal.tp1_hit
+      ? { label: "TP1 Hit", detail: "SL moved to entry, watching TP2", tone: "emerald" }
+      : { label: "Watching", detail: "Waiting for TP1 or SL", tone: "blue" };
+  }
+
+  if (hitTp2(signal)) {
+    return { label: "TP2 Hit", detail: "Final target reached", tone: "emerald" };
+  }
+
+  if (hitInvalidation(signal)) {
+    return { label: "SL Hit", detail: signal.close_reason ?? "Invalidation", tone: "rose" };
+  }
+
+  if (hitBreakevenStop(signal)) {
+    return { label: "BE Stop", detail: "TP1 hit, rest stopped at entry", tone: "amber" };
+  }
+
+  if (hitTrailStop(signal)) {
+    return { label: "Trail Stop", detail: "TP1 hit, trailing stop closed", tone: "amber" };
+  }
+
+  if (signal.result === "timeout") {
+    return { label: "Timeout", detail: signal.close_reason ?? "Entry never touched", tone: "slate" };
+  }
+
+  if (signal.result === "win" && signal.tp1_hit) {
+    return { label: "TP Win", detail: "TP1/TP exit recorded, close reason missing", tone: "emerald" };
+  }
+
+  if (signal.result === "breakeven") {
+    return { label: "Breakeven", detail: signal.close_reason ?? "Position closed flat", tone: "amber" };
+  }
+
+  if (signal.result === "loss") {
+    return { label: "Risk Exit", detail: signal.close_reason ?? "Closed loss", tone: "rose" };
+  }
+
+  return { label: signal.result, detail: signal.close_reason ?? "Closed", tone: signal.pnl_pct >= 0 ? "emerald" : "rose" };
+}
+
+function signalMarkers(signal: Signal): Array<{ label: string; detail: string; tone: OutcomeTone; icon: ReactNode }> {
+  const markers: Array<{ label: string; detail: string; tone: OutcomeTone; icon: ReactNode }> = [];
+  const tp2Done = hitTp2(signal);
+  const slDone = hitInvalidation(signal);
+  const beStopDone = hitBreakevenStop(signal);
+  const trailStopDone = hitTrailStop(signal);
+
+  if (signal.tp1_hit) {
+    markers.push({
+      label: "TP1 Hit",
+      detail: "Stop moved to entry",
+      tone: "emerald",
+      icon: <CheckCircle2 className="h-3 w-3" />,
+    });
+  } else if (signal.result === "open") {
+    markers.push({
+      label: "TP1 Pending",
+      detail: signal.distance_to_tp1_pct !== null && signal.distance_to_tp1_pct !== undefined
+        ? `${formatPercent(signal.distance_to_tp1_pct)} away`
+        : "Waiting",
+      tone: "blue",
+      icon: <Target className="h-3 w-3" />,
+    });
+  }
+
+  if (tp2Done) {
+    markers.push({
+      label: "TP2 Hit",
+      detail: "Position completed",
+      tone: "emerald",
+      icon: <Target className="h-3 w-3" />,
+    });
+  } else if (slDone) {
+    markers.push({
+      label: "SL Hit",
+      detail: signal.close_reason ?? "Invalidation",
+      tone: "rose",
+      icon: <Shield className="h-3 w-3" />,
+    });
+  } else if (beStopDone) {
+    markers.push({
+      label: "BE Stop",
+      detail: "Closed after TP1",
+      tone: "amber",
+      icon: <Shield className="h-3 w-3" />,
+    });
+  } else if (trailStopDone) {
+    markers.push({
+      label: "Trail Stop",
+      detail: "Closed after TP1",
+      tone: "amber",
+      icon: <Shield className="h-3 w-3" />,
+    });
+  } else if (signal.result === "open" && signal.tp1_hit) {
+    markers.push({
+      label: "TP2 Armed",
+      detail: signal.distance_to_tp2_pct !== null && signal.distance_to_tp2_pct !== undefined
+        ? `${formatPercent(signal.distance_to_tp2_pct)} away`
+        : "Watching",
+      tone: "amber",
+      icon: <Target className="h-3 w-3" />,
+    });
+  } else if (signal.result === "open") {
+    markers.push({
+      label: "SL Armed",
+      detail: signal.distance_to_stop_pct !== null && signal.distance_to_stop_pct !== undefined
+        ? `${formatPercent(signal.distance_to_stop_pct)} buffer`
+        : "Protected",
+      tone: "rose",
+      icon: <Shield className="h-3 w-3" />,
+    });
+  }
+
+  return markers;
 }
 
 export default function SignalsPage() {
@@ -468,6 +616,19 @@ function SignalRow({
   const isBullish = signal.bias === "Bullish";
   const isOpen = signal.result === "open";
   const isWin = signal.result === "win";
+  const outcome = signalOutcome(signal);
+  const markers = signalMarkers(signal);
+  const tp2Done = hitTp2(signal);
+  const stopDone = hitInvalidation(signal) || hitBreakevenStop(signal) || hitTrailStop(signal);
+  const stopLabel = hitInvalidation(signal)
+    ? "SL Hit"
+    : hitBreakevenStop(signal)
+      ? "BE Stop"
+      : hitTrailStop(signal)
+        ? "Trail Stop"
+        : signal.tp1_hit && signal.trailing_stop_price
+          ? "Trail"
+          : "Stop";
   const livePnl =
     isOpen && signal.monitor_pnl_pct !== undefined
       ? signal.monitor_pnl_pct
@@ -475,14 +636,7 @@ function SignalRow({
         ? ((livePrice - signal.entry_price) / signal.entry_price) * 100 * (isBullish ? 1 : -1)
         : null;
 
-  const resultTone =
-    signal.result === "win"
-      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
-      : signal.result === "loss"
-        ? "border-rose-500/20 bg-rose-500/10 text-rose-300"
-        : signal.result === "open"
-          ? "border-blue-500/20 bg-blue-500/10 text-blue-300"
-          : "border-amber-500/20 bg-amber-500/10 text-amber-300";
+  const outcomeToneClass = outcomeToneClasses[outcome.tone];
 
   return (
     <Link
@@ -500,8 +654,8 @@ function SignalRow({
             {isBullish ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
           </span>
           <span className="truncate text-base font-bold">{signal.symbol}</span>
-          <span className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase ${resultTone}`}>
-            {signal.result}
+          <span className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase ${outcomeToneClass}`}>
+            {outcome.label}
           </span>
           <span className="rounded-md border border-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
             {signal.quality_score}
@@ -520,18 +674,36 @@ function SignalRow({
             </span>
           ) : null}
         </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {markers.map((marker) => (
+            <OutcomeBadge key={`${signal.id}-${marker.label}`} {...marker} />
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Metric label="Entry" value={formatPrice(signal.entry_price)} />
         <Metric
-          label={signal.tp1_hit && signal.trailing_stop_price ? "Trail" : "Stop"}
+          label={stopLabel}
           value={formatPrice(signal.tp1_hit && signal.trailing_stop_price ? signal.trailing_stop_price : signal.invalidation_price)}
           tone="rose"
           icon={<Shield className="h-3 w-3" />}
+          highlight={stopDone}
         />
-        <Metric label="TP1" value={formatPrice(signal.target_price_1)} tone="emerald" icon={<Target className="h-3 w-3" />} />
-        <Metric label="TP2" value={formatPrice(signal.target_price_2)} tone="emerald" icon={<Target className="h-3 w-3" />} />
+        <Metric
+          label={signal.tp1_hit ? "TP1 Hit" : "TP1"}
+          value={formatPrice(signal.target_price_1)}
+          tone="emerald"
+          icon={signal.tp1_hit ? <CheckCircle2 className="h-3 w-3" /> : <Target className="h-3 w-3" />}
+          highlight={signal.tp1_hit}
+        />
+        <Metric
+          label={tp2Done ? "TP2 Hit" : "TP2"}
+          value={formatPrice(signal.target_price_2)}
+          tone="emerald"
+          icon={tp2Done ? <CheckCircle2 className="h-3 w-3" /> : <Target className="h-3 w-3" />}
+          highlight={tp2Done}
+        />
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -554,8 +726,9 @@ function SignalRow({
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Result</p>
           <p className={`mt-1 text-lg font-bold ${signal.pnl_pct >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-            {isOpen ? "Open" : formatPercent(signal.pnl_pct)}
+            {isOpen ? outcome.label : formatPercent(signal.pnl_pct)}
           </p>
+          <p className="mt-1 text-xs text-muted-foreground">{outcome.detail}</p>
         </div>
         <div className="text-xs text-muted-foreground">
           <p>Max profit {formatPercent(signal.max_profit_pct)}</p>
@@ -572,11 +745,13 @@ function Metric({
   value,
   tone = "slate",
   icon,
+  highlight = false,
 }: {
   label: string;
   value: string;
   tone?: "slate" | "blue" | "emerald" | "rose" | "violet";
   icon?: ReactNode;
+  highlight?: boolean;
 }) {
   const toneMap: Record<string, string> = {
     slate: "text-foreground",
@@ -587,12 +762,36 @@ function Metric({
   };
 
   return (
-    <div className="min-w-0 rounded-lg bg-white/[0.03] px-3 py-2">
+    <div
+      className={`min-w-0 rounded-lg px-3 py-2 ${
+        highlight ? "bg-white/[0.07] ring-1 ring-white/15" : "bg-white/[0.03]"
+      }`}
+    >
       <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {icon}
         {label}
       </div>
       <p className={`mt-1 truncate text-sm font-semibold tabular-nums ${toneMap[tone]}`}>{value}</p>
     </div>
+  );
+}
+
+function OutcomeBadge({
+  label,
+  detail,
+  tone,
+  icon,
+}: {
+  label: string;
+  detail: string;
+  tone: OutcomeTone;
+  icon: ReactNode;
+}) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-semibold ${outcomeToneClasses[tone]}`}>
+      {icon}
+      <span>{label}</span>
+      <span className="font-medium opacity-70">{detail}</span>
+    </span>
   );
 }

@@ -8,6 +8,7 @@ interface PositionsTableProps {
   onClosePosition: (symbol: string) => void;
   onReversePosition: (symbol: string) => void;
   onCloseAll?: () => void;
+  protection?: Array<Record<string, any>>;
 }
 
 /** Extract base coin from a USDT pair, e.g. "ETCUSDT" → "ETC" */
@@ -38,6 +39,7 @@ export default function PositionsTable({
   onClosePosition,
   onReversePosition,
   onCloseAll,
+  protection = [],
 }: PositionsTableProps) {
   if (isLoading) {
     return (
@@ -89,6 +91,23 @@ export default function PositionsTable({
         </thead>
         <tbody>
           {positions.map((pos, index) => {
+            const protectionMeta = protection.find(
+              (item) => String(item.symbol || "").toUpperCase() === pos.symbol.toUpperCase(),
+            );
+            const protectionLabel = protectionMeta?.tp1_hit
+              ? "SL BE"
+              : protectionMeta?.sl_order_id
+                ? "Protected"
+                : protectionMeta
+                  ? "Unprotected"
+                  : "Manual";
+            const protectionClass = protectionMeta?.tp1_hit
+              ? "border-amber-500/20 bg-amber-500/10 text-amber-300"
+              : protectionMeta?.sl_order_id
+                ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
+                : protectionMeta
+                  ? "border-red-500/20 bg-red-500/10 text-red-300"
+                  : "border-white/10 bg-white/5 text-slate-400";
             const side = normSide(pos.side);
             const isLong = side === "Long";
             const sideColor = isLong ? "text-green-400" : "text-red-400";
@@ -122,6 +141,9 @@ export default function PositionsTable({
                       <span className={`${sideColor} font-medium`}>
                         {leverage}x
                       </span>
+                    </span>
+                    <span className={`mt-1 inline-flex w-fit rounded border px-1.5 py-0.5 text-[10px] font-semibold ${protectionClass}`}>
+                      {protectionLabel}
                     </span>
                   </div>
                 </td>

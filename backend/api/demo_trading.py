@@ -3,6 +3,8 @@ Demo Trading API Endpoints
 FastAPI endpoints for controlling demo trading on Binance Testnet.
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Any
 from datetime import datetime, timezone
@@ -13,7 +15,13 @@ from pydantic import BaseModel, Field
 from backend.database import DatabaseManager, get_database
 from backend.config import get_settings, Settings
 from backend.services.binance_demo.binance_client import BinanceTestnetClient
-from backend.services.binance_demo.demo_execution_engine import DemoExecutionEngine
+from backend.services.binance_demo.demo_execution_engine import (
+    DEFAULT_MAX_ENTRY_DRIFT_PCT,
+    DEFAULT_MAX_MARKET_TP1_PROGRESS_PCT,
+    DEFAULT_MAX_PULLBACK_TP1_PROGRESS_PCT,
+    ENTRY_MODE_MARKET_PULLBACK_LIMIT,
+    DemoExecutionEngine,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +29,7 @@ router = APIRouter(prefix="/demo", tags=["Demo Trading"])
 
 # Global execution engine instance
 _demo_engine: DemoExecutionEngine | None = None
+_demo_settings: "DemoSettings" | None = None
 
 DEMO_HISTORY_SYMBOLS = (
     "BTCUSDT",
@@ -130,13 +139,82 @@ class DemoSignalRequest(BaseModel):
     entry_price: float | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
+    take_profit_1: float | None = None
+    take_profit_2: float | None = None
     position_size_multiplier: float = Field(default=1.0, ge=0.1, le=2.0)
+    risk_usdt: float | None = Field(default=None, ge=1.0, le=100000.0)
+    max_slippage_pct: float | None = Field(default=None, ge=0.0, le=10.0)
+    max_entry_drift_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    max_market_tp1_progress_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    max_pullback_tp1_progress_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    entry_mode: str | None = None
+    tp1_close_pct: float | None = Field(default=None, ge=1.0, le=99.0)
+
+
+class DemoSettings(BaseModel):
+    """Demo auto-execution and risk settings."""
+    auto_execute: bool = False
+    risk_usdt: float = Field(default=10.0, ge=1.0, le=100000.0)
+    max_slippage_pct: float | None = Field(default=None, ge=0.0, le=10.0)
+    max_entry_drift_pct: float = Field(default=DEFAULT_MAX_ENTRY_DRIFT_PCT, ge=0.0, le=100.0)
+    max_market_tp1_progress_pct: float = Field(
+        default=DEFAULT_MAX_MARKET_TP1_PROGRESS_PCT,
+        ge=0.0,
+        le=100.0,
+    )
+    max_pullback_tp1_progress_pct: float = Field(
+        default=DEFAULT_MAX_PULLBACK_TP1_PROGRESS_PCT,
+        ge=0.0,
+        le=100.0,
+    )
+    entry_mode: str = ENTRY_MODE_MARKET_PULLBACK_LIMIT
+    tp1_close_pct: float = Field(default=50.0, ge=1.0, le=99.0)
+    enabled_timeframes: list[str] = Field(default_factory=lambda: ["15m", "1h"])
+    enabled_setups: list[str] = Field(default_factory=lambda: ["Continuation", "Squeeze", "Trap"])
+
+
+class DemoSettingsUpdate(BaseModel):
+    auto_execute: bool | None = None
+    risk_usdt: float | None = Field(default=None, ge=1.0, le=100000.0)
+    max_slippage_pct: float | None = Field(default=None, ge=0.0, le=10.0)
+    max_entry_drift_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    max_market_tp1_progress_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    max_pullback_tp1_progress_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    entry_mode: str | None = None
+    tp1_close_pct: float | None = Field(default=None, ge=1.0, le=99.0)
+    enabled_timeframes: list[str] | None = None
+    enabled_setups: list[str] | None = None
 
 
 class DemoCloseRequest(BaseModel):
     """Request model for closing a position."""
     symbol: str = Field(..., min_length=1)
     reason: str = Field(default="Manual Close")
+
+
+def get_demo_settings() -> DemoSettings:
+    global _demo_settings
+    if _demo_settings is None:
+        _demo_settings = DemoSettings()
+    return _demo_settings
+
+
+@router.get("/settings")
+async def read_demo_settings() -> dict[str, Any]:
+    settings = get_demo_settings()
+    return settings.model_dump()
+
+
+@router.put("/settings")
+async def update_demo_settings(update: DemoSettingsUpdate) -> dict[str, Any]:
+    global _demo_settings
+    current = get_demo_settings().model_dump()
+    patch = update.model_dump(exclude_unset=True)
+    for key, value in patch.items():
+        if value is not None:
+            current[key] = value
+    _demo_settings = DemoSettings(**current)
+    return _demo_settings.model_dump()
 
 
 @router.post("/start")
@@ -385,6 +463,7 @@ async def execute_demo_signal(
         )
 
     try:
+        demo_settings = get_demo_settings()
         result = await _demo_engine.execute_signal(
             symbol=request.symbol,
             signal_type=request.signal_type,
@@ -394,7 +473,40 @@ async def execute_demo_signal(
             entry_price=request.entry_price,
             stop_loss=request.stop_loss,
             take_profit=request.take_profit,
+            take_profit_1=request.take_profit_1,
+            take_profit_2=request.take_profit_2,
             position_size_multiplier=request.position_size_multiplier,
+            risk_usdt=request.risk_usdt if request.risk_usdt is not None else demo_settings.risk_usdt,
+            max_slippage_pct=(
+                request.max_slippage_pct
+                if request.max_slippage_pct is not None
+                else demo_settings.max_slippage_pct
+            ),
+            max_entry_drift_pct=(
+                request.max_entry_drift_pct
+                if request.max_entry_drift_pct is not None
+                else demo_settings.max_entry_drift_pct
+            ),
+            max_market_tp1_progress_pct=(
+                request.max_market_tp1_progress_pct
+                if request.max_market_tp1_progress_pct is not None
+                else demo_settings.max_market_tp1_progress_pct
+            ),
+            max_pullback_tp1_progress_pct=(
+                request.max_pullback_tp1_progress_pct
+                if request.max_pullback_tp1_progress_pct is not None
+                else demo_settings.max_pullback_tp1_progress_pct
+            ),
+            entry_mode=(
+                request.entry_mode
+                if request.entry_mode is not None
+                else demo_settings.entry_mode
+            ),
+            tp1_close_pct=(
+                request.tp1_close_pct
+                if request.tp1_close_pct is not None
+                else demo_settings.tp1_close_pct
+            ),
         )
 
         if not result.get("success"):

@@ -14,6 +14,11 @@ import OrderHistoryTable from "./components/OrderHistoryTable";
 import TradeHistoryTable from "./components/TradeHistoryTable";
 import AssetsPanel from "./components/AssetsPanel";
 import SignalLog from "./components/SignalLog";
+import DemoSettingsPanel from "./components/DemoSettingsPanel";
+import NotificationModal, {
+  type NotificationState,
+  type NotificationTone,
+} from "./components/NotificationModal";
 import { api } from "@/lib/api";
 import type {
   DemoStatus,
@@ -27,6 +32,27 @@ export default function DemoTradingPage() {
   // TAB STATE (BINANCE-STYLE)
   const [activeTab, setActiveTab] = useState<"positions" | "open" | "orders" | "trades" | "assets">("positions");
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [notification, setNotification] = useState<NotificationState | null>(null);
+
+  const notify = (
+    title: string,
+    message: string,
+    tone: NotificationTone = "info",
+  ) => {
+    setNotification({ title, message, tone });
+  };
+
+  const alert = (message: string) => {
+    const lower = message.toLowerCase();
+    const tone: NotificationTone = lower.includes("failed") || lower.includes("error")
+      ? "error"
+      : lower.includes("cannot") || lower.includes("validation")
+        ? "warning"
+        : lower.includes("success") || lower.includes("stopped") || lower.includes("closed")
+          ? "success"
+          : "info";
+    notify("Demo Trading", message, tone);
+  };
   
   // FRONTEND HAS NO STATE - Backend is single source of truth
   // User must explicitly click "Start Demo" to begin session
@@ -46,6 +72,28 @@ export default function DemoTradingPage() {
 
   const status = statusResponse?.data;
   const isSessionRunning = statusResponse?.running === true;
+
+  const { data: demoSettings, isLoading: settingsLoading } = useQuery({
+    queryKey: ["demo", "settings"],
+    queryFn: () => api.getDemoSettings(),
+    refetchOnWindowFocus: false,
+  });
+
+  const updateSettingsMutation = useMutation({
+    mutationFn: (payload: NonNullable<typeof demoSettings>) =>
+      api.updateDemoSettings(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["demo", "settings"] });
+      notify("Settings Saved", "Demo execution settings have been updated.", "success");
+    },
+    onError: (error: any) => {
+      notify(
+        "Failed To Save Settings",
+        error?.message || "Unknown error",
+        "error",
+      );
+    },
+  });
 
   // RULE 2: Conditional fetch - ONLY fetch if session is running
   // Fetch active positions (DISABLED if session not running)
@@ -266,6 +314,11 @@ export default function DemoTradingPage() {
           balanceChange: 0,
           unrealizedPnl: status.total_unrealized_pnl ?? 0,
           totalTrades: status.statistics?.total_trades ?? 0,
+          winningTrades: status.statistics?.winning_trades ?? 0,
+          losingTrades: status.statistics?.losing_trades ?? 0,
+          breakevenTrades: status.statistics?.breakeven_trades ?? 0,
+          openPositions: status.statistics?.open_positions ?? status.positions_count ?? positions?.length ?? 0,
+          partialCloses: status.statistics?.partial_closes ?? 0,
           winRate: status.statistics?.winrate ?? 0,
           profitFactor: 0,
           avgR: 0,
@@ -276,6 +329,11 @@ export default function DemoTradingPage() {
           balanceChange: 0,
           unrealizedPnl: 0,
           totalTrades: 0,
+          winningTrades: 0,
+          losingTrades: 0,
+          breakevenTrades: 0,
+          openPositions: 0,
+          partialCloses: 0,
           winRate: 0,
           profitFactor: 0,
           avgR: 0,
@@ -283,6 +341,10 @@ export default function DemoTradingPage() {
 
   return (
     <div className="space-y-6">
+      <NotificationModal
+        notification={notification}
+        onClose={() => setNotification(null)}
+      />
       {/* Hero Section */}
       <div className="relative">
         <div className="absolute inset-0 bg-gradient-to-r from-primary/10 via-blue-500/10 to-emerald-500/10 blur-3xl opacity-30" />
@@ -313,6 +375,13 @@ export default function DemoTradingPage() {
         isStarting={startMutation.isPending}
         isStopping={stopMutation.isPending}
         isForceStopping={forceStopMutation.isPending}
+      />
+
+      <DemoSettingsPanel
+        settings={demoSettings}
+        isLoading={settingsLoading}
+        isSaving={updateSettingsMutation.isPending}
+        onSave={(settings) => updateSettingsMutation.mutate(settings)}
       />
 
       {/* Session State Warning */}
@@ -389,12 +458,14 @@ export default function DemoTradingPage() {
               trend={stats.unrealizedPnl >= 0 ? "up" : "down"}
             />
             <StatCard
-              title="Total Trades"
+              title="Closed Trades"
               value={stats.totalTrades.toString()}
               change={
                 stats.totalTrades > 0
-                  ? `${stats.totalTrades} trades`
-                  : undefined
+                  ? `${stats.winningTrades}W / ${stats.losingTrades}L${stats.breakevenTrades ? ` / ${stats.breakevenTrades}BE` : ""}`
+                  : stats.openPositions > 0
+                    ? `${stats.openPositions} open${stats.partialCloses ? ` / ${stats.partialCloses} partial` : ""}`
+                    : "No closed trades"
               }
               icon={Activity}
               trend="neutral"
@@ -403,9 +474,9 @@ export default function DemoTradingPage() {
               title="Win Rate"
               value={`${stats.winRate.toFixed(1)}%`}
               change={
-                stats.winRate > 0
+                stats.totalTrades > 0
                   ? `${stats.winRate.toFixed(1)}% WR`
-                  : undefined
+                  : "Closed trades only"
               }
               icon={BarChart3}
               trend={stats.winRate >= 50 ? "up" : "down"}
@@ -430,6 +501,7 @@ export default function DemoTradingPage() {
               <PositionsTable
                 positions={positions ?? []}
                 isLoading={positionsLoading}
+                protection={status?.protection ?? []}
                 onClosePosition={(symbol) =>
                   closePositionMutation.mutate(symbol)
                 }
