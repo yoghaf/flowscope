@@ -18,6 +18,20 @@ class FakeDemoEngine:
         return {"success": True}
 
 
+def test_demo_settings_default_includes_all_execution_filters() -> None:
+    settings = DemoSettings()
+
+    assert settings.enabled_timeframes == ["15m", "1h", "4h", "24h"]
+    assert settings.enabled_setups == [
+        "Continuation",
+        "Squeeze",
+        "Trap",
+        "Breakout",
+        "Accumulation",
+    ]
+    assert settings.enabled_regimes == ["Balanced", "Trending", "Ranging"]
+
+
 def test_demo_auto_execute_respects_enabled_regimes() -> None:
     async def run() -> None:
         original_engine = demo_api._demo_engine

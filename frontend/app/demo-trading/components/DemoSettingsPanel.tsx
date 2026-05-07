@@ -31,12 +31,15 @@ const DEFAULT_SETTINGS: DemoExecutionSettings = {
   max_market_tp1_progress_pct: 30,
   max_pullback_tp1_progress_pct: 60,
   tp1_close_pct: 50,
-  enabled_timeframes: ["15m", "1h"],
-  enabled_setups: ["Continuation", "Squeeze", "Trap"],
+  enabled_timeframes: ["15m", "1h", "4h", "24h"],
+  enabled_setups: ["Continuation", "Squeeze", "Trap", "Breakout", "Accumulation"],
   enabled_regimes: ["Balanced", "Trending", "Ranging"],
 };
 
+const TIMEFRAME_OPTIONS = ["15m", "1h", "4h", "24h"];
+const SETUP_OPTIONS = ["Continuation", "Squeeze", "Trap", "Breakout", "Accumulation"];
 const REGIME_OPTIONS = ["Balanced", "Trending", "Ranging"];
+type FilterKey = "enabled_timeframes" | "enabled_setups" | "enabled_regimes";
 
 export default function DemoSettingsPanel({
   settings,
@@ -51,6 +54,12 @@ export default function DemoSettingsPanel({
       setDraft({
         ...DEFAULT_SETTINGS,
         ...settings,
+        enabled_timeframes: settings.enabled_timeframes?.length
+          ? settings.enabled_timeframes
+          : DEFAULT_SETTINGS.enabled_timeframes,
+        enabled_setups: settings.enabled_setups?.length
+          ? settings.enabled_setups
+          : DEFAULT_SETTINGS.enabled_setups,
         enabled_regimes: settings.enabled_regimes?.length
           ? settings.enabled_regimes
           : DEFAULT_SETTINGS.enabled_regimes,
@@ -77,19 +86,33 @@ export default function DemoSettingsPanel({
   const allRegimesSelected = REGIME_OPTIONS.every((regime) =>
     draft.enabled_regimes.includes(regime),
   );
+  const allTimeframesSelected = TIMEFRAME_OPTIONS.every((timeframe) =>
+    draft.enabled_timeframes.includes(timeframe),
+  );
+  const allSetupsSelected = SETUP_OPTIONS.every((setup) =>
+    draft.enabled_setups.includes(setup),
+  );
 
-  const toggleRegime = (regime: string) => {
+  const selectAll = (key: FilterKey, options: string[]) => {
+    setDraft((current) => ({
+      ...current,
+      [key]: [...options],
+    }));
+  };
+
+  const toggleFilter = (key: FilterKey, option: string) => {
     setDraft((current) => {
-      const active = current.enabled_regimes.includes(regime);
-      const enabled_regimes = active
-        ? current.enabled_regimes.filter((item) => item !== regime)
-        : [...current.enabled_regimes, regime];
-      if (enabled_regimes.length === 0) {
+      const selected = current[key];
+      const active = selected.includes(option);
+      const next = active
+        ? selected.filter((item) => item !== option)
+        : [...selected, option];
+      if (next.length === 0) {
         return current;
       }
       return {
         ...current,
-        enabled_regimes,
+        [key]: next,
       };
     });
   };
@@ -240,46 +263,105 @@ export default function DemoSettingsPanel({
         />
       </div>
 
-      <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
-        <FieldLabel
+      <div className="mt-4 grid gap-3 xl:grid-cols-3">
+        <FilterGroup
+          label="Timeframe Filter"
+          tooltip="Demo auto-execute hanya membuka signal dari timeframe yang aktif di sini."
+          allLabel="All TF"
+          options={TIMEFRAME_OPTIONS}
+          selected={draft.enabled_timeframes}
+          allSelected={allTimeframesSelected}
+          tone="blue"
+          onSelectAll={() => selectAll("enabled_timeframes", TIMEFRAME_OPTIONS)}
+          onToggle={(option) => toggleFilter("enabled_timeframes", option)}
+        />
+        <FilterGroup
+          label="Setup Filter"
+          tooltip="Demo auto-execute hanya membuka setup signal yang aktif di sini."
+          allLabel="All Setups"
+          options={SETUP_OPTIONS}
+          selected={draft.enabled_setups}
+          allSelected={allSetupsSelected}
+          tone="violet"
+          onSelectAll={() => selectAll("enabled_setups", SETUP_OPTIONS)}
+          onToggle={(option) => toggleFilter("enabled_setups", option)}
+        />
+        <FilterGroup
           label="Regime Filter"
           tooltip="Demo auto-execute hanya membuka signal dari regime yang aktif di sini."
+          allLabel="All Regimes"
+          options={REGIME_OPTIONS}
+          selected={draft.enabled_regimes}
+          allSelected={allRegimesSelected}
+          tone="emerald"
+          onSelectAll={() => selectAll("enabled_regimes", REGIME_OPTIONS)}
+          onToggle={(option) => toggleFilter("enabled_regimes", option)}
         />
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() =>
-              setDraft((current) => ({
-                ...current,
-                enabled_regimes: [...REGIME_OPTIONS],
-              }))
-            }
-            className={`h-9 rounded-lg px-3 text-xs font-semibold uppercase transition ${
-              allRegimesSelected
-                ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                : "border border-white/10 bg-white/[0.03] text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
-            }`}
-          >
-            All Regimes
-          </button>
-          {REGIME_OPTIONS.map((regime) => {
-            const active = draft.enabled_regimes.includes(regime);
-            return (
-              <button
-                key={regime}
-                type="button"
-                onClick={() => toggleRegime(regime)}
-                className={`h-9 rounded-lg px-3 text-xs font-semibold uppercase transition ${
-                  active
-                    ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                    : "border border-white/10 bg-white/[0.03] text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
-                }`}
-              >
-                {regime}
-              </button>
-            );
-          })}
-        </div>
+      </div>
+    </section>
+  );
+}
+
+function FilterGroup({
+  label,
+  tooltip,
+  allLabel,
+  options,
+  selected,
+  allSelected,
+  tone,
+  onSelectAll,
+  onToggle,
+}: {
+  label: string;
+  tooltip: string;
+  allLabel: string;
+  options: string[];
+  selected: string[];
+  allSelected: boolean;
+  tone: "blue" | "emerald" | "violet";
+  onSelectAll: () => void;
+  onToggle: (option: string) => void;
+}) {
+  const activeClass =
+    tone === "emerald"
+      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+      : tone === "violet"
+        ? "border-violet-500/30 bg-violet-500/10 text-violet-100"
+        : "border-blue-500/30 bg-blue-500/10 text-blue-100";
+
+  return (
+    <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+      <FieldLabel label={label} tooltip={tooltip} />
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onSelectAll}
+          className={`h-9 rounded-lg border px-3 text-xs font-semibold uppercase transition ${
+            allSelected
+              ? activeClass
+              : "border-white/10 bg-white/[0.03] text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
+          }`}
+        >
+          {allLabel}
+        </button>
+        {options.map((option) => {
+          const active = selected.includes(option);
+          return (
+            <button
+              key={option}
+              type="button"
+              onClick={() => onToggle(option)}
+              className={`h-9 rounded-lg border px-3 text-xs font-semibold uppercase transition ${
+                active
+                  ? activeClass
+                  : "border-white/10 bg-white/[0.03] text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
+              }`}
+            >
+              {option}
+            </button>
+          );
+        })}
       </div>
     </section>
   );

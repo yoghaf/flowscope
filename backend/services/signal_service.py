@@ -3079,16 +3079,33 @@ class SignalService:
 
             demo_settings = get_demo_settings()
             if not demo_settings.auto_execute:
+                logger.info("Demo auto-execute skipped for %s: auto_execute disabled", symbol)
                 return
-            if timeframe not in set(demo_settings.enabled_timeframes):
-                return
-            if action.setup_type not in set(demo_settings.enabled_setups):
-                return
-            if market_regime not in set(demo_settings.enabled_regimes):
+            enabled_timeframes = set(demo_settings.enabled_timeframes)
+            if timeframe not in enabled_timeframes:
                 logger.info(
-                    "Demo auto-execute skipped for %s: regime %s not enabled",
+                    "Demo auto-execute skipped for %s: timeframe %s not enabled (enabled=%s)",
+                    symbol,
+                    timeframe,
+                    sorted(enabled_timeframes),
+                )
+                return
+            enabled_setups = set(demo_settings.enabled_setups)
+            if action.setup_type not in enabled_setups:
+                logger.info(
+                    "Demo auto-execute skipped for %s: setup %s not enabled (enabled=%s)",
+                    symbol,
+                    action.setup_type,
+                    sorted(enabled_setups),
+                )
+                return
+            enabled_regimes = set(demo_settings.enabled_regimes)
+            if market_regime not in enabled_regimes:
+                logger.info(
+                    "Demo auto-execute skipped for %s: regime %s not enabled (enabled=%s)",
                     symbol,
                     market_regime,
+                    sorted(enabled_regimes),
                 )
                 return
 

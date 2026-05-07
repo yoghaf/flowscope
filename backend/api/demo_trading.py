@@ -10,7 +10,7 @@ from typing import Any
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.database import DatabaseManager, get_database
 from backend.config import get_settings, Settings
@@ -44,6 +44,32 @@ DEMO_HISTORY_SYMBOLS = (
     "ONDOUSDT",
 )
 DEMO_REGIMES = ("Balanced", "Trending", "Ranging")
+DEMO_TIMEFRAMES = ("15m", "1h", "4h", "24h")
+DEMO_SETUPS = ("Continuation", "Squeeze", "Trap", "Breakout", "Accumulation")
+
+
+def _normalize_demo_options(
+    values: list[str],
+    allowed: tuple[str, ...],
+    field_name: str,
+) -> list[str]:
+    normalized: list[str] = []
+    unknown: list[str] = []
+    allowed_set = set(allowed)
+    for value in values:
+        item = str(value).strip()
+        if not item:
+            continue
+        if item not in allowed_set:
+            unknown.append(item)
+            continue
+        if item not in normalized:
+            normalized.append(item)
+    if unknown:
+        raise ValueError(f"Unknown {field_name}: {', '.join(unknown)}")
+    if not normalized:
+        raise ValueError(f"{field_name} must include at least one option")
+    return normalized
 
 
 def get_demo_engine() -> DemoExecutionEngine | None:
@@ -170,9 +196,24 @@ class DemoSettings(BaseModel):
     )
     entry_mode: str = ENTRY_MODE_MARKET_PULLBACK_LIMIT
     tp1_close_pct: float = Field(default=50.0, ge=1.0, le=99.0)
-    enabled_timeframes: list[str] = Field(default_factory=lambda: ["15m", "1h"])
-    enabled_setups: list[str] = Field(default_factory=lambda: ["Continuation", "Squeeze", "Trap"])
+    enabled_timeframes: list[str] = Field(default_factory=lambda: list(DEMO_TIMEFRAMES))
+    enabled_setups: list[str] = Field(default_factory=lambda: list(DEMO_SETUPS))
     enabled_regimes: list[str] = Field(default_factory=lambda: list(DEMO_REGIMES))
+
+    @field_validator("enabled_timeframes")
+    @classmethod
+    def validate_timeframes(cls, values: list[str]) -> list[str]:
+        return _normalize_demo_options(values, DEMO_TIMEFRAMES, "enabled_timeframes")
+
+    @field_validator("enabled_setups")
+    @classmethod
+    def validate_setups(cls, values: list[str]) -> list[str]:
+        return _normalize_demo_options(values, DEMO_SETUPS, "enabled_setups")
+
+    @field_validator("enabled_regimes")
+    @classmethod
+    def validate_regimes(cls, values: list[str]) -> list[str]:
+        return _normalize_demo_options(values, DEMO_REGIMES, "enabled_regimes")
 
 
 class DemoSettingsUpdate(BaseModel):
