@@ -1,0 +1,249 @@
+{
+  "generated_at": "2026-05-07T08:22:29.115794+00:00",
+  "days": 30,
+  "symbols": 368,
+  "execution_assumption": "one active position per symbol for both strategies",
+  "v3_1_rules": {
+    "base": "v3_ema_no_btc with Trial-24 thresholds",
+    "ema_gate": "Long: EMA30 > EMA100 and entry > EMA30. Short: EMA30 < EMA100 and entry < EMA30.",
+    "timeframes": "15m and 24h only; 1h and 4h disabled",
+    "15m_filters": {
+      "flow_alignment_min": 0.7,
+      "volume_z_15m_min": 1.0
+    },
+    "volatility": "Low volatility disabled"
+  },
+  "reject_counts": {
+    "low_volatility": 47,
+    "flow_below_0_70": 32,
+    "timeframe_1h_disabled": 51,
+    "ema_gate_failed": 48,
+    "timeframe_4h_disabled": 95,
+    "volume_z_15m_below_1_0": 14,
+    "not_continuation": 2
+  },
+  "statistics": {
+    "v2_balanced_current": {
+      "signals": 236,
+      "closed": 232,
+      "open": 4,
+      "wins": 106,
+      "losses": 126,
+      "winrate": 45.69,
+      "net_pnl_pct": 51.4771,
+      "expectancy_pct": 0.2219,
+      "profit_factor": 1.1893,
+      "net_r": 8.5778,
+      "expectancy_r": 0.037,
+      "profit_factor_r": 1.095,
+      "max_drawdown_r": -14.7952
+    },
+    "v3_1_candidate": {
+      "signals": 25,
+      "closed": 24,
+      "open": 1,
+      "wins": 10,
+      "losses": 14,
+      "winrate": 41.67,
+      "net_pnl_pct": 1.1677,
+      "expectancy_pct": 0.0487,
+      "profit_factor": 1.0585,
+      "net_r": 2.0587,
+      "expectancy_r": 0.0858,
+      "profit_factor_r": 1.2462,
+      "max_drawdown_r": -3.0755
+    }
+  },
+  "by_timeframe": {
+    "v2_balanced_current": {
+      "15m": {
+        "signals": 72,
+        "closed": 72,
+        "open": 0,
+        "wins": 26,
+        "losses": 46,
+        "winrate": 36.11,
+        "net_pnl_pct": -24.0504,
+        "expectancy_pct": -0.334,
+        "profit_factor": 0.5841,
+        "net_r": -9.9497,
+        "expectancy_r": -0.1382,
+        "profit_factor_r": 0.6978,
+        "max_drawdown_r": -14.6029
+      },
+      "1h": {
+        "signals": 37,
+        "closed": 36,
+        "open": 1,
+        "wins": 16,
+        "losses": 20,
+        "winrate": 44.44,
+        "net_pnl_pct": 16.7443,
+        "expectancy_pct": 0.4651,
+        "profit_factor": 1.4531,
+        "net_r": 5.6268,
+        "expectancy_r": 0.1563,
+        "profit_factor_r": 1.4453,
+        "max_drawdown_r": -3.3537
+      },
+      "24h": {
+        "signals": 13,
+        "closed": 11,
+        "open": 2,
+        "wins": 4,
+        "losses": 7,
+        "winrate": 36.36,
+        "net_pnl_pct": 9.2728,
+        "expectancy_pct": 0.843,
+        "profit_factor": 1.5134,
+        "net_r": 1.1478,
+        "expectancy_r": 0.1043,
+        "profit_factor_r": 1.3718,
+        "max_drawdown_r": -2.5272
+      },
+      "4h": {
+        "signals": 114,
+        "closed": 113,
+        "open": 1,
+        "wins": 60,
+        "losses": 53,
+        "winrate": 53.1,
+        "net_pnl_pct": 49.5104,
+        "expectancy_pct": 0.4381,
+        "profit_factor": 1.3113,
+        "net_r": 11.7529,
+        "expectancy_r": 0.104,
+        "profit_factor_r": 1.2824,
+        "max_drawdown_r": -9.44
+      }
+    },
+    "v3_1_candidate": {
+      "15m": {
+        "signals": 19,
+        "closed": 19,
+        "open": 0,
+        "wins": 9,
+        "losses": 10,
+        "winrate": 47.37,
+        "net_pnl_pct": 5.5421,
+        "expectancy_pct": 0.2917,
+        "profit_factor": 2.0483,
+        "net_r": 3.1646,
+        "expectancy_r": 0.1666,
+        "profit_factor_r": 1.5493,
+        "max_drawdown_r": -3.0755
+      },
+      "24h": {
+        "signals": 6,
+        "closed": 5,
+        "open": 1,
+        "wins": 1,
+        "losses": 4,
+        "winrate": 20.0,
+        "net_pnl_pct": -4.3743,
+        "expectancy_pct": -0.8749,
+        "profit_factor": 0.7017,
+        "net_r": -1.106,
+        "expectancy_r": -0.2212,
+        "profit_factor_r": 0.5748,
+        "max_drawdown_r": -2.601
+      }
+    }
+  },
+  "by_regime": {
+    "v2_balanced_current": {
+      "Balanced": {
+        "signals": 80,
+        "closed": 79,
+        "open": 1,
+        "wins": 37,
+        "losses": 42,
+        "winrate": 46.84,
+        "net_pnl_pct": 23.4855,
+        "expectancy_pct": 0.2973,
+        "profit_factor": 1.5512,
+        "net_r": 8.8169,
+        "expectancy_r": 0.1116,
+        "profit_factor_r": 1.2989,
+        "max_drawdown_r": -7.1124
+      },
+      "Ranging": {
+        "signals": 16,
+        "closed": 16,
+        "open": 0,
+        "wins": 4,
+        "losses": 12,
+        "winrate": 25.0,
+        "net_pnl_pct": -2.3661,
+        "expectancy_pct": -0.1479,
+        "profit_factor": 0.4566,
+        "net_r": -4.4778,
+        "expectancy_r": -0.2799,
+        "profit_factor_r": 0.4145,
+        "max_drawdown_r": -5.0431
+      },
+      "Trending": {
+        "signals": 140,
+        "closed": 137,
+        "open": 3,
+        "wins": 65,
+        "losses": 72,
+        "winrate": 47.45,
+        "net_pnl_pct": 30.3577,
+        "expectancy_pct": 0.2216,
+        "profit_factor": 1.135,
+        "net_r": 4.2388,
+        "expectancy_r": 0.0309,
+        "profit_factor_r": 1.0798,
+        "max_drawdown_r": -11.0693
+      }
+    },
+    "v3_1_candidate": {
+      "Balanced": {
+        "signals": 9,
+        "closed": 9,
+        "open": 0,
+        "wins": 4,
+        "losses": 5,
+        "winrate": 44.44,
+        "net_pnl_pct": 2.3316,
+        "expectancy_pct": 0.2591,
+        "profit_factor": 1.6997,
+        "net_r": 1.2619,
+        "expectancy_r": 0.1402,
+        "profit_factor_r": 1.4575,
+        "max_drawdown_r": -2.3671
+      },
+      "Ranging": {
+        "signals": 9,
+        "closed": 9,
+        "open": 0,
+        "wins": 4,
+        "losses": 5,
+        "winrate": 44.44,
+        "net_pnl_pct": 0.7662,
+        "expectancy_pct": 0.0851,
+        "profit_factor": 1.392,
+        "net_r": 1.4078,
+        "expectancy_r": 0.1564,
+        "profit_factor_r": 1.4688,
+        "max_drawdown_r": -1.8348
+      },
+      "Trending": {
+        "signals": 7,
+        "closed": 6,
+        "open": 1,
+        "wins": 2,
+        "losses": 4,
+        "winrate": 33.33,
+        "net_pnl_pct": -1.9301,
+        "expectancy_pct": -0.3217,
+        "profit_factor": 0.8684,
+        "net_r": -0.611,
+        "expectancy_r": -0.1018,
+        "profit_factor_r": 0.7651,
+        "max_drawdown_r": -2.601
+      }
+    }
+  }
+}

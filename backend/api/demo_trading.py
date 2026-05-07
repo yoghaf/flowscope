@@ -5,9 +5,11 @@ FastAPI endpoints for controlling demo trading on Binance Testnet.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
 from typing import Any
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field, field_validator
@@ -23,6 +25,7 @@ from backend.services.binance_demo.demo_execution_engine import (
     DemoExecutionEngine,
 )
 
+UTC = timezone.utc
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/demo", tags=["Demo Trading"])
@@ -46,6 +49,13 @@ DEMO_HISTORY_SYMBOLS = (
 DEMO_REGIMES = ("Balanced", "Trending", "Ranging")
 DEMO_TIMEFRAMES = ("15m", "1h", "4h", "24h")
 DEMO_SETUPS = ("Continuation", "Squeeze", "Trap", "Breakout", "Accumulation")
+DEMO_AUTO_EXECUTE_CATCHUP_LIMIT = 5
+DEMO_AUTO_EXECUTE_CATCHUP_MAX_AGE = {
+    "15m": timedelta(minutes=30),
+    "1h": timedelta(hours=2),
+    "4h": timedelta(hours=8),
+    "24h": timedelta(hours=24),
+}
 
 
 def _normalize_demo_options(
@@ -107,6 +117,233 @@ def _dedupe_symbols(symbols: list[Any]) -> list[str]:
             deduped.append(normalized)
 
     return deduped
+
+
+def _as_utc(value: Any) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _trade_signal_time(trade: Any) -> datetime | None:
+    return (
+        _as_utc(getattr(trade, "entry_touched_at", None))
+        or _as_utc(getattr(trade, "created_at", None))
+        or _as_utc(getattr(trade, "timestamp", None))
+    )
+
+
+def _trade_signal_size_multiplier(trade: Any) -> float:
+    entry_features = getattr(trade, "entry_features", None)
+    raw_value = (
+        entry_features.get("position_size_multiplier")
+        if isinstance(entry_features, dict)
+        else None
+    )
+    multiplier = _to_float(raw_value, default=1.0)
+    if not math.isfinite(multiplier) or multiplier <= 0:
+        return 1.0
+    return multiplier
+
+
+def _demo_auto_execute_skip_reason(
+    trade: Any,
+    *,
+    settings: "DemoSettings",
+    engine: DemoExecutionEngine | None,
+    now: datetime,
+    require_after_session_start: bool,
+) -> str | None:
+    if not settings.auto_execute:
+        return "auto_execute_disabled"
+    if engine is None or not engine.running:
+        return "demo_session_not_running"
+    if getattr(trade, "result", None) != "open":
+        return "trade_signal_not_open"
+    if getattr(trade, "status", None) != "Triggered":
+        return "signal_not_triggered"
+
+    timeframe = str(getattr(trade, "timeframe", "") or "")
+    if timeframe not in set(settings.enabled_timeframes):
+        return f"timeframe_filtered:{timeframe}"
+
+    setup_type = str(getattr(trade, "setup_type", "") or "")
+    if setup_type not in set(settings.enabled_setups):
+        return f"setup_filtered:{setup_type}"
+
+    market_regime = str(getattr(trade, "market_regime", "") or "")
+    if market_regime not in set(settings.enabled_regimes):
+        return f"regime_filtered:{market_regime}"
+
+    signal_time = _trade_signal_time(trade)
+    if signal_time is None:
+        return "signal_time_missing"
+
+    session_started_at = _as_utc(getattr(engine, "started_at", None))
+    if require_after_session_start and session_started_at is not None and signal_time < session_started_at:
+        return "signal_before_demo_session"
+
+    max_age = DEMO_AUTO_EXECUTE_CATCHUP_MAX_AGE.get(timeframe, timedelta(hours=1))
+    age = now - signal_time
+    if age < timedelta(0):
+        return "signal_time_in_future"
+    if age > max_age:
+        return (
+            f"signal_stale:{int(age.total_seconds() // 60)}m"
+            f">{int(max_age.total_seconds() // 60)}m"
+        )
+
+    if getattr(trade, "entry_price", None) is None:
+        return "entry_missing"
+    if getattr(trade, "invalidation_price", None) is None:
+        return "stop_loss_missing"
+    if (
+        getattr(trade, "target_price", None) is None
+        and getattr(trade, "target_price_1", None) is None
+        and getattr(trade, "target_price_2", None) is None
+    ):
+        return "take_profit_missing"
+
+    return None
+
+
+async def _catch_up_demo_auto_execute(
+    database: DatabaseManager,
+    *,
+    limit: int = DEMO_AUTO_EXECUTE_CATCHUP_LIMIT,
+    dry_run: bool = False,
+    require_after_session_start: bool = True,
+) -> dict[str, Any]:
+    """Execute recent open strategy signals that were missed by the live hook."""
+    settings = get_demo_settings()
+    engine = get_demo_engine()
+    now = datetime.now(UTC)
+    summary: dict[str, Any] = {
+        "success": True,
+        "dry_run": dry_run,
+        "require_after_session_start": require_after_session_start,
+        "checked": 0,
+        "eligible": 0,
+        "attempted": 0,
+        "opened": 0,
+        "pending": 0,
+        "rejected": 0,
+        "skipped": 0,
+        "limit": limit,
+        "items": [],
+    }
+
+    if not settings.auto_execute:
+        summary["success"] = False
+        summary["message"] = "Demo auto_execute is disabled"
+        return summary
+    if engine is None or not engine.running:
+        summary["success"] = False
+        summary["message"] = "Demo session not running"
+        return summary
+
+    trades = await database.list_trade_signals(result_filter="open")
+    trades.sort(
+        key=lambda trade: _trade_signal_time(trade) or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )
+    summary["checked"] = len(trades)
+
+    for trade in trades:
+        symbol = str(getattr(trade, "symbol", "") or "")
+        timeframe = str(getattr(trade, "timeframe", "") or "")
+        reason = _demo_auto_execute_skip_reason(
+            trade,
+            settings=settings,
+            engine=engine,
+            now=now,
+            require_after_session_start=require_after_session_start,
+        )
+        if reason is not None:
+            summary["skipped"] += 1
+            logger.info(
+                "Demo catch-up skipped trade_signal id=%s symbol=%s timeframe=%s reason=%s",
+                getattr(trade, "id", None),
+                symbol,
+                timeframe,
+                reason,
+            )
+            continue
+
+        summary["eligible"] += 1
+        if summary["attempted"] >= limit:
+            summary["skipped"] += 1
+            continue
+
+        item: dict[str, Any] = {
+            "trade_signal_id": getattr(trade, "id", None),
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "status": "eligible" if dry_run else "attempting",
+        }
+        summary["items"].append(item)
+        if dry_run:
+            continue
+
+        summary["attempted"] += 1
+        result = await engine.execute_signal(
+            symbol=symbol,
+            signal_type=str(getattr(trade, "setup_type", "") or "Signal"),
+            bias=str(getattr(trade, "bias", "") or ""),
+            setup_type=str(getattr(trade, "setup_type", "") or ""),
+            confidence=float(getattr(trade, "confidence", 0.0) or 0.0),
+            entry_price=getattr(trade, "entry_price", None),
+            stop_loss=getattr(trade, "invalidation_price", None),
+            take_profit=getattr(trade, "target_price", None),
+            take_profit_1=getattr(trade, "target_price_1", None),
+            take_profit_2=getattr(trade, "target_price_2", None),
+            position_size_multiplier=_trade_signal_size_multiplier(trade),
+            risk_usdt=settings.risk_usdt,
+            max_slippage_pct=settings.max_slippage_pct,
+            max_entry_drift_pct=settings.max_entry_drift_pct,
+            max_market_tp1_progress_pct=settings.max_market_tp1_progress_pct,
+            max_pullback_tp1_progress_pct=settings.max_pullback_tp1_progress_pct,
+            entry_mode=settings.entry_mode,
+            tp1_close_pct=settings.tp1_close_pct,
+        )
+        item["result"] = result
+        if result.get("success"):
+            if result.get("pending"):
+                item["status"] = "pending"
+                summary["pending"] += 1
+            else:
+                item["status"] = "opened"
+                summary["opened"] += 1
+            logger.info("Demo catch-up executed trade_signal id=%s symbol=%s", getattr(trade, "id", None), symbol)
+        else:
+            item["status"] = "rejected"
+            item["error"] = result.get("error")
+            summary["rejected"] += 1
+            logger.warning(
+                "Demo catch-up rejected trade_signal id=%s symbol=%s reason=%s",
+                getattr(trade, "id", None),
+                symbol,
+                result.get("error"),
+            )
+
+    return summary
+
+
+def _schedule_demo_auto_execute_catchup(
+    database: DatabaseManager,
+    *,
+    reason: str,
+) -> None:
+    async def runner() -> None:
+        try:
+            result = await _catch_up_demo_auto_execute(database)
+            logger.info("Demo auto-execute catch-up finished reason=%s result=%s", reason, result)
+        except Exception:
+            logger.exception("Demo auto-execute catch-up failed reason=%s", reason)
+
+    asyncio.create_task(runner())
 
 
 async def _collect_history_symbols(
@@ -230,6 +467,13 @@ class DemoSettingsUpdate(BaseModel):
     enabled_regimes: list[str] | None = None
 
 
+class DemoCatchUpRequest(BaseModel):
+    """Request model for manual demo auto-execute catch-up."""
+    limit: int = Field(default=DEMO_AUTO_EXECUTE_CATCHUP_LIMIT, ge=1, le=25)
+    dry_run: bool = False
+    include_pre_session: bool = False
+
+
 class DemoCloseRequest(BaseModel):
     """Request model for closing a position."""
     symbol: str = Field(..., min_length=1)
@@ -250,15 +494,38 @@ async def read_demo_settings() -> dict[str, Any]:
 
 
 @router.put("/settings")
-async def update_demo_settings(update: DemoSettingsUpdate) -> dict[str, Any]:
+async def update_demo_settings(
+    update: DemoSettingsUpdate,
+    database: DatabaseManager = Depends(get_database),
+) -> dict[str, Any]:
     global _demo_settings
+    was_auto_execute = get_demo_settings().auto_execute
     current = get_demo_settings().model_dump()
     patch = update.model_dump(exclude_unset=True)
     for key, value in patch.items():
         if value is not None:
             current[key] = value
     _demo_settings = DemoSettings(**current)
+    if _demo_settings.auto_execute and patch:
+        reason = "settings_enabled" if not was_auto_execute else "settings_updated"
+        _schedule_demo_auto_execute_catchup(database, reason=reason)
     return _demo_settings.model_dump()
+
+
+@router.post("/auto-execute/catch-up")
+async def catch_up_demo_auto_execute(
+    request: DemoCatchUpRequest,
+    database: DatabaseManager = Depends(get_database),
+) -> dict[str, Any]:
+    """
+    Manually process recent open trade signals that missed the live auto-execute hook.
+    """
+    return await _catch_up_demo_auto_execute(
+        database,
+        limit=request.limit,
+        dry_run=request.dry_run,
+        require_after_session_start=not request.include_pre_session,
+    )
 
 
 @router.post("/start")
@@ -328,6 +595,8 @@ async def start_demo_session(
             raise HTTPException(status_code=503, detail=detail)
 
         logger.info(f"Demo session started: {result.get('session_id')}")
+        if get_demo_settings().auto_execute:
+            _schedule_demo_auto_execute_catchup(database, reason="session_started")
 
         return {
             "success": True,
