@@ -1033,8 +1033,17 @@ class DemoExecutionEngine:
         take_profit_2: float | None,
         tp1_close_pct: float,
     ) -> dict[str, Any]:
-        """Place reduce-only SL/TP orders after market entry."""
+        """Place reduce-only SL/TP orders after market entry.
+
+        Uses ``CONTRACT_PRICE`` (last-price) as the trigger type so that
+        protective orders fire on the same price feed the signal engine
+        uses to detect TP/SL hits.  ``MARK_PRICE`` (the previous default)
+        often diverges on testnet, causing TP orders to never trigger.
+        """
         clean_symbol = self._normalize_symbol(symbol) or symbol.upper()
+        # Use CONTRACT_PRICE so TP/SL trigger on last-traded price (same as
+        # the candle-based price the signal engine evaluates against).
+        protective_working_type = "CONTRACT_PRICE"
         result: dict[str, Any] = {
             "protected": False,
             "tp1_armed": False,
@@ -1053,11 +1062,22 @@ class DemoExecutionEngine:
             and take_profit_2 is not None
             and abs(take_profit_1 - take_profit_2) > VALUE_EPSILON
         )
-        tp1_qty = quantity * tp1_pct if split_targets else quantity
-        tp2_qty = max(quantity - tp1_qty, 0.0) if split_targets else 0.0
+        tp1_qty_raw = quantity * tp1_pct if split_targets else quantity
+        # Round partial quantities to symbol lot-size to avoid Binance
+        # LOT_SIZE filter rejections on the split TP orders.
+        tp1_qty = await self.client._round_quantity(clean_symbol, tp1_qty_raw)
+        tp2_qty_raw = max(quantity - tp1_qty, 0.0) if split_targets else 0.0
+        tp2_qty = await self.client._round_quantity(clean_symbol, tp2_qty_raw) if tp2_qty_raw > VALUE_EPSILON else 0.0
         sl_order_id: int | None = None
         tp1_order_id: int | None = None
         tp2_order_id: int | None = None
+
+        logger.info(
+            "[PROTECTIVE] %s placing SL/TP: qty=%.8f tp1_qty=%.8f tp2_qty=%.8f "
+            "SL=%s TP1=%s TP2=%s workingType=%s",
+            clean_symbol, quantity, tp1_qty, tp2_qty,
+            stop_loss, take_profit_1, take_profit_2, protective_working_type,
+        )
 
         if stop_loss is not None:
             sl_order = await self.client.place_order(
@@ -1067,13 +1087,16 @@ class DemoExecutionEngine:
                 order_type="STOP_MARKET",
                 stop_price=stop_loss,
                 reduce_only=True,
+                working_type=protective_working_type,
             )
             result["orders"]["sl"] = sl_order
             if sl_order.get("error"):
                 result["warnings"].append(f"sl_failed:{sl_order.get('error')}")
+                logger.error("[PROTECTIVE] %s SL order FAILED: %s", clean_symbol, sl_order.get("error"))
             else:
                 sl_order_id = sl_order.get("order_id")
                 result["protected"] = True
+                logger.info("[PROTECTIVE] %s SL armed at %.8f (order_id=%s)", clean_symbol, stop_loss, sl_order_id)
 
         if take_profit_1 is not None:
             tp1_order = await self.client.place_order(
@@ -1083,13 +1106,16 @@ class DemoExecutionEngine:
                 order_type="TAKE_PROFIT_MARKET",
                 stop_price=take_profit_1,
                 reduce_only=True,
+                working_type=protective_working_type,
             )
             result["orders"]["tp1"] = tp1_order
             if tp1_order.get("error"):
                 result["warnings"].append(f"tp1_failed:{tp1_order.get('error')}")
+                logger.error("[PROTECTIVE] %s TP1 order FAILED: %s", clean_symbol, tp1_order.get("error"))
             else:
                 tp1_order_id = tp1_order.get("order_id")
                 result["tp1_armed"] = True
+                logger.info("[PROTECTIVE] %s TP1 armed at %.8f qty=%.8f (order_id=%s)", clean_symbol, take_profit_1, tp1_qty, tp1_order_id)
 
         if split_targets and take_profit_2 is not None and tp2_qty > VALUE_EPSILON:
             tp2_order = await self.client.place_order(
@@ -1099,13 +1125,23 @@ class DemoExecutionEngine:
                 order_type="TAKE_PROFIT_MARKET",
                 stop_price=take_profit_2,
                 reduce_only=True,
+                working_type=protective_working_type,
             )
             result["orders"]["tp2"] = tp2_order
             if tp2_order.get("error"):
                 result["warnings"].append(f"tp2_failed:{tp2_order.get('error')}")
+                logger.error("[PROTECTIVE] %s TP2 order FAILED: %s", clean_symbol, tp2_order.get("error"))
             else:
                 tp2_order_id = tp2_order.get("order_id")
                 result["tp2_armed"] = True
+                logger.info("[PROTECTIVE] %s TP2 armed at %.8f qty=%.8f (order_id=%s)", clean_symbol, take_profit_2, tp2_qty, tp2_order_id)
+
+        # Summarize protective order placement
+        armed_count = sum([result["protected"], result["tp1_armed"], result["tp2_armed"]])
+        if result["warnings"]:
+            logger.warning("[PROTECTIVE] %s %d/%d orders armed, warnings: %s", clean_symbol, armed_count, 3 if split_targets else 2, result["warnings"])
+        else:
+            logger.info("[PROTECTIVE] %s all %d protective orders armed successfully", clean_symbol, armed_count)
 
         self._managed_positions[clean_symbol] = {
             "symbol": clean_symbol,
@@ -1167,6 +1203,8 @@ class DemoExecutionEngine:
         if entry_price <= VALUE_EPSILON or remaining_qty <= VALUE_EPSILON or close_side not in {"BUY", "SELL"}:
             return
 
+        # Use CONTRACT_PRICE to match the protective order trigger type.
+        protective_working_type = "CONTRACT_PRICE"
         old_sl_order_id = meta.get("sl_order_id")
         be_order = await self.client.place_order(
             symbol=symbol,
@@ -1175,6 +1213,7 @@ class DemoExecutionEngine:
             order_type="STOP_MARKET",
             stop_price=entry_price,
             reduce_only=True,
+            working_type=protective_working_type,
         )
         if be_order.get("error") and old_sl_order_id:
             await self.client.cancel_order(symbol=symbol, order_id=int(old_sl_order_id))
@@ -1185,6 +1224,7 @@ class DemoExecutionEngine:
                 order_type="STOP_MARKET",
                 stop_price=entry_price,
                 reduce_only=True,
+                working_type=protective_working_type,
             )
         elif old_sl_order_id:
             await self.client.cancel_order(symbol=symbol, order_id=int(old_sl_order_id))

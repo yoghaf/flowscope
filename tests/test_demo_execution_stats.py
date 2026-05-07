@@ -152,6 +152,9 @@ class FakeDemoClient:
             if order["order_type"] == "LIMIT"
         ]
 
+    async def _round_quantity(self, symbol: str, quantity: float) -> float:
+        return round(quantity, 3)
+
     async def cancel_order(self, symbol: str, order_id: int) -> dict[str, object]:
         self.cancelled_orders.append((symbol, order_id))
         return {"success": True, "order_id": order_id, "status": "CANCELED"}
