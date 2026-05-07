@@ -73,7 +73,7 @@ function unwrapObjectResponse<T extends object>(
 
 async function fetchJson<T>(
   path: string,
-  query?: Record<string, string | number | undefined>,
+  query?: Record<string, string | number | boolean | undefined>,
   init?: RequestInit,
 ): Promise<T> {
   const url = new URL(path, getApiBaseUrl());
@@ -126,7 +126,7 @@ async function fetchJson<T>(
 
 async function fetchBlob(
   path: string,
-  query?: Record<string, string | number | undefined>,
+  query?: Record<string, string | number | boolean | undefined>,
   init?: RequestInit,
 ): Promise<Blob> {
   const url = new URL(path, getApiBaseUrl());
@@ -233,19 +233,37 @@ export const api = {
     symbol?: string;
     timeframe?: Timeframe | "ALL";
     setupType?: string;
+    regime?: "Trending" | "Ranging" | "Balanced" | "ALL";
+    result?: "open" | "win" | "loss" | "breakeven" | "timeout" | "closed" | "ALL";
+    month?: string;
+    search?: string;
     scope?: "active" | "all";
     strategy?: string;
+    simulationMode?: "fixed_size" | "fixed_risk" | "equity_risk_pct";
+    startingCapital?: number;
     capitalPerTrade: number;
     riskPerTrade?: number | null;
+    riskPctPerTrade?: number;
+    feePct?: number;
+    usePositionMultiplier?: boolean;
   }): Promise<PerformanceTradeTableResponse> {
-    const params: Record<string, string | number> = {
+    const params: Record<string, string | number | boolean> = {
       symbol: query.symbol ?? "ALL",
       timeframe: query.timeframe ?? "ALL",
+      regime: query.regime ?? "ALL",
+      result: query.result ?? "ALL",
       scope: query.scope ?? "active",
       strategy: query.strategy ?? "v2_balanced",
+      simulation_mode: query.simulationMode ?? "fixed_risk",
+      starting_capital: query.startingCapital ?? 1000,
       capital_per_trade: query.capitalPerTrade,
+      risk_pct_per_trade: query.riskPctPerTrade ?? 1,
+      fee_pct: query.feePct ?? 0,
+      use_position_multiplier: query.usePositionMultiplier ?? true,
     };
     if (query.setupType) params.setup_type = query.setupType;
+    if (query.month) params.month = query.month;
+    if (query.search) params.search = query.search;
     if (query.riskPerTrade && query.riskPerTrade > 0)
       params.risk_per_trade = query.riskPerTrade;
     return fetchJson<PerformanceTradeTableResponse>(
@@ -257,19 +275,39 @@ export const api = {
     symbol?: string;
     timeframe?: Timeframe | "ALL";
     setupType?: string;
+    regime?: "Trending" | "Ranging" | "Balanced" | "ALL";
+    result?: "open" | "win" | "loss" | "breakeven" | "timeout" | "closed" | "ALL";
+    month?: string;
+    search?: string;
+    scope?: "active" | "all";
     strategy?: string;
+    simulationMode?: "fixed_size" | "fixed_risk" | "equity_risk_pct";
+    startingCapital?: number;
     capitalPerTrade: number;
     riskPerTrade?: number | null;
+    riskPctPerTrade?: number;
+    feePct?: number;
+    usePositionMultiplier?: boolean;
     format?: "html" | "csv";
   }): Promise<Blob> {
-    const params: Record<string, string | number> = {
+    const params: Record<string, string | number | boolean> = {
       symbol: query.symbol ?? "ALL",
       timeframe: query.timeframe ?? "ALL",
+      regime: query.regime ?? "ALL",
+      result: query.result ?? "ALL",
+      scope: query.scope ?? "active",
       strategy: query.strategy ?? "v2_balanced",
+      simulation_mode: query.simulationMode ?? "fixed_risk",
+      starting_capital: query.startingCapital ?? 1000,
       capital_per_trade: query.capitalPerTrade,
+      risk_pct_per_trade: query.riskPctPerTrade ?? 1,
+      fee_pct: query.feePct ?? 0,
+      use_position_multiplier: query.usePositionMultiplier ?? true,
       format: query.format ?? "html",
     };
     if (query.setupType) params.setup_type = query.setupType;
+    if (query.month) params.month = query.month;
+    if (query.search) params.search = query.search;
     if (query.riskPerTrade && query.riskPerTrade > 0)
       params.risk_per_trade = query.riskPerTrade;
     return fetchBlob("/performance/report", params);

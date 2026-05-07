@@ -19,7 +19,17 @@ class DummyDatabase:
         return list(self._trades)
 
 
-def make_trade(*, created_at: datetime, symbol: str = "EDGEUSDT", timeframe: str = "15m") -> object:
+def make_trade(
+    *,
+    created_at: datetime,
+    symbol: str = "EDGEUSDT",
+    timeframe: str = "15m",
+    market_regime: str = "Trending",
+    result: str = "win",
+    pnl_pct: float = 5.0,
+    close_reason: str = "Target 2",
+    position_size_multiplier: float = 1.0,
+) -> object:
     return SimpleNamespace(
         id=1,
         symbol=symbol,
@@ -34,7 +44,7 @@ def make_trade(*, created_at: datetime, symbol: str = "EDGEUSDT", timeframe: str
         bias="Bullish",
         setup_type="Continuation",
         status="Triggered",
-        market_regime="Trending",
+        market_regime=market_regime,
         volatility_regime="High",
         entry_price=1.0,
         invalidation_price=0.95,
@@ -48,12 +58,16 @@ def make_trade(*, created_at: datetime, symbol: str = "EDGEUSDT", timeframe: str
         risk_level="Low",
         quality_score="A",
         confidence=0.9,
-        result="win",
-        pnl_pct=5.0,
+        result=result,
+        pnl_pct=pnl_pct,
         max_drawdown_pct=-1.0,
         max_profit_pct=6.0,
         engine_tag=None,
-        entry_features={"entry_type": "Continuation Pullback", "strategy_version": "v2_balanced"},
+        entry_features={
+            "entry_type": "Continuation Pullback",
+            "strategy_version": "v2_balanced",
+            "position_size_multiplier": position_size_multiplier,
+        },
     )
 
 
@@ -102,3 +116,108 @@ def test_filtered_trades_prefer_active_tag_when_present() -> None:
     filtered = asyncio.run(engine._filtered_trades())
 
     assert [trade.symbol for trade in filtered] == ["TAGGED"]
+
+
+def test_trade_report_fixed_risk_summary_and_regime_filter() -> None:
+    settings = Settings(demo_mode=False)
+    winner = make_trade(
+        created_at=datetime(2026, 4, 3, 12, 0, 0, tzinfo=UTC),
+        symbol="WINUSDT",
+        result="win",
+        pnl_pct=5.0,
+    )
+    loser = make_trade(
+        created_at=datetime(2026, 4, 3, 13, 0, 0, tzinfo=UTC),
+        symbol="LOSSUSDT",
+        result="loss",
+        pnl_pct=-5.0,
+        close_reason="Invalidation",
+    )
+    ranging_open = make_trade(
+        created_at=datetime(2026, 4, 3, 14, 0, 0, tzinfo=UTC),
+        symbol="OPENUSDT",
+        market_regime="Ranging",
+        result="open",
+        pnl_pct=2.0,
+    )
+    engine = PerformanceEngine(DummyDatabase([winner, loser, ranging_open], settings))
+
+    report = asyncio.run(
+        engine.get_trade_report_table(
+            regime="Trending",
+            result="closed",
+            simulation_mode="fixed_risk",
+            starting_capital=1000,
+            risk_per_trade=10,
+            scope="all",
+            use_position_multiplier=False,
+        )
+    )
+
+    assert report.total_rows == 2
+    assert report.closed_trades == 2
+    assert report.open_trades == 0
+    assert report.wins == 1
+    assert report.losses == 1
+    assert report.winrate == 50.0
+    assert report.net_pnl_usd == 0.0
+    assert report.by_regime[0].key == "Trending"
+    assert {row.symbol for row in report.rows} == {"WINUSDT", "LOSSUSDT"}
+    assert all(row.risk_amount_usd == 10 for row in report.rows)
+
+
+def test_trade_report_can_apply_or_ignore_position_multiplier() -> None:
+    settings = Settings(demo_mode=False)
+    trade = make_trade(
+        created_at=datetime(2026, 4, 3, 12, 0, 0, tzinfo=UTC),
+        symbol="BOOSTUSDT",
+        result="win",
+        pnl_pct=5.0,
+        position_size_multiplier=2.0,
+    )
+    engine = PerformanceEngine(DummyDatabase([trade], settings))
+
+    multiplied = asyncio.run(
+        engine.get_trade_report_table(
+            simulation_mode="fixed_risk",
+            risk_per_trade=10,
+            scope="all",
+            use_position_multiplier=True,
+        )
+    )
+    fixed = asyncio.run(
+        engine.get_trade_report_table(
+            simulation_mode="fixed_risk",
+            risk_per_trade=10,
+            scope="all",
+            use_position_multiplier=False,
+        )
+    )
+
+    assert multiplied.rows[0].risk_amount_usd == 20
+    assert multiplied.net_pnl_usd == 20
+    assert fixed.rows[0].risk_amount_usd == 10
+    assert fixed.net_pnl_usd == 10
+
+
+def test_trade_report_can_filter_by_month() -> None:
+    settings = Settings(demo_mode=False)
+    april_trade = make_trade(
+        created_at=datetime(2026, 4, 3, 12, 0, 0, tzinfo=UTC),
+        symbol="APRILUSDT",
+    )
+    may_trade = make_trade(
+        created_at=datetime(2026, 5, 3, 12, 0, 0, tzinfo=UTC),
+        symbol="MAYUSDT",
+    )
+    engine = PerformanceEngine(DummyDatabase([april_trade, may_trade], settings))
+
+    report = asyncio.run(
+        engine.get_trade_report_table(
+            month="2026-05",
+            scope="all",
+        )
+    )
+
+    assert report.month == "2026-05"
+    assert [row.symbol for row in report.rows] == ["MAYUSDT"]

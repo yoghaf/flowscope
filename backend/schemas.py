@@ -508,6 +508,30 @@ class ConditionPerformance(BaseModel):
     validated: bool
 
 
+class PerformanceEquityPoint(BaseModel):
+    timestamp: str
+    equity: float | None = None
+    pnl_usd: float | None = None
+    symbol: str
+    result: str
+
+
+class PerformanceBreakdownItem(BaseModel):
+    key: str
+    total_trades: int = 0
+    closed_trades: int = 0
+    open_trades: int = 0
+    wins: int = 0
+    losses: int = 0
+    breakevens: int = 0
+    timeouts: int = 0
+    winrate: float = 0.0
+    net_pnl_usd: float = 0.0
+    expectancy_usd: float = 0.0
+    profit_factor: float | None = None
+    avg_r_multiple: float | None = None
+
+
 class PerformanceTradeRow(BaseModel):
     trade_id: int
     symbol: str
@@ -539,10 +563,13 @@ class PerformanceTradeRow(BaseModel):
     reward_tp2_per_unit: float | None = None
     planned_rr_tp1: float | None = None
     planned_rr_tp2: float | None = None
+    simulation_mode: str | None = None
+    starting_capital: float | None = None
     base_capital_per_trade: float | None = None
     capital_per_trade: float | None = None
     estimated_quantity: float | None = None
     risk_amount_usd: float | None = None
+    fee_usd: float | None = None
     tp1_reward_usd: float | None = None
     tp2_reward_usd: float | None = None
     risk_pct_of_capital: float | None = None
@@ -554,6 +581,7 @@ class PerformanceTradeRow(BaseModel):
     max_profit_usd: float | None = None
     max_drawdown_pct: float | None = None
     max_drawdown_usd: float | None = None
+    equity_after_trade: float | None = None
     engine_tag: str | None = None
     strategy_version: str | None = None
     position_size_multiplier: float | None = None
@@ -564,11 +592,43 @@ class PerformanceTradeTableResponse(BaseModel):
     symbol: str
     timeframe: str
     setup_type: str | None = None
+    regime: str = "ALL"
+    result_filter: str = "ALL"
+    month: str | None = None
+    search: str | None = None
     scope: str = "active"
     active_tag: str | None = None
     active_since: str | None = None
+    strategy: str = "v2_balanced"
+    simulation_mode: str = "fixed_risk"
+    starting_capital: float = 1000.0
     capital_per_trade: float
+    risk_per_trade: float | None = None
+    risk_pct_per_trade: float = 1.0
+    fee_pct: float = 0.0
+    use_position_multiplier: bool = True
     total_rows: int
+    closed_trades: int = 0
+    open_trades: int = 0
+    wins: int = 0
+    losses: int = 0
+    breakevens: int = 0
+    timeouts: int = 0
+    winrate: float = 0.0
+    net_pnl_usd: float = 0.0
+    roi_pct: float = 0.0
+    expectancy_usd: float = 0.0
+    profit_factor: float | None = None
+    max_drawdown_usd: float = 0.0
+    max_drawdown_pct: float = 0.0
+    avg_win_usd: float = 0.0
+    avg_loss_usd: float = 0.0
+    avg_r_multiple: float | None = None
+    equity_curve: list[PerformanceEquityPoint] = Field(default_factory=list)
+    by_timeframe: list[PerformanceBreakdownItem] = Field(default_factory=list)
+    by_regime: list[PerformanceBreakdownItem] = Field(default_factory=list)
+    by_setup: list[PerformanceBreakdownItem] = Field(default_factory=list)
+    by_close_reason: list[PerformanceBreakdownItem] = Field(default_factory=list)
     rows: list[PerformanceTradeRow] = Field(default_factory=list)
 
 

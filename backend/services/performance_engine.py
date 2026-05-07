@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import html
 import json
+from collections import defaultdict
 from datetime import datetime, timezone
 UTC = timezone.utc
 from io import StringIO
@@ -70,11 +71,17 @@ class PerformanceEngine:
         symbol: str = "ALL",
         timeframe: str = "ALL",
         setup_type: str | None = None,
+        regime: str = "ALL",
+        result: str = "ALL",
+        month: str | None = None,
+        search: str | None = None,
         scope: str = "active",
         strategy: str = "v2_balanced",
     ) -> list:
         trades = await self.database.list_trade_signals()
         filtered = []
+        search_term = search.strip().lower() if search else ""
+        month_filter = month.strip() if month else ""
         for trade in trades:
             if not self._trade_in_scope(trade, scope=scope):
                 continue
@@ -82,8 +89,34 @@ class PerformanceEngine:
                 continue
             if timeframe != "ALL" and trade.timeframe != timeframe:
                 continue
-            if setup_type and trade.setup_type != setup_type:
+            if setup_type and setup_type not in {"ALL", "all"} and trade.setup_type != setup_type:
                 continue
+            if regime not in {"ALL", "all"} and trade.market_regime != regime:
+                continue
+            if result not in {"ALL", "all"}:
+                if result == "closed":
+                    if trade.result == "open":
+                        continue
+                elif trade.result != result:
+                    continue
+            if month_filter:
+                created_at = getattr(trade, "created_at", None)
+                if not isinstance(created_at, datetime) or created_at.strftime("%Y-%m") != month_filter:
+                    continue
+            if search_term:
+                searchable = " ".join(
+                    str(value or "")
+                    for value in (
+                        getattr(trade, "symbol", ""),
+                        getattr(trade, "setup_type", ""),
+                        getattr(trade, "market_regime", ""),
+                        getattr(trade, "state", ""),
+                        getattr(trade, "bias", ""),
+                        getattr(trade, "close_reason", ""),
+                    )
+                ).lower()
+                if search_term not in searchable:
+                    continue
             if strategy and strategy != "ALL" and strategy != "all":
                 features = trade.entry_features if isinstance(trade.entry_features, dict) else {}
                 if features.get("strategy_version", "v1") != strategy:
@@ -98,21 +131,36 @@ class PerformanceEngine:
         symbol: str = "ALL",
         timeframe: str = "ALL",
         setup_type: str | None = None,
+        regime: str = "ALL",
+        result: str = "ALL",
+        month: str | None = None,
+        search: str | None = None,
         scope: str = "active",
         strategy: str = "v2_balanced",
+        simulation_mode: str = "fixed_risk",
+        starting_capital: float = 1000.0,
         capital_per_trade: float = 100.0,
-        risk_per_trade: float | None = None,
+        risk_per_trade: float | None = 10.0,
+        risk_pct_per_trade: float = 1.0,
+        fee_pct: float = 0.0,
+        use_position_multiplier: bool = True,
     ) -> list[dict[str, object]]:
         filtered = await self._filtered_trades(
             symbol=symbol,
             timeframe=timeframe,
             setup_type=setup_type,
+            regime=regime,
+            result=result,
+            month=month,
+            search=search,
             scope=scope,
             strategy=strategy,
         )
 
         rows: list[dict[str, object]] = []
-        for trade in filtered:
+        equity = max(starting_capital, 0.0)
+        closed_results = {"win", "loss", "breakeven", "timeout"}
+        for trade in sorted(filtered, key=lambda item: item.created_at):
             entry_features = getattr(trade, "entry_features", None)
             if not isinstance(entry_features, dict):
                 entry_features = {}
@@ -134,31 +182,55 @@ class PerformanceEngine:
             rr_tp1 = self._safe_div(reward_tp1, risk_per_unit) if reward_tp1 is not None and risk_per_unit is not None else None
             rr_tp2 = self._safe_div(reward_tp2, risk_per_unit) if reward_tp2 is not None and risk_per_unit is not None else None
 
-            # --- Position Sizing Mode ---
-            if risk_per_trade is not None and risk_per_unit is not None and risk_per_unit > 0 and entry and entry > 0:
-                # RISK-BASED: user sets exact loss in USD per trade
-                # We ignore internal allocation_multiplier here because the user
-                # explicitly requested a fixed risk amount (e.g., exactly $10 loss if SL hit).
-                quantity = risk_per_trade / risk_per_unit
-                effective_capital = quantity * entry
-                base_capital = effective_capital
-                risk_amount_usd = risk_per_trade
-            else:
-                # CAPITAL-BASED (legacy): user sets fixed modal per trade
+            position_multiplier = allocation_multiplier if use_position_multiplier else 1.0
+            risk_fraction = (
+                abs((entry - invalidation) / entry)
+                if entry is not None and invalidation is not None and entry > 0
+                else None
+            )
+
+            if simulation_mode == "fixed_size":
                 base_capital = capital_per_trade * fill_count
-                effective_capital = base_capital * allocation_multiplier
-                quantity = (effective_capital / entry) if entry and entry > 0 else None
-                risk_amount_usd = quantity * risk_per_unit if quantity is not None and risk_per_unit is not None else None
+                effective_capital = base_capital * position_multiplier
+                risk_amount_usd = effective_capital * risk_fraction if risk_fraction is not None else None
+            elif simulation_mode == "equity_risk_pct":
+                risk_budget = equity * max(risk_pct_per_trade, 0.0) / 100
+                risk_amount_usd = risk_budget * position_multiplier
+                effective_capital = (
+                    risk_amount_usd / risk_fraction
+                    if risk_fraction is not None and risk_fraction > 0
+                    else capital_per_trade * position_multiplier
+                )
+                base_capital = effective_capital
+            else:
+                base_risk = risk_per_trade if risk_per_trade is not None and risk_per_trade > 0 else 10.0
+                risk_amount_usd = base_risk * position_multiplier
+                effective_capital = (
+                    risk_amount_usd / risk_fraction
+                    if risk_fraction is not None and risk_fraction > 0
+                    else capital_per_trade * position_multiplier
+                )
+                base_capital = effective_capital
+
+            quantity = (effective_capital / entry) if entry and entry > 0 else None
 
             tp1_reward_usd = quantity * reward_tp1 if quantity is not None and reward_tp1 is not None else None
             tp2_reward_usd = quantity * reward_tp2 if quantity is not None and reward_tp2 is not None else None
             risk_pct_of_capital = self._safe_div(risk_amount_usd * 100, effective_capital) if risk_amount_usd is not None and effective_capital else None
 
-            realized_pnl_usd = effective_capital * (trade.pnl_pct / 100) if effective_capital else 0.0
-            max_profit_usd = effective_capital * (trade.max_profit_pct / 100) if effective_capital else 0.0
-            max_drawdown_usd = effective_capital * (trade.max_drawdown_pct / 100) if effective_capital else 0.0
+            pnl_pct = float(trade.pnl_pct or 0.0)
+            max_profit_pct = float(trade.max_profit_pct or 0.0)
+            max_drawdown_pct = float(trade.max_drawdown_pct or 0.0)
+            is_closed = trade.result in closed_results
+            gross_pnl_usd = effective_capital * (pnl_pct / 100) if effective_capital else 0.0
+            fee_usd = effective_capital * (fee_pct / 100) * 2 if effective_capital and is_closed else 0.0
+            realized_pnl_usd = gross_pnl_usd - fee_usd
+            max_profit_usd = effective_capital * (max_profit_pct / 100) if effective_capital else 0.0
+            max_drawdown_usd = effective_capital * (max_drawdown_pct / 100) if effective_capital else 0.0
             realized_r_multiple = self._safe_div(realized_pnl_usd, risk_amount_usd) if risk_amount_usd is not None else None
-            allocated_r_multiple = realized_r_multiple * allocation_multiplier if realized_r_multiple is not None else None
+            allocated_r_multiple = realized_r_multiple
+            if is_closed:
+                equity += realized_pnl_usd
 
             row = {
                 "trade_id": trade.id,
@@ -191,21 +263,25 @@ class PerformanceEngine:
                 "reward_tp2_per_unit": self._round(reward_tp2, 6),
                 "planned_rr_tp1": self._round(rr_tp1, 4),
                 "planned_rr_tp2": self._round(rr_tp2, 4),
+                "simulation_mode": simulation_mode,
+                "starting_capital": self._round(starting_capital, 2),
                 "base_capital_per_trade": self._round(base_capital, 2),
                 "capital_per_trade": self._round(effective_capital, 2),
                 "estimated_quantity": self._round(quantity, 8),
                 "risk_amount_usd": self._round(risk_amount_usd, 2),
+                "fee_usd": self._round(fee_usd, 2),
                 "tp1_reward_usd": self._round(tp1_reward_usd, 2),
                 "tp2_reward_usd": self._round(tp2_reward_usd, 2),
                 "risk_pct_of_capital": self._round(risk_pct_of_capital, 4),
-                "pnl_pct": self._round(trade.pnl_pct, 4),
+                "pnl_pct": self._round(pnl_pct, 4),
                 "realized_pnl_usd": self._round(realized_pnl_usd, 2),
                 "realized_r_multiple": self._round(realized_r_multiple, 4),
                 "allocated_r_multiple": self._round(allocated_r_multiple, 4),
-                "max_profit_pct": self._round(trade.max_profit_pct, 4),
+                "max_profit_pct": self._round(max_profit_pct, 4),
                 "max_profit_usd": self._round(max_profit_usd, 2),
-                "max_drawdown_pct": self._round(trade.max_drawdown_pct, 4),
+                "max_drawdown_pct": self._round(max_drawdown_pct, 4),
                 "max_drawdown_usd": self._round(max_drawdown_usd, 2),
+                "equity_after_trade": self._round(equity, 2),
                 "engine_tag": getattr(trade, "engine_tag", None),
                 "strategy_version": entry_features.get("strategy_version", "unknown") if entry_features else "unknown",
                 "position_size_multiplier": self._round(allocation_multiplier, 4),
@@ -215,7 +291,149 @@ class PerformanceEngine:
                     if isinstance(value, (int, float, bool, str)):
                         row[f"feat_{key}"] = value
             rows.append(row)
+        rows.sort(key=lambda row: str(row.get("created_at", "")), reverse=True)
         return rows
+
+    @staticmethod
+    def _row_float(row: dict[str, object], key: str, default: float = 0.0) -> float:
+        value = row.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            return float(value) if value is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _is_closed_row(row: dict[str, object]) -> bool:
+        return row.get("result") != "open"
+
+    def _build_breakdown(self, rows: list[dict[str, object]], key: str) -> list[dict[str, object]]:
+        grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
+        for row in rows:
+            group_key = str(row.get(key) or "Unknown")
+            grouped[group_key].append(row)
+
+        items: list[dict[str, object]] = []
+        for group_key, group_rows in grouped.items():
+            closed_rows = [row for row in group_rows if self._is_closed_row(row)]
+            wins = sum(1 for row in closed_rows if row.get("result") == "win")
+            losses = sum(1 for row in closed_rows if row.get("result") == "loss")
+            breakevens = sum(1 for row in closed_rows if row.get("result") == "breakeven")
+            timeouts = sum(1 for row in closed_rows if row.get("result") == "timeout")
+            pnl_values = [self._row_float(row, "realized_pnl_usd") for row in closed_rows]
+            r_values = [
+                self._row_float(row, "realized_r_multiple")
+                for row in closed_rows
+                if row.get("realized_r_multiple") is not None
+            ]
+            gross_profit = sum(value for value in pnl_values if value > 0)
+            gross_loss = sum(value for value in pnl_values if value < 0)
+            decisive = wins + losses
+            closed_count = len(closed_rows)
+            items.append(
+                {
+                    "key": group_key,
+                    "total_trades": len(group_rows),
+                    "closed_trades": closed_count,
+                    "open_trades": len(group_rows) - closed_count,
+                    "wins": wins,
+                    "losses": losses,
+                    "breakevens": breakevens,
+                    "timeouts": timeouts,
+                    "winrate": round((wins / decisive * 100) if decisive else 0.0, 2),
+                    "net_pnl_usd": round(sum(pnl_values), 2),
+                    "expectancy_usd": round(sum(pnl_values) / closed_count, 2) if closed_count else 0.0,
+                    "profit_factor": round(gross_profit / abs(gross_loss), 4) if gross_loss < 0 else None,
+                    "avg_r_multiple": round(sum(r_values) / len(r_values), 4) if r_values else None,
+                }
+            )
+
+        return sorted(items, key=lambda item: (float(item["net_pnl_usd"]), int(item["closed_trades"])), reverse=True)
+
+    def _build_report_summary(self, rows: list[dict[str, object]], *, starting_capital: float) -> dict[str, object]:
+        closed_rows = [row for row in rows if self._is_closed_row(row)]
+        open_rows = [row for row in rows if row.get("result") == "open"]
+        wins = sum(1 for row in closed_rows if row.get("result") == "win")
+        losses = sum(1 for row in closed_rows if row.get("result") == "loss")
+        breakevens = sum(1 for row in closed_rows if row.get("result") == "breakeven")
+        timeouts = sum(1 for row in closed_rows if row.get("result") == "timeout")
+        decisive = wins + losses
+        pnl_values = [self._row_float(row, "realized_pnl_usd") for row in closed_rows]
+        r_values = [
+            self._row_float(row, "realized_r_multiple")
+            for row in closed_rows
+            if row.get("realized_r_multiple") is not None
+        ]
+        gross_profit = sum(value for value in pnl_values if value > 0)
+        gross_loss = sum(value for value in pnl_values if value < 0)
+        net_pnl = sum(pnl_values)
+
+        equity = starting_capital
+        peak = starting_capital
+        max_drawdown_usd = 0.0
+        max_drawdown_pct = 0.0
+        chronological = sorted(rows, key=lambda row: str(row.get("created_at", "")))
+        first_timestamp = chronological[0].get("created_at") if chronological else datetime.now(UTC).isoformat()
+        equity_curve: list[dict[str, object]] = [
+            {
+                "timestamp": str(first_timestamp),
+                "equity": self._round(starting_capital, 2),
+                "pnl_usd": 0.0,
+                "symbol": "START",
+                "result": "start",
+            }
+        ]
+        for row in chronological:
+            if not self._is_closed_row(row):
+                continue
+            pnl_usd = self._row_float(row, "realized_pnl_usd")
+            equity += pnl_usd
+            peak = max(peak, equity)
+            drawdown_usd = min(0.0, equity - peak)
+            drawdown_pct = (drawdown_usd / peak * 100) if peak > 0 else 0.0
+            max_drawdown_usd = min(max_drawdown_usd, drawdown_usd)
+            max_drawdown_pct = min(max_drawdown_pct, drawdown_pct)
+            equity_curve.append(
+                {
+                    "timestamp": str(row.get("closed_at") or row.get("updated_at") or row.get("created_at")),
+                    "equity": self._round(equity, 2),
+                    "pnl_usd": self._round(pnl_usd, 2),
+                    "symbol": str(row.get("symbol") or ""),
+                    "result": str(row.get("result") or ""),
+                }
+            )
+
+        close_reason_rows: list[dict[str, object]] = []
+        for row in closed_rows:
+            cloned = dict(row)
+            cloned["close_reason_group"] = row.get("close_reason") or row.get("result") or "Unknown"
+            close_reason_rows.append(cloned)
+
+        closed_count = len(closed_rows)
+        return {
+            "closed_trades": closed_count,
+            "open_trades": len(open_rows),
+            "wins": wins,
+            "losses": losses,
+            "breakevens": breakevens,
+            "timeouts": timeouts,
+            "winrate": round((wins / decisive * 100) if decisive else 0.0, 2),
+            "net_pnl_usd": round(net_pnl, 2),
+            "roi_pct": round((net_pnl / starting_capital * 100) if starting_capital > 0 else 0.0, 2),
+            "expectancy_usd": round(net_pnl / closed_count, 2) if closed_count else 0.0,
+            "profit_factor": round(gross_profit / abs(gross_loss), 4) if gross_loss < 0 else None,
+            "max_drawdown_usd": round(max_drawdown_usd, 2),
+            "max_drawdown_pct": round(max_drawdown_pct, 2),
+            "avg_win_usd": round(gross_profit / wins, 2) if wins else 0.0,
+            "avg_loss_usd": round(gross_loss / losses, 2) if losses else 0.0,
+            "avg_r_multiple": round(sum(r_values) / len(r_values), 4) if r_values else None,
+            "equity_curve": equity_curve,
+            "by_timeframe": self._build_breakdown(rows, "timeframe"),
+            "by_regime": self._build_breakdown(rows, "market_regime"),
+            "by_setup": self._build_breakdown(rows, "setup_type"),
+            "by_close_reason": self._build_breakdown(close_reason_rows, "close_reason_group"),
+        }
 
     async def export_trade_report_csv(
         self,
@@ -223,19 +441,37 @@ class PerformanceEngine:
         symbol: str = "ALL",
         timeframe: str = "ALL",
         setup_type: str | None = None,
+        regime: str = "ALL",
+        result: str = "ALL",
+        month: str | None = None,
+        search: str | None = None,
         scope: str = "active",
         strategy: str = "v2_balanced",
+        simulation_mode: str = "fixed_risk",
+        starting_capital: float = 1000.0,
         capital_per_trade: float = 100.0,
-        risk_per_trade: float | None = None,
+        risk_per_trade: float | None = 10.0,
+        risk_pct_per_trade: float = 1.0,
+        fee_pct: float = 0.0,
+        use_position_multiplier: bool = True,
     ) -> str:
         rows = await self._trade_report_rows(
             symbol=symbol,
             timeframe=timeframe,
             setup_type=setup_type,
+            regime=regime,
+            result=result,
+            month=month,
+            search=search,
             scope=scope,
             strategy=strategy,
+            simulation_mode=simulation_mode,
+            starting_capital=starting_capital,
             capital_per_trade=capital_per_trade,
             risk_per_trade=risk_per_trade,
+            risk_pct_per_trade=risk_pct_per_trade,
+            fee_pct=fee_pct,
+            use_position_multiplier=use_position_multiplier,
         )
 
         base_fields = [
@@ -269,10 +505,13 @@ class PerformanceEngine:
             "reward_tp2_per_unit",
             "planned_rr_tp1",
             "planned_rr_tp2",
+            "simulation_mode",
+            "starting_capital",
             "base_capital_per_trade",
             "capital_per_trade",
             "estimated_quantity",
             "risk_amount_usd",
+            "fee_usd",
             "tp1_reward_usd",
             "tp2_reward_usd",
             "risk_pct_of_capital",
@@ -284,6 +523,7 @@ class PerformanceEngine:
             "max_profit_usd",
             "max_drawdown_pct",
             "max_drawdown_usd",
+            "equity_after_trade",
         ]
         all_keys = set()
         for row in rows:
@@ -308,30 +548,61 @@ class PerformanceEngine:
         symbol: str = "ALL",
         timeframe: str = "ALL",
         setup_type: str | None = None,
+        regime: str = "ALL",
+        result: str = "ALL",
+        month: str | None = None,
+        search: str | None = None,
         scope: str = "active",
         strategy: str = "v2_balanced",
+        simulation_mode: str = "fixed_risk",
+        starting_capital: float = 1000.0,
         capital_per_trade: float = 100.0,
-        risk_per_trade: float | None = None,
+        risk_per_trade: float | None = 10.0,
+        risk_pct_per_trade: float = 1.0,
+        fee_pct: float = 0.0,
+        use_position_multiplier: bool = True,
     ) -> PerformanceTradeTableResponse:
         rows = await self._trade_report_rows(
             symbol=symbol,
             timeframe=timeframe,
             setup_type=setup_type,
+            regime=regime,
+            result=result,
+            month=month,
+            search=search,
             scope=scope,
             strategy=strategy,
+            simulation_mode=simulation_mode,
+            starting_capital=starting_capital,
             capital_per_trade=capital_per_trade,
             risk_per_trade=risk_per_trade,
+            risk_pct_per_trade=risk_pct_per_trade,
+            fee_pct=fee_pct,
+            use_position_multiplier=use_position_multiplier,
         )
+        summary = self._build_report_summary(rows, starting_capital=starting_capital)
         return PerformanceTradeTableResponse(
             generated_at=datetime.now(UTC),
             symbol=symbol,
             timeframe=timeframe,
             setup_type=setup_type,
+            regime=regime,
+            result_filter=result,
+            month=month,
+            search=search,
             scope=scope,
             active_tag=self._active_tag() if scope == "active" else None,
             active_since=self._active_since().isoformat() if scope == "active" and self._active_since() is not None else None,
+            strategy=strategy,
+            simulation_mode=simulation_mode,
+            starting_capital=starting_capital,
             capital_per_trade=capital_per_trade,
+            risk_per_trade=risk_per_trade,
+            risk_pct_per_trade=risk_pct_per_trade,
+            fee_pct=fee_pct,
+            use_position_multiplier=use_position_multiplier,
             total_rows=len(rows),
+            **summary,
             rows=[PerformanceTradeRow.model_validate(row) for row in rows],
         )
 
@@ -341,37 +612,49 @@ class PerformanceEngine:
         symbol: str = "ALL",
         timeframe: str = "ALL",
         setup_type: str | None = None,
+        regime: str = "ALL",
+        result: str = "ALL",
+        month: str | None = None,
+        search: str | None = None,
         scope: str = "active",
         strategy: str = "v2_balanced",
+        simulation_mode: str = "fixed_risk",
+        starting_capital: float = 1000.0,
         capital_per_trade: float = 100.0,
-        risk_per_trade: float | None = None,
+        risk_per_trade: float | None = 10.0,
+        risk_pct_per_trade: float = 1.0,
+        fee_pct: float = 0.0,
+        use_position_multiplier: bool = True,
     ) -> str:
         rows = await self._trade_report_rows(
             symbol=symbol,
             timeframe=timeframe,
             setup_type=setup_type,
+            regime=regime,
+            result=result,
+            month=month,
+            search=search,
             scope=scope,
             strategy=strategy,
+            simulation_mode=simulation_mode,
+            starting_capital=starting_capital,
             capital_per_trade=capital_per_trade,
             risk_per_trade=risk_per_trade,
+            risk_pct_per_trade=risk_pct_per_trade,
+            fee_pct=fee_pct,
+            use_position_multiplier=use_position_multiplier,
         )
-        closed_rows = [row for row in rows if row["result"] in {"win", "loss"}]
-        wins = sum(1 for row in closed_rows if row["result"] == "win")
-        losses = sum(1 for row in closed_rows if row["result"] == "loss")
-        breakevens = sum(1 for row in rows if row["result"] == "breakeven")
-        open_trades = sum(1 for row in rows if row["result"] == "open")
-        winrate = (wins / len(closed_rows) * 100) if closed_rows else 0.0
-        total_realized = sum(float(row["realized_pnl_usd"] or 0.0) for row in rows)
+        summary = self._build_report_summary(rows, starting_capital=starting_capital)
 
         summary_cards = [
             ("Rows", str(len(rows))),
-            ("Closed", str(len(closed_rows))),
-            ("Open", str(open_trades)),
-            ("Wins / Losses", f"{wins} / {losses}"),
-            ("Breakevens", str(breakevens)),
-            ("Winrate", f"{winrate:.2f}%"),
-            ("Total Realized PnL", f"${total_realized:,.2f}"),
-            ("Modal / Trade", f"${capital_per_trade:,.2f}"),
+            ("Closed", str(summary["closed_trades"])),
+            ("Open", str(summary["open_trades"])),
+            ("Wins / Losses", f"{summary['wins']} / {summary['losses']}"),
+            ("Breakevens", str(summary["breakevens"])),
+            ("Winrate", f"{summary['winrate']:.2f}%"),
+            ("Net PnL", f"${summary['net_pnl_usd']:,.2f}"),
+            ("ROI", f"{summary['roi_pct']:.2f}%"),
         ]
 
         visible_columns = [
@@ -404,6 +687,7 @@ class PerformanceEngine:
             "capital_per_trade",
             "estimated_quantity",
             "risk_amount_usd",
+            "fee_usd",
             "realized_pnl_usd",
             "realized_r_multiple",
             "pnl_pct",
@@ -445,9 +729,10 @@ class PerformanceEngine:
             "risk_level": "Risk",
             "market_regime": "Regime",
             "volatility_regime": "Vol",
-            "capital_per_trade": "Modal",
+            "capital_per_trade": "Notional",
             "estimated_quantity": "Qty",
             "risk_amount_usd": "Risk $",
+            "fee_usd": "Fee",
             "realized_pnl_usd": "Realized $",
             "realized_r_multiple": "R-Multiple",
             "pnl_pct": "PnL %",
@@ -668,7 +953,7 @@ class PerformanceEngine:
 <body>
   <h1>FlowScope Performance Report</h1>
   <p>Readable trade table with RR, modal per trade, quantity, and realized dollar performance.</p>
-  <p class="meta">Generated at: {html.escape(datetime.now(UTC).isoformat())} | Symbol: {html.escape(symbol)} | Timeframe: {html.escape(timeframe)} | Setup: {html.escape(setup_type or "ALL")} | Scope: {html.escape(scope)}</p>
+  <p class="meta">Generated at: {html.escape(datetime.now(UTC).isoformat())} | Symbol: {html.escape(symbol)} | Timeframe: {html.escape(timeframe)} | Setup: {html.escape(setup_type or "ALL")} | Regime: {html.escape(regime)} | Result: {html.escape(result)} | Month: {html.escape(month or "ALL")} | Scope: {html.escape(scope)} | Strategy: {html.escape(strategy)} | Simulation: {html.escape(simulation_mode)}</p>
   <div class="summary">{summary_html}</div>
   <div class="filters">
     <div class="filters-head">

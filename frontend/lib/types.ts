@@ -589,9 +589,13 @@ export interface PerformanceTradeRow {
   reward_tp2_per_unit?: number | null;
   planned_rr_tp1?: number | null;
   planned_rr_tp2?: number | null;
+  simulation_mode?: string | null;
+  starting_capital?: number | null;
+  base_capital_per_trade?: number | null;
   capital_per_trade?: number | null;
   estimated_quantity?: number | null;
   risk_amount_usd?: number | null;
+  fee_usd?: number | null;
   tp1_reward_usd?: number | null;
   tp2_reward_usd?: number | null;
   risk_pct_of_capital?: number | null;
@@ -602,8 +606,34 @@ export interface PerformanceTradeRow {
   max_profit_usd?: number | null;
   max_drawdown_pct?: number | null;
   max_drawdown_usd?: number | null;
+  equity_after_trade?: number | null;
+  engine_tag?: string | null;
   strategy_version?: string | null;
   position_size_multiplier?: number | null;
+}
+
+export interface PerformanceBreakdownItem {
+  key: string;
+  total_trades: number;
+  closed_trades: number;
+  open_trades: number;
+  wins: number;
+  losses: number;
+  breakevens: number;
+  timeouts: number;
+  winrate: number;
+  net_pnl_usd: number;
+  expectancy_usd: number;
+  profit_factor?: number | null;
+  avg_r_multiple?: number | null;
+}
+
+export interface PerformanceEquityPoint {
+  timestamp: string;
+  equity?: number | null;
+  pnl_usd?: number | null;
+  symbol: string;
+  result: string;
 }
 
 export interface PerformanceTradeTableResponse {
@@ -611,8 +641,43 @@ export interface PerformanceTradeTableResponse {
   symbol: string;
   timeframe: string;
   setup_type?: string | null;
+  regime: string;
+  result_filter: string;
+  month?: string | null;
+  search?: string | null;
+  scope: string;
+  active_tag?: string | null;
+  active_since?: string | null;
+  strategy: string;
+  simulation_mode: "fixed_size" | "fixed_risk" | "equity_risk_pct" | string;
+  starting_capital: number;
   capital_per_trade: number;
+  risk_per_trade?: number | null;
+  risk_pct_per_trade: number;
+  fee_pct: number;
+  use_position_multiplier: boolean;
   total_rows: number;
+  closed_trades: number;
+  open_trades: number;
+  wins: number;
+  losses: number;
+  breakevens: number;
+  timeouts: number;
+  winrate: number;
+  net_pnl_usd: number;
+  roi_pct: number;
+  expectancy_usd: number;
+  profit_factor?: number | null;
+  max_drawdown_usd: number;
+  max_drawdown_pct: number;
+  avg_win_usd: number;
+  avg_loss_usd: number;
+  avg_r_multiple?: number | null;
+  equity_curve: PerformanceEquityPoint[];
+  by_timeframe: PerformanceBreakdownItem[];
+  by_regime: PerformanceBreakdownItem[];
+  by_setup: PerformanceBreakdownItem[];
+  by_close_reason: PerformanceBreakdownItem[];
   rows: PerformanceTradeRow[];
 }
 
