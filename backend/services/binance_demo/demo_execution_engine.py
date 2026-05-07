@@ -1153,6 +1153,8 @@ class DemoExecutionEngine:
             "sl_order_id": sl_order_id,
             "tp1_order_id": tp1_order_id,
             "tp2_order_id": tp2_order_id,
+            "tp1_price": take_profit_1,
+            "tp2_price": take_profit_2,
             "tp1_hit": False,
             "be_stop_order_id": None,
             "created_at": datetime.now(UTC).isoformat(),
@@ -1160,7 +1162,14 @@ class DemoExecutionEngine:
         return result
 
     async def _reconcile_managed_positions(self, positions: list[dict[str, Any]]) -> None:
-        """Move SL to breakeven after TP1 partial close is observed."""
+        """Move SL to breakeven after TP1 partial close is observed.
+
+        Also acts as a **fallback TP monitor**: if the current price has
+        already surpassed TP1 but the position is still at full size
+        (meaning the TP order never fired or was rejected), we execute
+        the TP1 partial close via an immediate market order so the
+        position is not left unprotected.
+        """
         if not self._managed_positions:
             return
 
@@ -1190,6 +1199,12 @@ class DemoExecutionEngine:
             )
             if tp1_observed:
                 await self._move_stop_to_breakeven(symbol=symbol, meta=meta, remaining_qty=current_qty)
+                continue
+
+            # --- Fallback TP monitor ---
+            # Position is still at full size. Check if price already passed
+            # TP1 — if so, the TAKE_PROFIT_MARKET order probably failed.
+            await self._fallback_tp_check(symbol=symbol, meta=meta, current_qty=current_qty)
 
     async def _move_stop_to_breakeven(
         self,
@@ -1238,6 +1253,101 @@ class DemoExecutionEngine:
             logger.info("[DEMO PROTECTION] %s TP1 observed, SL moved to BE at %.8f", symbol, entry_price)
         else:
             logger.error("[DEMO PROTECTION] Failed to move %s SL to BE: %s", symbol, be_order.get("error"))
+
+    async def _fallback_tp_check(
+        self,
+        *,
+        symbol: str,
+        meta: dict[str, Any],
+        current_qty: float,
+    ) -> None:
+        """Active TP monitoring fallback.
+
+        Called when position is still at full size (TP order didn't fire).
+        Fetches current price and checks if TP1 has been passed — if so,
+        executes an immediate market close for the TP1 portion and moves
+        SL to breakeven.
+
+        This covers the gap where TAKE_PROFIT_MARKET orders fail due to
+        LOT_SIZE rejections, API errors, or mark/contract price divergence.
+        """
+        tp1_price = self._to_float(meta.get("tp1_price"), default=0.0)
+        tp1_qty = self._to_float(meta.get("tp1_qty"))
+        close_side = str(meta.get("close_side") or "")
+        if tp1_price <= VALUE_EPSILON or tp1_qty <= VALUE_EPSILON:
+            return
+        if close_side not in {"BUY", "SELL"}:
+            return
+
+        current_price = await self.client.get_current_price(symbol)
+        if current_price is None or current_price <= 0:
+            return
+
+        # Determine if price has passed TP1 based on position direction.
+        # close_side == "SELL" means original position is LONG → TP1 hit when price >= tp1_price
+        # close_side == "BUY" means original position is SHORT → TP1 hit when price <= tp1_price
+        tp1_passed = (
+            (close_side == "SELL" and current_price >= tp1_price)
+            or (close_side == "BUY" and current_price <= tp1_price)
+        )
+        if not tp1_passed:
+            return
+
+        logger.warning(
+            "[DEMO PROTECTION] %s FALLBACK TP1: price %.8f has passed TP1 %.8f "
+            "but position still at full size %.8f — executing market close for TP1 portion",
+            symbol, current_price, tp1_price, current_qty,
+        )
+
+        # Cancel the stale TP1 order if it exists
+        tp1_order_id = meta.get("tp1_order_id")
+        if tp1_order_id is not None:
+            cancel_result = await self.client.cancel_order(symbol=symbol, order_id=int(tp1_order_id))
+            if cancel_result.get("error"):
+                logger.warning("[DEMO PROTECTION] %s failed to cancel stale TP1 order %s: %s",
+                             symbol, tp1_order_id, cancel_result.get("error"))
+
+        # Round the TP1 quantity for the market close
+        rounded_tp1_qty = await self.client._round_quantity(symbol, tp1_qty)
+        if rounded_tp1_qty <= VALUE_EPSILON:
+            logger.error("[DEMO PROTECTION] %s TP1 qty rounded to zero, skipping fallback close", symbol)
+            return
+
+        # Execute market close for TP1 portion
+        close_result = await self.client.place_order(
+            symbol=symbol,
+            side=close_side,
+            quantity=rounded_tp1_qty,
+            order_type="MARKET",
+            reduce_only=True,
+        )
+
+        if close_result.get("error"):
+            logger.error(
+                "[DEMO PROTECTION] %s FALLBACK TP1 market close FAILED: %s",
+                symbol, close_result.get("error"),
+            )
+            return
+
+        logger.info(
+            "[DEMO PROTECTION] %s FALLBACK TP1 market close SUCCESS: "
+            "closed %.8f @ market (TP1 target was %.8f, actual price ~%.8f)",
+            symbol, rounded_tp1_qty, tp1_price, current_price,
+        )
+
+        # Now move SL to breakeven for the remaining position
+        remaining_qty = max(current_qty - rounded_tp1_qty, 0.0)
+        if remaining_qty > VALUE_EPSILON:
+            await self._move_stop_to_breakeven(
+                symbol=symbol,
+                meta=meta,
+                remaining_qty=remaining_qty,
+            )
+        else:
+            # Entire position was the TP1 portion (no split targets)
+            meta["tp1_hit"] = True
+            meta["remaining_qty"] = 0.0
+            logger.info("[DEMO PROTECTION] %s FALLBACK: full position closed at TP1", symbol)
 
     async def _cancel_symbol_orders(self, symbol: str) -> None:
         clean_symbol = self._normalize_symbol(symbol) or symbol.upper()
