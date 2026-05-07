@@ -24,7 +24,11 @@ import { api } from "@/lib/api";
 type StatusFilter = "all" | "open" | "closed";
 type ResultFilter = "all" | "win" | "loss" | "breakeven" | "timeout";
 type RegimeFilter = "all" | "Balanced" | "Trending" | "Ranging";
+type TimeframeFilter = "all" | "15m" | "1h" | "4h" | "24h";
 type OutcomeTone = "blue" | "emerald" | "amber" | "rose" | "slate";
+
+const TIMEFRAME_FILTERS: TimeframeFilter[] = ["all", "15m", "1h", "4h", "24h"];
+const REGIME_FILTERS: RegimeFilter[] = ["all", "Balanced", "Trending", "Ranging"];
 
 interface Signal {
   id: number;
@@ -91,12 +95,18 @@ interface MonthOption {
   report_status: "Live" | "Final" | string;
 }
 
+interface TimeframeReport extends SignalSummary {
+  timeframe: "15m" | "1h" | "4h" | "24h";
+}
+
 interface SignalsData {
   generated_at: string;
   selected_month: string;
   selected_month_label: string;
+  selected_timeframe: TimeframeFilter;
   available_months: MonthOption[];
   monthly_summary: SignalSummary;
+  timeframe_reports: TimeframeReport[];
   active_open_signals: Signal[];
   monthly_signals: Signal[];
   signals: Signal[];
@@ -311,6 +321,7 @@ export default function SignalsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
   const [regimeFilter, setRegimeFilter] = useState<RegimeFilter>("all");
+  const [timeframeFilter, setTimeframeFilter] = useState<TimeframeFilter>("all");
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -322,6 +333,7 @@ export default function SignalsPage() {
         scope: "active",
         strategy: "v2_balanced",
         regime: regimeFilter,
+        timeframe: timeframeFilter,
         month: selectedMonth,
         limit: 200,
       });
@@ -332,7 +344,7 @@ export default function SignalsPage() {
     } finally {
       setLoading(false);
     }
-  }, [regimeFilter, selectedMonth]);
+  }, [regimeFilter, selectedMonth, timeframeFilter]);
 
   useEffect(() => {
     void fetchSignals();
@@ -355,6 +367,7 @@ export default function SignalsPage() {
   }, [monthlySignals, resultFilter, search, statusFilter]);
 
   const summary = data?.monthly_summary;
+  const timeframeReports = useMemo(() => data?.timeframe_reports ?? [], [data]);
   const months =
     data?.available_months?.length
       ? data.available_months
@@ -380,6 +393,8 @@ export default function SignalsPage() {
             <h1 className="text-2xl font-bold tracking-tight">AI Signals</h1>
             <p className="text-sm text-muted-foreground">
               {data?.selected_month_label ?? monthLabel(selectedMonth)} cohort
+              {timeframeFilter !== "all" ? ` / ${timeframeFilter}` : ""}
+              {regimeFilter !== "all" ? ` / ${regimeFilter}` : ""}
             </p>
           </div>
         </div>
@@ -395,17 +410,6 @@ export default function SignalsPage() {
                 {month.label} ({month.total_signals})
               </option>
             ))}
-          </select>
-
-          <select
-            value={regimeFilter}
-            onChange={(event) => setRegimeFilter(event.target.value as RegimeFilter)}
-            className="h-10 rounded-lg border border-white/10 bg-card px-3 text-sm text-foreground outline-none transition focus:border-violet-500/50"
-          >
-            <option value="all">All Regimes</option>
-            <option value="Balanced">Balanced</option>
-            <option value="Trending">Trending</option>
-            <option value="Ranging">Ranging</option>
           </select>
 
           <button
@@ -428,29 +432,70 @@ export default function SignalsPage() {
         <StatCard icon={<Archive className="h-4 w-4" />} label="Report" value={summary?.report_status ?? "Live"} tone={summary?.report_status === "Final" ? "slate" : "violet"} />
       </div>
 
-      <div className="flex flex-col gap-3 border-y border-white/10 py-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          {(["all", "open", "closed"] as const).map((status) => (
-            <button
-              key={status}
-              onClick={() => {
-                setStatusFilter(status);
-                if (status !== "closed") setResultFilter("all");
-              }}
-              className={`h-9 rounded-lg px-3 text-sm font-medium capitalize transition ${
-                statusFilter === status
-                  ? "bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/30"
-                  : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
-              }`}
-            >
-              {status}
-            </button>
-          ))}
+      <TimeframeReportGrid
+        reports={timeframeReports}
+        selectedTimeframe={timeframeFilter}
+        onSelect={setTimeframeFilter}
+      />
 
-          {statusFilter === "closed" && (
-            <>
-              <div className="mx-1 h-6 w-px bg-white/10" />
-              {(["all", "win", "loss", "breakeven", "timeout"] as const).map((result) => (
+      <div className="flex flex-col gap-3 border-y border-white/10 py-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="mr-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">TF</span>
+            {TIMEFRAME_FILTERS.map((timeframe) => (
+              <button
+                key={timeframe}
+                onClick={() => setTimeframeFilter(timeframe)}
+                className={`h-9 rounded-lg px-3 text-xs font-semibold uppercase transition ${
+                  timeframeFilter === timeframe
+                    ? "bg-blue-500/15 text-blue-300 ring-1 ring-blue-500/30"
+                    : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                }`}
+              >
+                {timeframe === "all" ? "All TF" : timeframe}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="mr-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Regime</span>
+            {REGIME_FILTERS.map((regime) => (
+              <button
+                key={regime}
+                onClick={() => setRegimeFilter(regime)}
+                className={`h-9 rounded-lg px-3 text-xs font-semibold uppercase transition ${
+                  regimeFilter === regime
+                    ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30"
+                    : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                }`}
+              >
+                {regime === "all" ? "All Regimes" : regime}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {(["all", "open", "closed"] as const).map((status) => (
+              <button
+                key={status}
+                onClick={() => {
+                  setStatusFilter(status);
+                  if (status !== "closed") setResultFilter("all");
+                }}
+                className={`h-9 rounded-lg px-3 text-sm font-medium capitalize transition ${
+                  statusFilter === status
+                    ? "bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/30"
+                    : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                }`}
+              >
+                {status}
+              </button>
+            ))}
+
+            {statusFilter === "closed" && (
+              <>
+                <div className="mx-1 h-6 w-px bg-white/10" />
+                {(["all", "win", "loss", "breakeven", "timeout"] as const).map((result) => (
                 <button
                   key={result}
                   onClick={() => setResultFilter(result)}
@@ -462,9 +507,10 @@ export default function SignalsPage() {
                 >
                   {result === "all" ? "All Results" : result}
                 </button>
-              ))}
-            </>
-          )}
+                ))}
+              </>
+            )}
+          </div>
         </div>
 
         <label className="relative block w-full max-w-xs">
@@ -493,7 +539,7 @@ export default function SignalsPage() {
         <>
           <section className="space-y-3">
             <SectionHeader
-              title="Open Signals"
+              title={timeframeFilter === "all" ? "Open Signals" : `Open ${timeframeFilter} Signals`}
               meta={`${activeOpenSignals.length} active`}
               icon={<Activity className="h-4 w-4" />}
             />
@@ -568,6 +614,118 @@ function StatCard({
         {label}
       </div>
       <p className="mt-2 text-2xl font-bold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function TimeframeReportGrid({
+  reports,
+  selectedTimeframe,
+  onSelect,
+}: {
+  reports: TimeframeReport[];
+  selectedTimeframe: TimeframeFilter;
+  onSelect: (timeframe: TimeframeFilter) => void;
+}) {
+  const fallbackReports = TIMEFRAME_FILTERS.filter((timeframe): timeframe is TimeframeReport["timeframe"] => timeframe !== "all")
+    .map((timeframe) => ({
+      timeframe,
+      total_signals: 0,
+      total_closed: 0,
+      closed_trades: 0,
+      wins: 0,
+      losses: 0,
+      breakevens: 0,
+      timeouts: 0,
+      winrate: 0,
+      open_trades: 0,
+      realized_pnl_pct: 0,
+      avg_realized_pnl_pct: 0,
+      report_status: "Final",
+    }));
+  const visibleReports = reports.length ? reports : fallbackReports;
+
+  return (
+    <section className="space-y-3">
+      <SectionHeader
+        title="Timeframe Report"
+        meta={selectedTimeframe === "all" ? "all timeframes" : selectedTimeframe}
+        icon={<BarChart3 className="h-4 w-4" />}
+      />
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {visibleReports.map((report) => {
+          const active = selectedTimeframe === report.timeframe;
+          const totalOutcomes = report.wins + report.losses;
+          return (
+            <button
+              key={report.timeframe}
+              type="button"
+              onClick={() => onSelect(active ? "all" : report.timeframe)}
+              className={`rounded-lg border p-4 text-left transition ${
+                active
+                  ? "border-blue-500/40 bg-blue-500/10"
+                  : "border-white/10 bg-card/70 hover:border-white/20 hover:bg-card"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-lg font-bold text-foreground">{report.timeframe}</span>
+                <span
+                  className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase ${
+                    report.report_status === "Live"
+                      ? "border-violet-500/20 bg-violet-500/10 text-violet-300"
+                      : "border-white/10 bg-white/5 text-muted-foreground"
+                  }`}
+                >
+                  {report.report_status}
+                </span>
+              </div>
+
+              <div className="mt-4 grid grid-cols-3 gap-2">
+                <ReportMetric label="WR" value={`${report.winrate}%`} tone={report.winrate >= 55 ? "emerald" : "amber"} />
+                <ReportMetric label="Win" value={report.wins} tone="emerald" />
+                <ReportMetric label="Loss" value={report.losses} tone="rose" />
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <ReportMetric label="Open" value={report.open_trades} tone="blue" />
+                <ReportMetric label="Closed" value={report.closed_trades} />
+                <ReportMetric label="Trades" value={report.total_signals} />
+              </div>
+
+              <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                <span>W/L sample {totalOutcomes}</span>
+                <span className={(report.realized_pnl_pct ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                  {formatPercent(report.realized_pnl_pct)}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ReportMetric({
+  label,
+  value,
+  tone = "slate",
+}: {
+  label: string;
+  value: string | number;
+  tone?: "slate" | "blue" | "emerald" | "rose" | "amber";
+}) {
+  const toneMap: Record<string, string> = {
+    slate: "text-foreground",
+    blue: "text-blue-300",
+    emerald: "text-emerald-300",
+    rose: "text-rose-300",
+    amber: "text-amber-300",
+  };
+
+  return (
+    <div className="rounded-md bg-white/[0.03] px-2 py-2">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className={`mt-1 text-sm font-bold tabular-nums ${toneMap[tone]}`}>{value}</p>
     </div>
   );
 }

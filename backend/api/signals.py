@@ -13,6 +13,7 @@ router = APIRouter(tags=["signals"])
 
 TRADE_CLOSED_RESULTS = {"win", "loss", "breakeven", "timeout"}
 TRADE_WR_RESULTS = {"win", "loss"}
+REPORT_TIMEFRAMES = ("15m", "1h", "4h", "24h")
 VALUE_EPSILON = 1e-12
 KLINE_CACHE_TTL_SECONDS = 60
 KLINE_CACHE: dict[tuple[str, str, int], tuple[datetime, list[dict[str, Any]]]] = {}
@@ -256,6 +257,20 @@ def _month_options(trades: list[Any], selected_month: str) -> list[dict[str, Any
     return options
 
 
+def _timeframe_reports(trades: list[Any]) -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    for timeframe in REPORT_TIMEFRAMES:
+        timeframe_trades = [trade for trade in trades if getattr(trade, "timeframe", None) == timeframe]
+        summary = _summarize_signals(timeframe_trades)
+        reports.append(
+            {
+                "timeframe": timeframe,
+                **summary,
+            }
+        )
+    return reports
+
+
 @router.get("/signals/klines")
 async def get_signal_klines(
     request: Request,
@@ -322,6 +337,7 @@ async def get_live_signals(
     scope: str = Query("active", pattern="^(active|all)$"),
     strategy: str = Query("v2_balanced"),
     regime: str = Query("all", pattern="^(all|Balanced|Trending|Ranging)$"),
+    timeframe: str = Query("all", pattern="^(all|15m|1h|4h|24h)$"),
     month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),
     limit: int = Query(50, ge=1, le=200),
 ) -> dict[str, Any]:
@@ -355,8 +371,20 @@ async def get_live_signals(
     selected_month = month or datetime.now(UTC).strftime("%Y-%m")
     trades.sort(key=lambda t: _trade_opened_at(t) or datetime.min.replace(tzinfo=UTC), reverse=True)
 
-    monthly_trades = [trade for trade in trades if _month_key(_trade_opened_at(trade)) == selected_month]
-    active_open_trades = [trade for trade in trades if trade.result == "open"]
+    monthly_trades_all_timeframes = [trade for trade in trades if _month_key(_trade_opened_at(trade)) == selected_month]
+    timeframe_reports = _timeframe_reports(monthly_trades_all_timeframes)
+    if timeframe != "all":
+        trades_for_month_options = [trade for trade in trades if getattr(trade, "timeframe", None) == timeframe]
+        monthly_trades = [trade for trade in monthly_trades_all_timeframes if getattr(trade, "timeframe", None) == timeframe]
+        active_open_trades = [
+            trade
+            for trade in trades
+            if trade.result == "open" and getattr(trade, "timeframe", None) == timeframe
+        ]
+    else:
+        trades_for_month_options = trades
+        monthly_trades = monthly_trades_all_timeframes
+        active_open_trades = [trade for trade in trades if trade.result == "open"]
 
     listed_trades = list(monthly_trades)
     if status == "open":
@@ -390,10 +418,12 @@ async def get_live_signals(
         "active_since": active_since.isoformat() if scope == "active" and active_since is not None else None,
         "selected_month": selected_month,
         "selected_month_label": _month_label(selected_month),
-        "available_months": _month_options(trades, selected_month),
+        "selected_timeframe": timeframe,
+        "available_months": _month_options(trades_for_month_options, selected_month),
         "total": len(serialized),
         "summary": summary,
         "monthly_summary": monthly_summary,
+        "timeframe_reports": timeframe_reports,
         "monthly_signals": monthly_serialized,
         "active_open_signals": active_open_serialized,
         "signals": serialized,

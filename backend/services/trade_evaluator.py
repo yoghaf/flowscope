@@ -84,6 +84,11 @@ class TradeEvaluator:
 
             entry_features = dict(getattr(trade, "entry_features", None) or {})
             tp1_pnl_pct = self._feature_float(entry_features.get("tp1_pnl_pct"))
+            tp1_hit_at = (
+                self._last_history_event_at(history_logs, "tp1_hit")
+                or self._parse_history_timestamp(entry_features.get("tp1_hit_at"))
+            )
+            tp1_hit_this_evaluation = False
             strategy_version = entry_features.get("strategy_version", "v1")
             entry_flow_alignment = getattr(trade, "entry_flow_alignment", None)
             setup_type = getattr(trade, "setup_type", None)
@@ -181,9 +186,12 @@ class TradeEvaluator:
                     if direction > 0 and high_price >= trade.target_price_1:
                         tp1_hit = True
                         tp1_just_hit = True
+                        tp1_hit_this_evaluation = True
+                        tp1_hit_at = bucket.last_timestamp
                         tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
                         trailing_stop_price = trade.entry_price
                         entry_features["tp1_pnl_pct"] = round(tp1_pnl_pct, 6)
+                        entry_features["tp1_hit_at"] = bucket.last_timestamp.isoformat()
                         history_logs.append({
                             "timestamp": bucket.last_timestamp.isoformat(),
                             "price": trade.target_price_1,
@@ -196,9 +204,12 @@ class TradeEvaluator:
                     if direction < 0 and low_price <= trade.target_price_1:
                         tp1_hit = True
                         tp1_just_hit = True
+                        tp1_hit_this_evaluation = True
+                        tp1_hit_at = bucket.last_timestamp
                         tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
                         trailing_stop_price = trade.entry_price
                         entry_features["tp1_pnl_pct"] = round(tp1_pnl_pct, 6)
+                        entry_features["tp1_hit_at"] = bucket.last_timestamp.isoformat()
                         history_logs.append({
                             "timestamp": bucket.last_timestamp.isoformat(),
                             "price": trade.target_price_1,
@@ -218,7 +229,12 @@ class TradeEvaluator:
                 # If TP1 is hit, the trailing stop replaces the invalidation price.
                 # But if TP1 was just hit in this candle, we don't activate the trailing stop yet
                 # because we don't know the intra-candle path (it might have hit low before high).
-                active_stop_price = trailing_stop_price if (tp1_hit and trailing_stop_price is not None and not tp1_just_hit) else trade.invalidation_price
+                tp1_stop_active_for_bucket = (
+                    tp1_hit
+                    and trailing_stop_price is not None
+                    and self._post_tp1_bucket_stop_is_active(bucket=bucket, tp1_hit_at=tp1_hit_at, tp1_just_hit=tp1_just_hit)
+                )
+                active_stop_price = trailing_stop_price if tp1_stop_active_for_bucket else trade.invalidation_price
                 
                 hit_stop = False
                 if active_stop_price is not None:
@@ -267,7 +283,12 @@ class TradeEvaluator:
                         result = "loss"
                         close_reason = "Stale Exit"
 
-                if exit_price is None and tp1_hit and setup_type == "Continuation":
+                if (
+                    exit_price is None
+                    and tp1_hit
+                    and setup_type == "Continuation"
+                    and self._post_tp1_bucket_stop_is_active(bucket=bucket, tp1_hit_at=tp1_hit_at, tp1_just_hit=tp1_just_hit)
+                ):
                     trailing_stop_price = self._continuation_trailing_stop(
                         trade=trade,
                         bucket=bucket,
@@ -340,9 +361,12 @@ class TradeEvaluator:
                         if rt_hit_tp1:
                             tp1_hit = True
                             rt_tp1_just_hit = True
+                            tp1_hit_this_evaluation = True
+                            tp1_hit_at = now
                             tp1_pnl_pct = ((trade.target_price_1 - trade.entry_price) / trade.entry_price) * direction * 100
                             trailing_stop_price = trade.entry_price
                             entry_features["tp1_pnl_pct"] = round(tp1_pnl_pct, 6)
+                            entry_features["tp1_hit_at"] = now.isoformat()
                             history_logs.append({
                                 "timestamp": now.isoformat(),
                                 "price": trade.target_price_1,
@@ -358,7 +382,7 @@ class TradeEvaluator:
                             )
 
                     # --- Real-time trailing stop update (after TP1 hit) ---
-                    if tp1_hit and not rt_tp1_just_hit and setup_type == "Continuation":
+                    if tp1_hit and not rt_tp1_just_hit and not tp1_hit_this_evaluation and setup_type == "Continuation":
                         # Build a lightweight pseudo-bucket for trailing stop calc
                         class _RtBucket:
                             pass
@@ -378,7 +402,16 @@ class TradeEvaluator:
                     # --- TP2 / SL / SL-BE real-time check ---
                     rt_hit_target_2 = rt_price >= trade.target_price_2 if trade.target_price_2 and direction > 0 else (rt_price <= trade.target_price_2 if trade.target_price_2 else False)
                     # If TP1 just hit this cycle, don't activate trailing stop yet (same logic as bucket)
-                    rt_active_stop = trailing_stop_price if (tp1_hit and trailing_stop_price is not None and not rt_tp1_just_hit) else trade.invalidation_price
+                    rt_active_stop = (
+                        trailing_stop_price
+                        if (
+                            tp1_hit
+                            and trailing_stop_price is not None
+                            and not rt_tp1_just_hit
+                            and not tp1_hit_this_evaluation
+                        )
+                        else trade.invalidation_price
+                    )
                     rt_hit_stop = False
                     if rt_active_stop is not None:
                         rt_hit_stop = rt_price <= rt_active_stop if direction > 0 else rt_price >= rt_active_stop
@@ -510,6 +543,44 @@ class TradeEvaluator:
             return float(value) if value is not None else None
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _parse_history_timestamp(value: object) -> datetime | None:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            timestamp = value
+        else:
+            try:
+                timestamp = datetime.fromisoformat(str(value))
+            except (TypeError, ValueError):
+                return None
+        if timestamp.tzinfo is None:
+            return timestamp.replace(tzinfo=UTC)
+        return timestamp
+
+    @classmethod
+    def _last_history_event_at(cls, history_logs: list[object], event_name: str) -> datetime | None:
+        for log in reversed(history_logs):
+            if not isinstance(log, dict) or log.get("event") != event_name:
+                continue
+            timestamp = cls._parse_history_timestamp(log.get("timestamp"))
+            if timestamp is not None:
+                return timestamp
+        return None
+
+    @staticmethod
+    def _post_tp1_bucket_stop_is_active(*, bucket: object, tp1_hit_at: datetime | None, tp1_just_hit: bool) -> bool:
+        if tp1_just_hit:
+            return False
+        if tp1_hit_at is None:
+            return True
+        bucket_start = getattr(bucket, "bucket_start", None)
+        if not isinstance(bucket_start, datetime):
+            return False
+        if bucket_start.tzinfo is None:
+            bucket_start = bucket_start.replace(tzinfo=UTC)
+        return bucket_start >= tp1_hit_at
 
     def _continuation_trailing_stop(
         self,

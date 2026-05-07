@@ -161,6 +161,7 @@ export const api = {
     scope?: "all" | "active";
     strategy?: string;
     regime?: "all" | "Balanced" | "Trending" | "Ranging";
+    timeframe?: Timeframe | "all";
     month?: string;
     limit?: number;
   }): Promise<any> {
@@ -169,6 +170,7 @@ export const api = {
       scope: query.scope ?? "active",
       strategy: query.strategy ?? "v2_balanced",
       regime: query.regime ?? "all",
+      timeframe: query.timeframe ?? "all",
       month: query.month,
       limit: query.limit ?? 50,
     });
@@ -385,6 +387,7 @@ export const api = {
       tp1_close_pct: number;
       enabled_timeframes: string[];
       enabled_setups: string[];
+      enabled_regimes: string[];
     }>("/demo/settings");
   },
   async updateDemoSettings(payload: {
@@ -397,6 +400,7 @@ export const api = {
     tp1_close_pct?: number;
     enabled_timeframes?: string[];
     enabled_setups?: string[];
+    enabled_regimes?: string[];
   }) {
     return fetchJson<{
       auto_execute: boolean;
@@ -408,6 +412,7 @@ export const api = {
       tp1_close_pct: number;
       enabled_timeframes: string[];
       enabled_setups: string[];
+      enabled_regimes: string[];
     }>("/demo/settings", undefined, {
       method: "PUT",
       headers: {

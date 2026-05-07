@@ -43,6 +43,7 @@ DEMO_HISTORY_SYMBOLS = (
     "NEIROUSDT",
     "ONDOUSDT",
 )
+DEMO_REGIMES = ("Balanced", "Trending", "Ranging")
 
 
 def get_demo_engine() -> DemoExecutionEngine | None:
@@ -171,6 +172,7 @@ class DemoSettings(BaseModel):
     tp1_close_pct: float = Field(default=50.0, ge=1.0, le=99.0)
     enabled_timeframes: list[str] = Field(default_factory=lambda: ["15m", "1h"])
     enabled_setups: list[str] = Field(default_factory=lambda: ["Continuation", "Squeeze", "Trap"])
+    enabled_regimes: list[str] = Field(default_factory=lambda: list(DEMO_REGIMES))
 
 
 class DemoSettingsUpdate(BaseModel):
@@ -184,6 +186,7 @@ class DemoSettingsUpdate(BaseModel):
     tp1_close_pct: float | None = Field(default=None, ge=1.0, le=99.0)
     enabled_timeframes: list[str] | None = None
     enabled_setups: list[str] | None = None
+    enabled_regimes: list[str] | None = None
 
 
 class DemoCloseRequest(BaseModel):

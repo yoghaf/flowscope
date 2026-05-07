@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict, deque
 from datetime import datetime, timezone, timedelta
 UTC = timezone.utc
 from types import SimpleNamespace
@@ -266,3 +267,84 @@ def test_trade_entry_message_includes_entry_type() -> None:
 
     assert "Mode Entry" in message
     assert "Continuation Pullback" in message
+
+
+def test_continuation_trade_entry_alert_uses_setup_signal_for_preferences() -> None:
+    service = SignalService.__new__(SignalService)
+    service.settings = SimpleNamespace(trade_entry_notification_max_progress_r=10.0)
+    service.database = SimpleNamespace(enabled=False)
+    service.pending_trade_entry_notifications = {}
+    service.user_preferences = {
+        "tester": make_preferences(signal_types=["Continuation"], telegram_enabled=False),
+    }
+    service.alerts = deque(maxlen=1000)
+    service.user_alerts = defaultdict(lambda: deque(maxlen=1000))
+    service.telegram_notifier = SimpleNamespace(configured=False)
+
+    bucket_end = datetime.now(UTC)
+    bucket = TimeframeBucket(
+        symbol="TONUSDT",
+        timeframe="15m",
+        bucket_start=bucket_end - timedelta(minutes=15),
+        bucket_end=bucket_end,
+        last_timestamp=bucket_end,
+        open_price=2.57,
+        high_price=2.61,
+        low_price=2.55,
+        close_price=2.5712,
+        open_interest_open=1000.0,
+        open_interest_high=1010.0,
+        open_interest_low=995.0,
+        open_interest_close=1008.0,
+        spot_volume_open=10.0,
+        spot_volume_close=11.0,
+        spot_volume_delta=1.0,
+        futures_volume_open=10.0,
+        futures_volume_close=12.0,
+        futures_volume_delta=2.0,
+        funding_rate_sum=0.0,
+        funding_rate_close=0.0,
+        long_short_ratio_sum=1.0,
+        long_short_ratio_close=1.0,
+        taker_buy_sell_ratio_sum=1.0,
+        taker_buy_sell_ratio_close=1.0,
+        long_liquidations_close=0.0,
+        long_liquidations_total=0.0,
+        short_liquidations_close=0.0,
+        short_liquidations_total=0.0,
+        exchange_count_sum=1,
+        sample_count=1,
+    )
+    state = SimpleNamespace(
+        timestamp=bucket_end,
+        signal="Breakout Watch",
+        score=0.84,
+        setup_type="Continuation",
+        action_bias="Bullish",
+        execution=ExecutionPlan(
+            entry_type="Continuation Pullback",
+            entry_min=2.5712,
+            entry_max=2.5712,
+            invalidation=2.5127,
+            target=2.6946,
+            target_1=2.6372,
+            target_2=2.6946,
+            initial_stop=2.5127,
+            risk_level="Low",
+            quality_score="B",
+            breakout_valid=True,
+        ),
+    )
+
+    service._dispatch_trade_entry_notification(
+        trade_id=100,
+        symbol="TONUSDT",
+        timeframe="15m",
+        bucket=bucket,
+        state=state,
+    )
+
+    alerts = list(service.user_alerts["tester"])
+    assert len(alerts) == 1
+    assert alerts[0].signal == "Continuation"
+    assert list(service.alerts)[0].signal == "Continuation"

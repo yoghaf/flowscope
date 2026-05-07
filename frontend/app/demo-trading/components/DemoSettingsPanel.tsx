@@ -13,6 +13,7 @@ export interface DemoExecutionSettings {
   tp1_close_pct: number;
   enabled_timeframes: string[];
   enabled_setups: string[];
+  enabled_regimes: string[];
 }
 
 interface DemoSettingsPanelProps {
@@ -32,7 +33,10 @@ const DEFAULT_SETTINGS: DemoExecutionSettings = {
   tp1_close_pct: 50,
   enabled_timeframes: ["15m", "1h"],
   enabled_setups: ["Continuation", "Squeeze", "Trap"],
+  enabled_regimes: ["Balanced", "Trending", "Ranging"],
 };
+
+const REGIME_OPTIONS = ["Balanced", "Trending", "Ranging"];
 
 export default function DemoSettingsPanel({
   settings,
@@ -44,7 +48,13 @@ export default function DemoSettingsPanel({
 
   useEffect(() => {
     if (settings) {
-      setDraft(settings);
+      setDraft({
+        ...DEFAULT_SETTINGS,
+        ...settings,
+        enabled_regimes: settings.enabled_regimes?.length
+          ? settings.enabled_regimes
+          : DEFAULT_SETTINGS.enabled_regimes,
+      });
     }
   }, [settings]);
 
@@ -62,6 +72,26 @@ export default function DemoSettingsPanel({
       ...current,
       [key]: Number.isFinite(parsed) ? parsed : current[key],
     }));
+  };
+
+  const allRegimesSelected = REGIME_OPTIONS.every((regime) =>
+    draft.enabled_regimes.includes(regime),
+  );
+
+  const toggleRegime = (regime: string) => {
+    setDraft((current) => {
+      const active = current.enabled_regimes.includes(regime);
+      const enabled_regimes = active
+        ? current.enabled_regimes.filter((item) => item !== regime)
+        : [...current.enabled_regimes, regime];
+      if (enabled_regimes.length === 0) {
+        return current;
+      }
+      return {
+        ...current,
+        enabled_regimes,
+      };
+    });
   };
 
   return (
@@ -208,6 +238,48 @@ export default function DemoSettingsPanel({
           step={1}
           onChange={(value) => updateNumber("tp1_close_pct", value)}
         />
+      </div>
+
+      <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+        <FieldLabel
+          label="Regime Filter"
+          tooltip="Demo auto-execute hanya membuka signal dari regime yang aktif di sini."
+        />
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              setDraft((current) => ({
+                ...current,
+                enabled_regimes: [...REGIME_OPTIONS],
+              }))
+            }
+            className={`h-9 rounded-lg px-3 text-xs font-semibold uppercase transition ${
+              allRegimesSelected
+                ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                : "border border-white/10 bg-white/[0.03] text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
+            }`}
+          >
+            All Regimes
+          </button>
+          {REGIME_OPTIONS.map((regime) => {
+            const active = draft.enabled_regimes.includes(regime);
+            return (
+              <button
+                key={regime}
+                type="button"
+                onClick={() => toggleRegime(regime)}
+                className={`h-9 rounded-lg px-3 text-xs font-semibold uppercase transition ${
+                  active
+                    ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                    : "border border-white/10 bg-white/[0.03] text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
+                }`}
+              >
+                {regime}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </section>
   );

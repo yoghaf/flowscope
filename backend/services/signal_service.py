@@ -3046,6 +3046,7 @@ class SignalService:
             await self._maybe_execute_demo_trade(
                 symbol=symbol,
                 timeframe=timeframe,
+                market_regime=regime,
                 action=action,
                 execution=execution,
                 confidence=clarity_confidence,
@@ -3066,6 +3067,7 @@ class SignalService:
         *,
         symbol: str,
         timeframe: str,
+        market_regime: str,
         action: ActionAssessment,
         execution: ExecutionPlan,
         confidence: float,
@@ -3081,6 +3083,13 @@ class SignalService:
             if timeframe not in set(demo_settings.enabled_timeframes):
                 return
             if action.setup_type not in set(demo_settings.enabled_setups):
+                return
+            if market_regime not in set(demo_settings.enabled_regimes):
+                logger.info(
+                    "Demo auto-execute skipped for %s: regime %s not enabled",
+                    symbol,
+                    market_regime,
+                )
                 return
 
             demo_engine = get_demo_engine()
@@ -3437,6 +3446,20 @@ class SignalService:
                 )
             )
 
+    def _remember_alert(self, alert: AlertEntry) -> None:
+        alerts = getattr(self, "alerts", None)
+        if alerts is None:
+            return
+        for existing in list(alerts)[:100]:
+            if (
+                existing.symbol == alert.symbol
+                and existing.timeframe == alert.timeframe
+                and existing.timestamp == alert.timestamp
+                and existing.signal == alert.signal
+            ):
+                return
+        alerts.appendleft(alert)
+
     def _dispatch_trade_entry_notification(
         self,
         *,
@@ -3466,17 +3489,20 @@ class SignalService:
             return
         telegram_tasks_queued = 0
         try:
+            entry_signal = self._trade_entry_signal_type_from_state(state)
             entry_alert = self._build_trade_entry_alert(
                 symbol=symbol,
                 timeframe=timeframe,
                 bucket=bucket,
                 state=state,
+                signal=entry_signal,
             )
+            self._remember_alert(entry_alert)
             for user_id, preferences in self.user_preferences.items():
                 block_reason = self._trade_entry_delivery_block_reason(
                     symbol=symbol,
                     timeframe=timeframe,
-                    signal=state.signal,
+                    signal=entry_signal,
                     preferences=preferences,
                     state=state,
                 )
@@ -3487,7 +3513,7 @@ class SignalService:
                             user_id,
                             symbol,
                             timeframe,
-                            state.signal,
+                            entry_signal,
                             block_reason,
                         )
                     continue
@@ -3502,7 +3528,7 @@ class SignalService:
                             user_id,
                             symbol,
                             timeframe,
-                            state.signal,
+                            entry_signal,
                             telegram_block_reason,
                         )
                     continue
@@ -3513,7 +3539,7 @@ class SignalService:
                         user_id,
                         symbol,
                         timeframe,
-                        state.signal,
+                        entry_signal,
                     )
                 self._track_trade_entry_notification_task(trade_id=trade_id)
                 try:
@@ -3678,6 +3704,7 @@ class SignalService:
                 signal=signal,
                 score=state.score if state is not None else trade.confidence,
             )
+            self._remember_alert(alert)
             bucket = self.aggregate_store.latest_bucket(trade.symbol, trade.timeframe, closed_only=False)
 
             for user_id, preferences in self.user_preferences.items():
@@ -3788,6 +3815,7 @@ class SignalService:
         timeframe: str,
         bucket: TimeframeBucket,
         state: AssetState,
+        signal: SignalType | None = None,
     ) -> AlertEntry:
         snapshot_id = f"{symbol.removesuffix('USDT')}_{timeframe.upper()}_{int(bucket.last_timestamp.timestamp())}"
         return AlertEntry(
@@ -3795,7 +3823,7 @@ class SignalService:
             symbol=symbol,
             timeframe=timeframe,
             snapshot_id=snapshot_id,
-            signal=state.signal,
+            signal=signal or state.signal,
             score=state.score,
         )
 
@@ -3818,14 +3846,56 @@ class SignalService:
 
     @staticmethod
     def _infer_signal_type_from_trade(trade: TradeSignal, state: AssetState | None) -> SignalType:
-        if state is not None and state.signal != "Neutral":
-            return state.signal
+        setup_signal = SignalService._trade_entry_signal_type_from_setup(
+            setup_type=getattr(trade, "setup_type", None),
+            bias=getattr(trade, "bias", None),
+        )
+        if setup_signal is not None:
+            return setup_signal
+        if state is not None:
+            return SignalService._trade_entry_signal_type_from_state(state)
 
         setup_name = (trade.setup_type or "").lower()
         state_name = (trade.state or "").lower()
         if "squeeze" in setup_name or "pre-squeeze" in state_name:
             return "Long Squeeze" if trade.bias == "Bullish" else "Short Squeeze"
         return "Breakout Watch"
+
+    @staticmethod
+    def _trade_entry_signal_type_from_state(state: AssetState) -> SignalType:
+        setup_signal = SignalService._trade_entry_signal_type_from_setup(
+            setup_type=getattr(state, "setup_type", None),
+            bias=getattr(state, "action_bias", None),
+        )
+        if setup_signal is not None:
+            return setup_signal
+
+        signal = getattr(state, "signal", "Neutral")
+        allowed_signals = {
+            "Accumulation",
+            "Breakout Watch",
+            "Short Squeeze",
+            "Long Squeeze",
+            "Continuation",
+            "Neutral",
+        }
+        return signal if signal in allowed_signals else "Neutral"
+
+    @staticmethod
+    def _trade_entry_signal_type_from_setup(*, setup_type: object, bias: object) -> SignalType | None:
+        setup_type = str(setup_type or "").strip()
+        if setup_type == "Continuation":
+            return "Continuation"
+        if setup_type == "Accumulation":
+            return "Accumulation"
+        if setup_type == "Breakout":
+            return "Breakout Watch"
+        if setup_type == "Squeeze":
+            if bias == "Bullish":
+                return "Long Squeeze"
+            if bias == "Bearish":
+                return "Short Squeeze"
+        return None
 
     def _state_for_trade_notification(
         self,

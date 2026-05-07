@@ -423,6 +423,76 @@ def test_trade_evaluator_continuation_trail_updates_and_logs_trade_analytics() -
     asyncio.run(run())
 
 
+def test_trade_evaluator_does_not_close_be_in_same_cycle_as_tp1_hit() -> None:
+    async def run() -> None:
+        entry_touch_time = datetime(2026, 5, 7, 2, 28, 0, tzinfo=UTC)
+        tp1_bucket_time = datetime(2026, 5, 7, 2, 38, 22, tzinfo=UTC)
+        trade = SimpleNamespace(
+            id=55,
+            symbol="TONUSDT",
+            timeframe="15m",
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Triggered",
+            result="open",
+            timestamp=entry_touch_time - timedelta(minutes=15),
+            updated_at=entry_touch_time,
+            entry_price=2.5712,
+            invalidation_price=2.5127,
+            target_price_1=2.6372,
+            target_price_2=2.6946,
+            tp1_hit=False,
+            trailing_stop_price=2.5127,
+            pnl_pct=0.0,
+            max_profit_pct=0.0,
+            max_drawdown_pct=0.0,
+            entry_touched_at=entry_touch_time,
+            entry_flow_alignment=0.80,
+            closed_at=None,
+            close_reason=None,
+            entry_notification_sent_at=None,
+            last_scale_in_at=None,
+            entry_features={"strategy_version": "v2_balanced"},
+            history_logs=[
+                {
+                    "timestamp": entry_touch_time.isoformat(),
+                    "price": 2.5712,
+                    "pnl_pct": 0.0,
+                    "r_multiple": 0.0,
+                    "event": "update",
+                }
+            ],
+        )
+        buckets = [
+            make_bucket(
+                tp1_bucket_time,
+                timeframe="15m",
+                open_price=2.60,
+                high_price=2.6470,
+                low_price=2.58,
+                close_price=2.6470,
+            ),
+        ]
+        database = FakeDatabase(trade, buckets=buckets)
+        # Simulate a stale/reversing realtime tick below entry in the same evaluator pass.
+        signal_service = FakeSignalService(buckets, price=2.56, symbol="TONUSDT", timeframe="15m")
+        settings = Settings(entry_touch_timeout_buckets=2)
+
+        evaluator = TradeEvaluator(settings, database, signal_service)
+        await evaluator.evaluate()
+
+        assert len(database.updates) == 1
+        _, payload = database.updates[0]
+        assert payload["result"] == "open"
+        assert payload["close_reason"] is None
+        assert payload["tp1_hit"] is True
+        assert payload["trailing_stop_price"] == trade.entry_price
+        assert payload["entry_features"]["tp1_pnl_pct"] > 0
+        assert "tp1_hit_at" in payload["entry_features"]
+
+    asyncio.run(run())
+
+
 def test_trade_evaluator_normalizes_24h_timeframe_and_keeps_hourly_log_cadence() -> None:
     async def run() -> None:
         first_update = datetime(2026, 4, 23, 3, 2, 6, tzinfo=UTC)
