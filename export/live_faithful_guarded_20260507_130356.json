@@ -1,0 +1,51 @@
+{
+  "candidate": "guarded",
+  "entered_trades": 34,
+  "closed_trades": 34,
+  "open_trades": 0,
+  "wins": 17,
+  "losses": 17,
+  "breakevens": 0,
+  "timeouts": 0,
+  "winrate_pct": 50.0,
+  "total_r": 3.577429,
+  "avg_r": 0.105218,
+  "allocated_r": 4.713274,
+  "avg_allocated_r": 0.138626,
+  "skipped_signals": 149,
+  "skip_counts": {
+    "guard_market_pressure_4h_high": 44,
+    "guard_low_volatility": 31,
+    "guard_quality_not_ready": 28,
+    "guard_volume_z_4h_extreme": 15,
+    "guard_quality_score_outside_mid": 12,
+    "guard_oi_delta_z_1h_extreme": 9,
+    "guard_timeframe_1h": 8,
+    "entry_guard_rejected": 2
+  },
+  "entry_guard_counts": {
+    "price_already_touched_sl_before_entry": 4
+  },
+  "by_timeframe": {
+    "15m": {
+      "closed": 26,
+      "wins": 11,
+      "losses": 15,
+      "winrate_pct": 42.3077,
+      "total_r": -1.432571,
+      "allocated_r": 0.365084
+    },
+    "4h": {
+      "closed": 8,
+      "wins": 6,
+      "losses": 2,
+      "winrate_pct": 75.0,
+      "total_r": 5.01,
+      "allocated_r": 4.348189
+    }
+  },
+  "processed_signals": 183,
+  "market_entries": 34,
+  "pending_entries": 0,
+  "elapsed_seconds": 0.013
+}

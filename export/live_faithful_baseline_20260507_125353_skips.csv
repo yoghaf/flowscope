@@ -1,0 +1,3 @@
+candidate,source_signal_id,symbol,timeframe,setup_type,bias,signal_time,reason,details
+baseline,1,APEUSDT,4h,Continuation,Bullish,2026-04-23T01:43:45.640813+00:00,entry_guard_rejected,"price_already_touched_sl_before_entry,price_already_touched_sl_before_entry"
+baseline,11,INJUSDT,24h,Continuation,Bullish,2026-04-24T20:49:00.542430+00:00,entry_guard_rejected,"price_already_touched_sl_before_entry,price_already_touched_sl_before_entry"

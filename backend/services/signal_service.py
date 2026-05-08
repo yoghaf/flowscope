@@ -1295,6 +1295,7 @@ class SignalService:
                         clarity_confidence=market_interpretation.clarity_confidence,
                         market_interpretation=market_interpretation,
                         scenario_score=scenario.score,
+                        scenario_label=scenario.label,
                         state_name=state_assessment.state,
                     )
                 )
@@ -3051,6 +3052,7 @@ class SignalService:
                 execution=execution,
                 confidence=clarity_confidence,
                 position_size_multiplier=float(features["position_size_multiplier"]),
+                signal_time=bucket.last_timestamp,
             )
             
             expectancy = self.setup_expectancy.get(action.setup_type, 0.0)
@@ -3072,10 +3074,15 @@ class SignalService:
         execution: ExecutionPlan,
         confidence: float,
         position_size_multiplier: float,
+        signal_time: datetime | None = None,
     ) -> None:
         """Send freshly triggered AI signals to demo trading when enabled."""
         try:
-            from backend.api.demo_trading import get_demo_engine, get_demo_settings
+            from backend.api.demo_trading import (
+                demo_auto_execute_freshness_skip_reason,
+                get_demo_engine,
+                get_demo_settings,
+            )
 
             demo_settings = get_demo_settings()
             if not demo_settings.auto_execute:
@@ -3112,6 +3119,16 @@ class SignalService:
             demo_engine = get_demo_engine()
             if demo_engine is None or not demo_engine.running:
                 logger.info("Demo auto-execute skipped for %s: demo session not running", symbol)
+                return
+            freshness_reason = demo_auto_execute_freshness_skip_reason(
+                timeframe=timeframe,
+                signal_time=signal_time or datetime.now(UTC),
+                settings=demo_settings,
+                engine=demo_engine,
+                now=datetime.now(UTC),
+            )
+            if freshness_reason is not None:
+                logger.info("Demo auto-execute skipped for %s: %s", symbol, freshness_reason)
                 return
 
             result = await demo_engine.execute_signal(
@@ -5431,9 +5448,15 @@ class SignalService:
         return profile
 
     def _trade_in_feedback_scope(self, trade: object) -> bool:
+        feedback_tag = getattr(self.settings, "continuation_feedback_source_tag", None)
         active_tag = getattr(self.settings, "trade_signals_active_tag", None)
-        if isinstance(active_tag, str) and active_tag.strip():
-            return getattr(trade, "engine_tag", None) == active_tag
+        scoped_tags = {
+            tag.strip()
+            for tag in (feedback_tag, active_tag)
+            if isinstance(tag, str) and tag.strip()
+        }
+        if scoped_tags:
+            return getattr(trade, "engine_tag", None) in scoped_tags
         active_since = getattr(self.settings, "trade_signals_active_since", None)
         created_at = getattr(trade, "created_at", None)
         if active_since is not None and created_at is not None:
@@ -5813,6 +5836,60 @@ class SignalService:
         except Exception:
             return "Neutral"
 
+    def _qmid_pressure_limit(self, strategy_version: str) -> float | None:
+        if strategy_version in {"v2_balanced_qmid_p06", "v3_1_qmid_p06"}:
+            return self.settings.v2_qmid_market_pressure_4h_max_p06
+        if strategy_version in {"v2_balanced_qmid_p07", "v3_1_qmid_p07"}:
+            return self.settings.v2_qmid_market_pressure_4h_max_p07
+        return None
+
+    def _qmid_guard_reasons(
+        self,
+        *,
+        action: ActionAssessment,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        clarity_confidence: float,
+        market_interpretation: MarketInterpretationAssessment | None,
+        scenario_label: str | None,
+        scenario_score: float,
+        state_name: str | None,
+    ) -> list[str]:
+        strategy_version = getattr(self.settings, "strategy_version", "")
+        pressure_limit = self._qmid_pressure_limit(strategy_version)
+        if pressure_limit is None:
+            return []
+        if action.setup_type != "Continuation":
+            return []
+        if market_interpretation is None:
+            return ["qmid_market_interpretation_missing"]
+
+        expectancy_profile = self._continuation_expectancy_profile(
+            timeframe=timeframe,
+            clarity_confidence=clarity_confidence,
+            flow_alignment=market_interpretation.flow_alignment,
+            structure_strength=market_interpretation.structure_strength,
+            scenario_label=scenario_label or "",
+            state_name=state_name or "",
+            scenario_score=scenario_score,
+            flow_metrics=flow_metrics,
+        )
+        reasons: list[str] = []
+        quality_ready = bool(int(expectancy_profile.get("quality_ready", 0) or 0))
+        quality_score = float(expectancy_profile.get("quality_score", 0.0) or 0.0)
+        if not quality_ready:
+            reasons.append("qmid_quality_not_ready")
+        elif (
+            quality_score < self.settings.v2_qmid_quality_min
+            or quality_score >= self.settings.v2_qmid_quality_max
+        ):
+            reasons.append("qmid_quality_score_outside_mid")
+
+        market_pressure_4h = float(getattr(flow_metrics, "market_pressure_4h", 0.0) or 0.0)
+        if market_pressure_4h >= pressure_limit:
+            reasons.append("qmid_market_pressure_4h_high")
+        return reasons
+
     def _entry_hard_filter_reasons(
         self,
         *,
@@ -5822,6 +5899,7 @@ class SignalService:
         clarity_confidence: float,
         market_interpretation: MarketInterpretationAssessment | None = None,
         scenario_score: float = 0.0,
+        scenario_label: str | None = None,
         state_name: str | None = None,
     ) -> list[str]:
         reasons: list[str] = []
@@ -5869,6 +5947,18 @@ class SignalService:
             pass
         if volatility == "Low":
             pass
+        reasons.extend(
+            self._qmid_guard_reasons(
+                action=action,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                clarity_confidence=clarity_confidence,
+                market_interpretation=market_interpretation,
+                scenario_label=scenario_label,
+                scenario_score=scenario_score,
+                state_name=state_name,
+            )
+        )
         if clarity_confidence < 0.35:
             is_v3 = getattr(self.settings, "strategy_version", "") == "v3_adaptive"
             if not (is_v3 and action.bias == "Bearish"):  # Hanya turunkan untuk Short V3

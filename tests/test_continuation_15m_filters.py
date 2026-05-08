@@ -1,5 +1,7 @@
 ﻿from __future__ import annotations
 
+from types import SimpleNamespace
+
 from backend.config import Settings
 from backend.engines.context_bridge import ContextBridgeEngine
 from backend.engines.execution_engine import ActionAssessment, ExecutionPlan
@@ -296,6 +298,32 @@ def make_interpretation(**overrides: object) -> MarketInterpretationAssessment:
     }
     payload.update(overrides)
     return MarketInterpretationAssessment(**payload)
+
+
+def seed_continuation_feedback(
+    service: SignalService,
+    *,
+    timeframe: str = "15m",
+    sample_count: int = 24,
+    quality_score: float = 0.42,
+    quality_ready: int = 1,
+) -> None:
+    service.continuation_feedback_cache = {
+        timeframe: {
+            "sample_count": sample_count,
+            "avg_entry_efficiency": 0.0,
+            "avg_mae_r": 0.0,
+            "avg_mfe_r": 0.0,
+            "quality_score": quality_score,
+            "quality_size_multiplier": 1.0,
+            "quality_ready": quality_ready,
+            "recent_loss_streak": 0,
+            "size_multiplier": 1.0,
+        }
+    }
+    service.continuation_feedback_bucket_cache = {}
+    service.continuation_expectancy_segment_cache = {}
+    service.continuation_cluster_cache = {}
 
 
 def make_execution(
@@ -734,6 +762,144 @@ def test_continuation_hard_filter_blocks_choppy_regime() -> None:
     )
 
     assert "continuation_choppy_regime" in reasons
+
+
+def test_qmid_guard_uses_mid_quality_and_p06_pressure_limit() -> None:
+    service = make_service()
+    service.settings.strategy_version = "v3_1_qmid_p06"
+    seed_continuation_feedback(service, quality_score=0.42, quality_ready=1)
+
+    action = ActionAssessment(
+        bias="Bullish",
+        setup_type="Continuation",
+        status="Triggered",
+        confidence_label="High",
+        opportunity_score=0.84,
+    )
+    reasons = service._entry_hard_filter_reasons(
+        action=action,
+        flow_metrics=FlowMetrics(
+            price_change_15m=0.01,
+            atr_15m=0.012,
+            compression_score_15m=0.20,
+            range_mid_15m=1.0,
+            market_pressure_4h=0.59,
+        ),
+        timeframe="15m",
+        clarity_confidence=0.82,
+        market_interpretation=make_interpretation(),
+        scenario_score=0.78,
+        scenario_label="efficient_build",
+        state_name="Long Build-up",
+    )
+
+    assert not [reason for reason in reasons if reason.startswith("qmid_")]
+
+    blocked = service._entry_hard_filter_reasons(
+        action=action,
+        flow_metrics=FlowMetrics(
+            price_change_15m=0.01,
+            atr_15m=0.012,
+            compression_score_15m=0.20,
+            range_mid_15m=1.0,
+            market_pressure_4h=0.60,
+        ),
+        timeframe="15m",
+        clarity_confidence=0.82,
+        market_interpretation=make_interpretation(),
+        scenario_score=0.78,
+        scenario_label="efficient_build",
+        state_name="Long Build-up",
+    )
+
+    assert "qmid_market_pressure_4h_high" in blocked
+
+
+def test_qmid_guard_p07_allows_higher_market_pressure_than_p06() -> None:
+    service = make_service()
+    service.settings.strategy_version = "v2_balanced_qmid_p07"
+    seed_continuation_feedback(service, quality_score=0.42, quality_ready=1)
+
+    reasons = service._entry_hard_filter_reasons(
+        action=ActionAssessment(
+            bias="Bullish",
+            setup_type="Continuation",
+            status="Triggered",
+            confidence_label="High",
+            opportunity_score=0.84,
+        ),
+        flow_metrics=FlowMetrics(
+            price_change_15m=0.01,
+            atr_15m=0.012,
+            compression_score_15m=0.20,
+            range_mid_15m=1.0,
+            market_pressure_4h=0.65,
+        ),
+        timeframe="15m",
+        clarity_confidence=0.82,
+        market_interpretation=make_interpretation(),
+        scenario_score=0.78,
+        scenario_label="efficient_build",
+        state_name="Long Build-up",
+    )
+
+    assert "qmid_market_pressure_4h_high" not in reasons
+
+
+def test_qmid_guard_rejects_unready_or_non_mid_quality() -> None:
+    service = make_service()
+    service.settings.strategy_version = "v2_balanced_qmid_p06"
+    action = ActionAssessment(
+        bias="Bullish",
+        setup_type="Continuation",
+        status="Triggered",
+        confidence_label="High",
+        opportunity_score=0.84,
+    )
+    flow_metrics = FlowMetrics(
+        price_change_15m=0.01,
+        atr_15m=0.012,
+        compression_score_15m=0.20,
+        range_mid_15m=1.0,
+        market_pressure_4h=0.30,
+    )
+
+    seed_continuation_feedback(service, quality_score=0.42, quality_ready=0)
+    not_ready = service._entry_hard_filter_reasons(
+        action=action,
+        flow_metrics=flow_metrics,
+        timeframe="15m",
+        clarity_confidence=0.82,
+        market_interpretation=make_interpretation(),
+        scenario_score=0.78,
+        scenario_label="efficient_build",
+        state_name="Long Build-up",
+    )
+
+    seed_continuation_feedback(service, quality_score=0.62, quality_ready=1)
+    outside_mid = service._entry_hard_filter_reasons(
+        action=action,
+        flow_metrics=flow_metrics,
+        timeframe="15m",
+        clarity_confidence=0.82,
+        market_interpretation=make_interpretation(),
+        scenario_score=0.78,
+        scenario_label="efficient_build",
+        state_name="Long Build-up",
+    )
+
+    assert "qmid_quality_not_ready" in not_ready
+    assert "qmid_quality_score_outside_mid" in outside_mid
+
+
+def test_continuation_feedback_source_tag_can_read_v2_history_for_new_tag() -> None:
+    service = make_service()
+    service.settings.trade_signals_active_tag = "v3_1_qmid_p06"
+    service.settings.continuation_feedback_source_tag = "v2_balanced"
+
+    assert service._trade_in_feedback_scope(SimpleNamespace(engine_tag="v2_balanced"))
+    assert service._trade_in_feedback_scope(SimpleNamespace(engine_tag="v3_1_qmid_p06"))
+    assert not service._trade_in_feedback_scope(SimpleNamespace(engine_tag="legacy_v1"))
 
 
 def test_continuation_dynamic_tp1_expands_when_structure_and_feedback_are_strong() -> None:

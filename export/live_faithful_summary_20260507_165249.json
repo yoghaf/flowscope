@@ -1,0 +1,1278 @@
+{
+  "created_at": "2026-05-07T16:52:54.587459+00:00",
+  "database": "postgresql+asyncpg://localhost:5432/flowscope_replay_vps_20260507_123757",
+  "engine_tag": "v2_balanced",
+  "signal_count": 183,
+  "assumptions": {
+    "event_order": "created_at asc, id asc",
+    "execution_lock": "one active position or pending order per symbol",
+    "entry_guard": "market plus pullback limit guard mirrors demo defaults",
+    "exit_model": "scripts.replay_full_strategy._evaluate_trade_bucket",
+    "indicator_tests": "EMA30/EMA100 gates use the replay bucket close available at or before signal_time."
+  },
+  "candidates": {
+    "baseline": {
+      "candidate": "baseline",
+      "entered_trades": 168,
+      "closed_trades": 155,
+      "open_trades": 13,
+      "wins": 61,
+      "losses": 94,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 39.3548,
+      "total_r": -20.146678,
+      "avg_r": -0.129979,
+      "allocated_r": -17.366821,
+      "avg_allocated_r": -0.112044,
+      "gross_win_r": 59.269319,
+      "gross_loss_r": 79.415997,
+      "profit_factor_r": 0.746315,
+      "max_drawdown_r": -28.120558,
+      "max_loss_streak": 13,
+      "max_win_streak": 6,
+      "skipped_signals": 15,
+      "skip_counts": {
+        "entry_guard_rejected": 13,
+        "symbol_locked_open_position": 2
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 22,
+        "entry_drift_too_far": 5,
+        "market_tp1_progress_too_far": 3,
+        "pullback_tp1_progress_too_far": 2,
+        "tp1_already_touched_before_entry": 1
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 70,
+          "wins": 28,
+          "losses": 42,
+          "winrate_pct": 40.0,
+          "total_r": -10.193239,
+          "allocated_r": -4.935296
+        },
+        "1h": {
+          "closed": 9,
+          "wins": 2,
+          "losses": 7,
+          "winrate_pct": 22.2222,
+          "total_r": -2.405051,
+          "allocated_r": -1.759657
+        },
+        "24h": {
+          "closed": 13,
+          "wins": 7,
+          "losses": 6,
+          "winrate_pct": 53.8462,
+          "total_r": 3.086188,
+          "allocated_r": 2.603581
+        },
+        "4h": {
+          "closed": 63,
+          "wins": 24,
+          "losses": 39,
+          "winrate_pct": 38.0952,
+          "total_r": -10.634577,
+          "allocated_r": -13.275449
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 165,
+      "pending_entries": 3,
+      "elapsed_seconds": 0.029
+    },
+    "qmid_p06": {
+      "candidate": "qmid_p06",
+      "entered_trades": 49,
+      "closed_trades": 47,
+      "open_trades": 2,
+      "wins": 26,
+      "losses": 21,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 55.3191,
+      "total_r": 8.747932,
+      "avg_r": 0.186126,
+      "allocated_r": 9.188588,
+      "avg_allocated_r": 0.195502,
+      "gross_win_r": 27.308488,
+      "gross_loss_r": 18.560556,
+      "profit_factor_r": 1.471318,
+      "max_drawdown_r": -6.01,
+      "max_loss_streak": 4,
+      "max_win_streak": 9,
+      "skipped_signals": 134,
+      "skip_counts": {
+        "guard_quality_not_ready": 92,
+        "guard_quality_score_outside_mid": 26,
+        "guard_market_pressure_4h_high": 14,
+        "entry_guard_rejected": 2
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 4
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 36,
+          "wins": 17,
+          "losses": 19,
+          "winrate_pct": 47.2222,
+          "total_r": -0.812068,
+          "allocated_r": 1.20957
+        },
+        "4h": {
+          "closed": 11,
+          "wins": 9,
+          "losses": 2,
+          "winrate_pct": 81.8182,
+          "total_r": 9.56,
+          "allocated_r": 7.979018
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 49,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.015
+    },
+    "qmid_p07": {
+      "candidate": "qmid_p07",
+      "entered_trades": 55,
+      "closed_trades": 52,
+      "open_trades": 3,
+      "wins": 29,
+      "losses": 23,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 55.7692,
+      "total_r": 8.315841,
+      "avg_r": 0.15992,
+      "allocated_r": 8.598349,
+      "avg_allocated_r": 0.165353,
+      "gross_win_r": 28.793488,
+      "gross_loss_r": 20.477647,
+      "profit_factor_r": 1.406094,
+      "max_drawdown_r": -6.515,
+      "max_loss_streak": 5,
+      "max_win_streak": 9,
+      "skipped_signals": 128,
+      "skip_counts": {
+        "guard_quality_not_ready": 92,
+        "guard_quality_score_outside_mid": 26,
+        "guard_market_pressure_4h_high": 8,
+        "entry_guard_rejected": 2
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 4
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 37,
+          "wins": 18,
+          "losses": 19,
+          "winrate_pct": 48.6486,
+          "total_r": -0.317068,
+          "allocated_r": 1.802729
+        },
+        "4h": {
+          "closed": 15,
+          "wins": 11,
+          "losses": 4,
+          "winrate_pct": 73.3333,
+          "total_r": 8.632909,
+          "allocated_r": 6.79562
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 55,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.016
+    },
+    "qmid_p06_4h_only": {
+      "candidate": "qmid_p06_4h_only",
+      "entered_trades": 13,
+      "closed_trades": 11,
+      "open_trades": 2,
+      "wins": 9,
+      "losses": 2,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 81.8182,
+      "total_r": 9.56,
+      "avg_r": 0.869091,
+      "allocated_r": 7.979018,
+      "avg_allocated_r": 0.725365,
+      "gross_win_r": 11.56,
+      "gross_loss_r": 2.0,
+      "profit_factor_r": 5.78,
+      "max_drawdown_r": -2.0,
+      "max_loss_streak": 2,
+      "max_win_streak": 8,
+      "skipped_signals": 170,
+      "skip_counts": {
+        "guard_timeframe_15m": 73,
+        "guard_timeframe_24h": 32,
+        "guard_quality_not_ready": 29,
+        "guard_quality_score_outside_mid": 16,
+        "guard_market_pressure_4h_high": 11,
+        "guard_timeframe_1h": 9
+      },
+      "entry_guard_counts": {},
+      "by_timeframe": {
+        "4h": {
+          "closed": 11,
+          "wins": 9,
+          "losses": 2,
+          "winrate_pct": 81.8182,
+          "total_r": 9.56,
+          "allocated_r": 7.979018
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 13,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.011
+    },
+    "qmid_p06_15m_only": {
+      "candidate": "qmid_p06_15m_only",
+      "entered_trades": 36,
+      "closed_trades": 36,
+      "open_trades": 0,
+      "wins": 17,
+      "losses": 19,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 47.2222,
+      "total_r": -0.812068,
+      "avg_r": -0.022557,
+      "allocated_r": 1.20957,
+      "avg_allocated_r": 0.033599,
+      "gross_win_r": 15.748488,
+      "gross_loss_r": 16.560556,
+      "profit_factor_r": 0.950964,
+      "max_drawdown_r": -6.0,
+      "max_loss_streak": 6,
+      "max_win_streak": 3,
+      "skipped_signals": 147,
+      "skip_counts": {
+        "guard_timeframe_4h": 69,
+        "guard_timeframe_24h": 32,
+        "guard_quality_not_ready": 22,
+        "guard_quality_score_outside_mid": 10,
+        "guard_timeframe_1h": 9,
+        "guard_market_pressure_4h_high": 3,
+        "entry_guard_rejected": 2
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 4
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 36,
+          "wins": 17,
+          "losses": 19,
+          "winrate_pct": 47.2222,
+          "total_r": -0.812068,
+          "allocated_r": 1.20957
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 36,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.013
+    },
+    "qmid_p06_15m_strict": {
+      "candidate": "qmid_p06_15m_strict",
+      "entered_trades": 5,
+      "closed_trades": 5,
+      "open_trades": 0,
+      "wins": 4,
+      "losses": 1,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 80.0,
+      "total_r": 2.113541,
+      "avg_r": 0.422708,
+      "allocated_r": 1.634664,
+      "avg_allocated_r": 0.326933,
+      "gross_win_r": 3.113541,
+      "gross_loss_r": 1.0,
+      "profit_factor_r": 3.113541,
+      "max_drawdown_r": -1.0,
+      "max_loss_streak": 1,
+      "max_win_streak": 3,
+      "skipped_signals": 178,
+      "skip_counts": {
+        "guard_timeframe_4h": 69,
+        "guard_timeframe_24h": 32,
+        "guard_flow_alignment_15m_weak": 24,
+        "guard_quality_not_ready": 22,
+        "guard_quality_score_outside_mid": 10,
+        "guard_timeframe_1h": 9,
+        "guard_taker_15m_not_aligned": 6,
+        "guard_market_pressure_4h_high": 3,
+        "guard_volume_z_15m_weak": 3
+      },
+      "entry_guard_counts": {},
+      "by_timeframe": {
+        "15m": {
+          "closed": 5,
+          "wins": 4,
+          "losses": 1,
+          "winrate_pct": 80.0,
+          "total_r": 2.113541,
+          "allocated_r": 1.634664
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 5,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.009
+    },
+    "qmid_p06_ema": {
+      "candidate": "qmid_p06_ema",
+      "entered_trades": 28,
+      "closed_trades": 28,
+      "open_trades": 0,
+      "wins": 17,
+      "losses": 11,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 60.7143,
+      "total_r": 7.773488,
+      "avg_r": 0.277625,
+      "allocated_r": 7.933508,
+      "avg_allocated_r": 0.28334,
+      "gross_win_r": 18.773488,
+      "gross_loss_r": 11.0,
+      "profit_factor_r": 1.706681,
+      "max_drawdown_r": -4.505,
+      "max_loss_streak": 4,
+      "max_win_streak": 7,
+      "skipped_signals": 155,
+      "skip_counts": {
+        "guard_quality_not_ready": 92,
+        "guard_quality_score_outside_mid": 26,
+        "guard_ema_trend_not_aligned": 21,
+        "guard_market_pressure_4h_high": 14,
+        "entry_guard_rejected": 2
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 4
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 22,
+          "wins": 12,
+          "losses": 10,
+          "winrate_pct": 54.5455,
+          "total_r": 1.233488,
+          "allocated_r": 2.794995
+        },
+        "4h": {
+          "closed": 6,
+          "wins": 5,
+          "losses": 1,
+          "winrate_pct": 83.3333,
+          "total_r": 6.54,
+          "allocated_r": 5.138513
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 28,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.012
+    },
+    "qmid_p06_ema_pullback": {
+      "candidate": "qmid_p06_ema_pullback",
+      "entered_trades": 17,
+      "closed_trades": 17,
+      "open_trades": 0,
+      "wins": 9,
+      "losses": 8,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 52.9412,
+      "total_r": 2.52536,
+      "avg_r": 0.148551,
+      "allocated_r": 4.361865,
+      "avg_allocated_r": 0.25658,
+      "gross_win_r": 10.52536,
+      "gross_loss_r": 8.0,
+      "profit_factor_r": 1.31567,
+      "max_drawdown_r": -4.505,
+      "max_loss_streak": 3,
+      "max_win_streak": 5,
+      "skipped_signals": 166,
+      "skip_counts": {
+        "guard_quality_not_ready": 92,
+        "guard_quality_score_outside_mid": 26,
+        "guard_ema_trend_not_aligned": 21,
+        "guard_market_pressure_4h_high": 14,
+        "guard_ema_slope_not_aligned": 7,
+        "guard_ema_extension_too_far": 6
+      },
+      "entry_guard_counts": {},
+      "by_timeframe": {
+        "15m": {
+          "closed": 13,
+          "wins": 6,
+          "losses": 7,
+          "winrate_pct": 46.1538,
+          "total_r": -0.95964,
+          "allocated_r": 0.936843
+        },
+        "4h": {
+          "closed": 4,
+          "wins": 3,
+          "losses": 1,
+          "winrate_pct": 75.0,
+          "total_r": 3.485,
+          "allocated_r": 3.425022
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 17,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.011
+    },
+    "qmid_p07_ema": {
+      "candidate": "qmid_p07_ema",
+      "entered_trades": 32,
+      "closed_trades": 31,
+      "open_trades": 1,
+      "wins": 18,
+      "losses": 13,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 58.0645,
+      "total_r": 6.351397,
+      "avg_r": 0.204884,
+      "allocated_r": 6.073593,
+      "avg_allocated_r": 0.195922,
+      "gross_win_r": 19.268488,
+      "gross_loss_r": 12.917091,
+      "profit_factor_r": 1.491705,
+      "max_drawdown_r": -5.887091,
+      "max_loss_streak": 4,
+      "max_win_streak": 7,
+      "skipped_signals": 151,
+      "skip_counts": {
+        "guard_quality_not_ready": 92,
+        "guard_quality_score_outside_mid": 26,
+        "guard_ema_trend_not_aligned": 23,
+        "guard_market_pressure_4h_high": 8,
+        "entry_guard_rejected": 2
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 4
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 23,
+          "wins": 13,
+          "losses": 10,
+          "winrate_pct": 56.5217,
+          "total_r": 1.728488,
+          "allocated_r": 3.388153
+        },
+        "4h": {
+          "closed": 8,
+          "wins": 5,
+          "losses": 3,
+          "winrate_pct": 62.5,
+          "total_r": 4.622909,
+          "allocated_r": 2.68544
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 32,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.014
+    },
+    "ema_only": {
+      "candidate": "ema_only",
+      "entered_trades": 102,
+      "closed_trades": 96,
+      "open_trades": 6,
+      "wins": 36,
+      "losses": 60,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 37.5,
+      "total_r": -17.405988,
+      "avg_r": -0.181312,
+      "allocated_r": -16.786269,
+      "avg_allocated_r": -0.174857,
+      "gross_win_r": 35.43867,
+      "gross_loss_r": 52.844659,
+      "profit_factor_r": 0.67062,
+      "max_drawdown_r": -24.870792,
+      "max_loss_streak": 10,
+      "max_win_streak": 4,
+      "skipped_signals": 81,
+      "skip_counts": {
+        "guard_ema_trend_not_aligned": 69,
+        "entry_guard_rejected": 8,
+        "guard_ema_missing": 2,
+        "symbol_locked_open_position": 2
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 12,
+        "entry_drift_too_far": 4,
+        "market_tp1_progress_too_far": 3,
+        "pullback_tp1_progress_too_far": 2,
+        "tp1_already_touched_before_entry": 1
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 44,
+          "wins": 19,
+          "losses": 25,
+          "winrate_pct": 43.1818,
+          "total_r": -5.477145,
+          "allocated_r": -2.104652
+        },
+        "1h": {
+          "closed": 3,
+          "wins": 0,
+          "losses": 3,
+          "winrate_pct": 0.0,
+          "total_r": -1.191044,
+          "allocated_r": -1.506333
+        },
+        "24h": {
+          "closed": 8,
+          "wins": 5,
+          "losses": 3,
+          "winrate_pct": 62.5,
+          "total_r": 2.395007,
+          "allocated_r": 1.788787
+        },
+        "4h": {
+          "closed": 41,
+          "wins": 12,
+          "losses": 29,
+          "winrate_pct": 29.2683,
+          "total_r": -13.132806,
+          "allocated_r": -14.964072
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 100,
+      "pending_entries": 2,
+      "elapsed_seconds": 0.021
+    },
+    "ema_pullback_only": {
+      "candidate": "ema_pullback_only",
+      "entered_trades": 65,
+      "closed_trades": 61,
+      "open_trades": 4,
+      "wins": 21,
+      "losses": 40,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 34.4262,
+      "total_r": -15.336629,
+      "avg_r": -0.25142,
+      "allocated_r": -14.981348,
+      "avg_allocated_r": -0.245596,
+      "gross_win_r": 20.334569,
+      "gross_loss_r": 35.671197,
+      "profit_factor_r": 0.570056,
+      "max_drawdown_r": -19.277115,
+      "max_loss_streak": 6,
+      "max_win_streak": 4,
+      "skipped_signals": 118,
+      "skip_counts": {
+        "guard_ema_trend_not_aligned": 69,
+        "guard_ema_extension_too_far": 32,
+        "guard_ema_slope_not_aligned": 12,
+        "guard_ema_missing": 2,
+        "entry_guard_rejected": 2,
+        "symbol_locked_open_position": 1
+      },
+      "entry_guard_counts": {
+        "entry_drift_too_far": 3,
+        "market_tp1_progress_too_far": 2,
+        "price_already_touched_sl_before_entry": 2,
+        "pullback_tp1_progress_too_far": 1,
+        "tp1_already_touched_before_entry": 1
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 31,
+          "wins": 12,
+          "losses": 19,
+          "winrate_pct": 38.7097,
+          "total_r": -6.113254,
+          "allocated_r": -3.577554
+        },
+        "1h": {
+          "closed": 2,
+          "wins": 0,
+          "losses": 2,
+          "winrate_pct": 0.0,
+          "total_r": -0.94,
+          "allocated_r": -1.20262
+        },
+        "24h": {
+          "closed": 4,
+          "wins": 3,
+          "losses": 1,
+          "winrate_pct": 75.0,
+          "total_r": 0.535,
+          "allocated_r": 0.30361
+        },
+        "4h": {
+          "closed": 24,
+          "wins": 6,
+          "losses": 18,
+          "winrate_pct": 25.0,
+          "total_r": -8.818374,
+          "allocated_r": -10.504784
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 63,
+      "pending_entries": 2,
+      "elapsed_seconds": 0.016
+    },
+    "qmid_p06_4h_runner_2r": {
+      "candidate": "qmid_p06_4h_runner_2r",
+      "entered_trades": 13,
+      "closed_trades": 11,
+      "open_trades": 2,
+      "wins": 9,
+      "losses": 2,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 81.8182,
+      "total_r": 9.5,
+      "avg_r": 0.863636,
+      "allocated_r": 7.93635,
+      "avg_allocated_r": 0.721486,
+      "gross_win_r": 11.5,
+      "gross_loss_r": 2.0,
+      "profit_factor_r": 5.75,
+      "max_drawdown_r": -2.0,
+      "max_loss_streak": 2,
+      "max_win_streak": 8,
+      "skipped_signals": 170,
+      "skip_counts": {
+        "guard_timeframe_15m": 73,
+        "guard_timeframe_24h": 32,
+        "guard_quality_not_ready": 29,
+        "guard_quality_score_outside_mid": 16,
+        "guard_market_pressure_4h_high": 11,
+        "guard_timeframe_1h": 9
+      },
+      "entry_guard_counts": {},
+      "by_timeframe": {
+        "4h": {
+          "closed": 11,
+          "wins": 9,
+          "losses": 2,
+          "winrate_pct": 81.8182,
+          "total_r": 9.5,
+          "allocated_r": 7.93635
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 13,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.01
+    },
+    "qmid_p06_4h_runner_3r": {
+      "candidate": "qmid_p06_4h_runner_3r",
+      "entered_trades": 13,
+      "closed_trades": 11,
+      "open_trades": 2,
+      "wins": 9,
+      "losses": 2,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 81.8182,
+      "total_r": 11.5,
+      "avg_r": 1.045455,
+      "allocated_r": 9.01695,
+      "avg_allocated_r": 0.819723,
+      "gross_win_r": 13.5,
+      "gross_loss_r": 2.0,
+      "profit_factor_r": 6.75,
+      "max_drawdown_r": -1.0,
+      "max_loss_streak": 1,
+      "max_win_streak": 7,
+      "skipped_signals": 170,
+      "skip_counts": {
+        "guard_timeframe_15m": 73,
+        "guard_timeframe_24h": 30,
+        "guard_quality_not_ready": 29,
+        "guard_quality_score_outside_mid": 16,
+        "guard_market_pressure_4h_high": 11,
+        "guard_timeframe_1h": 9,
+        "symbol_locked_open_position": 2
+      },
+      "entry_guard_counts": {},
+      "by_timeframe": {
+        "4h": {
+          "closed": 11,
+          "wins": 9,
+          "losses": 2,
+          "winrate_pct": 81.8182,
+          "total_r": 11.5,
+          "allocated_r": 9.01695
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 13,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.01
+    },
+    "qmid_p06_failfast": {
+      "candidate": "qmid_p06_failfast",
+      "entered_trades": 49,
+      "closed_trades": 47,
+      "open_trades": 2,
+      "wins": 23,
+      "losses": 24,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 48.9362,
+      "total_r": 6.447071,
+      "avg_r": 0.137172,
+      "allocated_r": 7.548532,
+      "avg_allocated_r": 0.160607,
+      "gross_win_r": 22.758488,
+      "gross_loss_r": 16.311418,
+      "profit_factor_r": 1.395249,
+      "max_drawdown_r": -6.866888,
+      "max_loss_streak": 7,
+      "max_win_streak": 7,
+      "skipped_signals": 134,
+      "skip_counts": {
+        "guard_quality_not_ready": 92,
+        "guard_quality_score_outside_mid": 26,
+        "guard_market_pressure_4h_high": 14,
+        "entry_guard_rejected": 2
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 4
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 36,
+          "wins": 16,
+          "losses": 20,
+          "winrate_pct": 44.4444,
+          "total_r": -0.422595,
+          "allocated_r": 0.581196
+        },
+        "4h": {
+          "closed": 11,
+          "wins": 7,
+          "losses": 4,
+          "winrate_pct": 63.6364,
+          "total_r": 6.869666,
+          "allocated_r": 6.967336
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 49,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.014
+    },
+    "tf_simple": {
+      "candidate": "tf_simple",
+      "entered_trades": 76,
+      "closed_trades": 72,
+      "open_trades": 4,
+      "wins": 34,
+      "losses": 38,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 47.2222,
+      "total_r": 3.333347,
+      "avg_r": 0.046296,
+      "allocated_r": 4.09012,
+      "avg_allocated_r": 0.056807,
+      "gross_win_r": 35.582262,
+      "gross_loss_r": 32.248916,
+      "profit_factor_r": 1.103363,
+      "max_drawdown_r": -6.95,
+      "max_loss_streak": 5,
+      "max_win_streak": 8,
+      "skipped_signals": 107,
+      "skip_counts": {
+        "guard_low_volatility": 31,
+        "guard_market_pressure_4h_high": 28,
+        "guard_quality_not_ready": 20,
+        "entry_guard_rejected": 9,
+        "guard_quality_score_outside_mid": 9,
+        "guard_timeframe_1h": 8,
+        "symbol_locked_open_position": 2
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 18,
+        "entry_drift_too_far": 1,
+        "market_tp1_progress_too_far": 1
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 32,
+          "wins": 15,
+          "losses": 17,
+          "winrate_pct": 46.875,
+          "total_r": 0.102984,
+          "allocated_r": 2.147574
+        },
+        "24h": {
+          "closed": 11,
+          "wins": 6,
+          "losses": 5,
+          "winrate_pct": 54.5455,
+          "total_r": 2.526188,
+          "allocated_r": 1.793073
+        },
+        "4h": {
+          "closed": 29,
+          "wins": 13,
+          "losses": 16,
+          "winrate_pct": 44.8276,
+          "total_r": 0.704174,
+          "allocated_r": 0.149473
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 75,
+      "pending_entries": 1,
+      "elapsed_seconds": 0.018
+    },
+    "context_guard": {
+      "candidate": "context_guard",
+      "entered_trades": 71,
+      "closed_trades": 68,
+      "open_trades": 3,
+      "wins": 29,
+      "losses": 39,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 42.6471,
+      "total_r": -5.032131,
+      "avg_r": -0.074002,
+      "allocated_r": -1.360286,
+      "avg_allocated_r": -0.020004,
+      "gross_win_r": 27.673397,
+      "gross_loss_r": 32.705529,
+      "profit_factor_r": 0.846138,
+      "max_drawdown_r": -9.086056,
+      "max_loss_streak": 6,
+      "max_win_streak": 7,
+      "skipped_signals": 112,
+      "skip_counts": {
+        "guard_market_pressure_4h_high": 44,
+        "guard_low_volatility": 31,
+        "guard_volume_z_4h_extreme": 15,
+        "guard_oi_delta_z_1h_extreme": 9,
+        "guard_timeframe_1h": 8,
+        "entry_guard_rejected": 4,
+        "symbol_locked_open_position": 1
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 8,
+        "entry_drift_too_far": 2,
+        "market_tp1_progress_too_far": 1
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 43,
+          "wins": 17,
+          "losses": 26,
+          "winrate_pct": 39.5349,
+          "total_r": -6.122548,
+          "allocated_r": -2.78695
+        },
+        "24h": {
+          "closed": 6,
+          "wins": 3,
+          "losses": 3,
+          "winrate_pct": 50.0,
+          "total_r": -0.023812,
+          "allocated_r": -0.143767
+        },
+        "4h": {
+          "closed": 19,
+          "wins": 9,
+          "losses": 10,
+          "winrate_pct": 47.3684,
+          "total_r": 1.114228,
+          "allocated_r": 1.570431
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 69,
+      "pending_entries": 2,
+      "elapsed_seconds": 0.019
+    },
+    "quality_soft": {
+      "candidate": "quality_soft",
+      "entered_trades": 112,
+      "closed_trades": 106,
+      "open_trades": 6,
+      "wins": 46,
+      "losses": 60,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 43.3962,
+      "total_r": -9.613764,
+      "avg_r": -0.090696,
+      "allocated_r": -10.158083,
+      "avg_allocated_r": -0.095831,
+      "gross_win_r": 42.929676,
+      "gross_loss_r": 52.54344,
+      "profit_factor_r": 0.817032,
+      "max_drawdown_r": -17.373722,
+      "max_loss_streak": 8,
+      "max_win_streak": 6,
+      "skipped_signals": 71,
+      "skip_counts": {
+        "guard_low_volatility": 31,
+        "guard_quality_score_outside_mid": 20,
+        "entry_guard_rejected": 11,
+        "guard_timeframe_1h": 8,
+        "symbol_locked_open_position": 1
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 20,
+        "entry_drift_too_far": 4,
+        "market_tp1_progress_too_far": 2,
+        "pullback_tp1_progress_too_far": 1,
+        "tp1_already_touched_before_entry": 1
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 58,
+          "wins": 25,
+          "losses": 33,
+          "winrate_pct": 43.1034,
+          "total_r": -6.100817,
+          "allocated_r": -2.085873
+        },
+        "24h": {
+          "closed": 12,
+          "wins": 7,
+          "losses": 5,
+          "winrate_pct": 58.3333,
+          "total_r": 3.021188,
+          "allocated_r": 2.409645
+        },
+        "4h": {
+          "closed": 36,
+          "wins": 14,
+          "losses": 22,
+          "winrate_pct": 38.8889,
+          "total_r": -6.534136,
+          "allocated_r": -10.481855
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 109,
+      "pending_entries": 3,
+      "elapsed_seconds": 0.024
+    },
+    "balanced_soft": {
+      "candidate": "balanced_soft",
+      "entered_trades": 60,
+      "closed_trades": 57,
+      "open_trades": 3,
+      "wins": 25,
+      "losses": 32,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 43.8596,
+      "total_r": -4.014292,
+      "avg_r": -0.070426,
+      "allocated_r": -2.132707,
+      "avg_allocated_r": -0.037416,
+      "gross_win_r": 23.349676,
+      "gross_loss_r": 27.363967,
+      "profit_factor_r": 0.8533,
+      "max_drawdown_r": -8.134121,
+      "max_loss_streak": 5,
+      "max_win_streak": 8,
+      "skipped_signals": 123,
+      "skip_counts": {
+        "guard_market_pressure_4h_high": 44,
+        "guard_low_volatility": 31,
+        "guard_volume_z_4h_extreme": 15,
+        "guard_quality_score_outside_mid": 12,
+        "guard_oi_delta_z_1h_extreme": 9,
+        "guard_timeframe_1h": 8,
+        "entry_guard_rejected": 4
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 8,
+        "entry_drift_too_far": 2,
+        "market_tp1_progress_too_far": 1
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 37,
+          "wins": 15,
+          "losses": 22,
+          "winrate_pct": 40.5405,
+          "total_r": -5.345872,
+          "allocated_r": -2.562873
+        },
+        "24h": {
+          "closed": 7,
+          "wins": 4,
+          "losses": 3,
+          "winrate_pct": 57.1429,
+          "total_r": 0.471188,
+          "allocated_r": 0.472805
+        },
+        "4h": {
+          "closed": 13,
+          "wins": 6,
+          "losses": 7,
+          "winrate_pct": 46.1538,
+          "total_r": 0.860392,
+          "allocated_r": -0.042639
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 58,
+      "pending_entries": 2,
+      "elapsed_seconds": 0.016
+    },
+    "tf_profile": {
+      "candidate": "tf_profile",
+      "entered_trades": 37,
+      "closed_trades": 34,
+      "open_trades": 3,
+      "wins": 18,
+      "losses": 16,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 52.9412,
+      "total_r": 3.730425,
+      "avg_r": 0.109718,
+      "allocated_r": 4.723653,
+      "avg_allocated_r": 0.138931,
+      "gross_win_r": 16.492262,
+      "gross_loss_r": 12.761838,
+      "profit_factor_r": 1.292311,
+      "max_drawdown_r": -4.188658,
+      "max_loss_streak": 6,
+      "max_win_streak": 7,
+      "skipped_signals": 146,
+      "skip_counts": {
+        "guard_volume_z_4h_extreme": 32,
+        "guard_low_volatility": 31,
+        "guard_market_pressure_4h_high": 25,
+        "guard_volume_z_15m_weak": 19,
+        "guard_oi_delta_z_1h_extreme": 11,
+        "guard_quality_not_ready": 11,
+        "guard_timeframe_1h": 8,
+        "guard_quality_score_outside_mid": 6,
+        "entry_guard_rejected": 2,
+        "symbol_locked_open_position": 1
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 4,
+        "entry_drift_too_far": 1,
+        "market_tp1_progress_too_far": 1
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 9,
+          "wins": 6,
+          "losses": 3,
+          "winrate_pct": 66.6667,
+          "total_r": 2.640008,
+          "allocated_r": 3.296989
+        },
+        "24h": {
+          "closed": 6,
+          "wins": 3,
+          "losses": 3,
+          "winrate_pct": 50.0,
+          "total_r": -0.023812,
+          "allocated_r": -0.143767
+        },
+        "4h": {
+          "closed": 19,
+          "wins": 9,
+          "losses": 10,
+          "winrate_pct": 47.3684,
+          "total_r": 1.114228,
+          "allocated_r": 1.570431
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 36,
+      "pending_entries": 1,
+      "elapsed_seconds": 0.013
+    },
+    "guarded": {
+      "candidate": "guarded",
+      "entered_trades": 34,
+      "closed_trades": 34,
+      "open_trades": 0,
+      "wins": 17,
+      "losses": 17,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 50.0,
+      "total_r": 3.577429,
+      "avg_r": 0.105218,
+      "allocated_r": 4.713274,
+      "avg_allocated_r": 0.138626,
+      "gross_win_r": 18.693541,
+      "gross_loss_r": 15.116112,
+      "profit_factor_r": 1.236663,
+      "max_drawdown_r": -6.475,
+      "max_loss_streak": 4,
+      "max_win_streak": 7,
+      "skipped_signals": 149,
+      "skip_counts": {
+        "guard_market_pressure_4h_high": 44,
+        "guard_low_volatility": 31,
+        "guard_quality_not_ready": 28,
+        "guard_volume_z_4h_extreme": 15,
+        "guard_quality_score_outside_mid": 12,
+        "guard_oi_delta_z_1h_extreme": 9,
+        "guard_timeframe_1h": 8,
+        "entry_guard_rejected": 2
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 4
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 26,
+          "wins": 11,
+          "losses": 15,
+          "winrate_pct": 42.3077,
+          "total_r": -1.432571,
+          "allocated_r": 0.365084
+        },
+        "4h": {
+          "closed": 8,
+          "wins": 6,
+          "losses": 2,
+          "winrate_pct": 75.0,
+          "total_r": 5.01,
+          "allocated_r": 4.348189
+        }
+      },
+      "processed_signals": 183,
+      "market_entries": 34,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.013
+    }
+  },
+  "outputs": {
+    "baseline": {
+      "summary": "export\\live_faithful_baseline_20260507_165249.json",
+      "trades": "export\\live_faithful_baseline_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_baseline_20260507_165249_skips.csv"
+    },
+    "qmid_p06": {
+      "summary": "export\\live_faithful_qmid_p06_20260507_165249.json",
+      "trades": "export\\live_faithful_qmid_p06_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_qmid_p06_20260507_165249_skips.csv"
+    },
+    "qmid_p07": {
+      "summary": "export\\live_faithful_qmid_p07_20260507_165249.json",
+      "trades": "export\\live_faithful_qmid_p07_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_qmid_p07_20260507_165249_skips.csv"
+    },
+    "qmid_p06_4h_only": {
+      "summary": "export\\live_faithful_qmid_p06_4h_only_20260507_165249.json",
+      "trades": "export\\live_faithful_qmid_p06_4h_only_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_qmid_p06_4h_only_20260507_165249_skips.csv"
+    },
+    "qmid_p06_15m_only": {
+      "summary": "export\\live_faithful_qmid_p06_15m_only_20260507_165249.json",
+      "trades": "export\\live_faithful_qmid_p06_15m_only_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_qmid_p06_15m_only_20260507_165249_skips.csv"
+    },
+    "qmid_p06_15m_strict": {
+      "summary": "export\\live_faithful_qmid_p06_15m_strict_20260507_165249.json",
+      "trades": "export\\live_faithful_qmid_p06_15m_strict_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_qmid_p06_15m_strict_20260507_165249_skips.csv"
+    },
+    "qmid_p06_ema": {
+      "summary": "export\\live_faithful_qmid_p06_ema_20260507_165249.json",
+      "trades": "export\\live_faithful_qmid_p06_ema_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_qmid_p06_ema_20260507_165249_skips.csv"
+    },
+    "qmid_p06_ema_pullback": {
+      "summary": "export\\live_faithful_qmid_p06_ema_pullback_20260507_165249.json",
+      "trades": "export\\live_faithful_qmid_p06_ema_pullback_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_qmid_p06_ema_pullback_20260507_165249_skips.csv"
+    },
+    "qmid_p07_ema": {
+      "summary": "export\\live_faithful_qmid_p07_ema_20260507_165249.json",
+      "trades": "export\\live_faithful_qmid_p07_ema_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_qmid_p07_ema_20260507_165249_skips.csv"
+    },
+    "ema_only": {
+      "summary": "export\\live_faithful_ema_only_20260507_165249.json",
+      "trades": "export\\live_faithful_ema_only_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_ema_only_20260507_165249_skips.csv"
+    },
+    "ema_pullback_only": {
+      "summary": "export\\live_faithful_ema_pullback_only_20260507_165249.json",
+      "trades": "export\\live_faithful_ema_pullback_only_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_ema_pullback_only_20260507_165249_skips.csv"
+    },
+    "qmid_p06_4h_runner_2r": {
+      "summary": "export\\live_faithful_qmid_p06_4h_runner_2r_20260507_165249.json",
+      "trades": "export\\live_faithful_qmid_p06_4h_runner_2r_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_qmid_p06_4h_runner_2r_20260507_165249_skips.csv"
+    },
+    "qmid_p06_4h_runner_3r": {
+      "summary": "export\\live_faithful_qmid_p06_4h_runner_3r_20260507_165249.json",
+      "trades": "export\\live_faithful_qmid_p06_4h_runner_3r_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_qmid_p06_4h_runner_3r_20260507_165249_skips.csv"
+    },
+    "qmid_p06_failfast": {
+      "summary": "export\\live_faithful_qmid_p06_failfast_20260507_165249.json",
+      "trades": "export\\live_faithful_qmid_p06_failfast_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_qmid_p06_failfast_20260507_165249_skips.csv"
+    },
+    "tf_simple": {
+      "summary": "export\\live_faithful_tf_simple_20260507_165249.json",
+      "trades": "export\\live_faithful_tf_simple_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_tf_simple_20260507_165249_skips.csv"
+    },
+    "context_guard": {
+      "summary": "export\\live_faithful_context_guard_20260507_165249.json",
+      "trades": "export\\live_faithful_context_guard_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_context_guard_20260507_165249_skips.csv"
+    },
+    "quality_soft": {
+      "summary": "export\\live_faithful_quality_soft_20260507_165249.json",
+      "trades": "export\\live_faithful_quality_soft_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_quality_soft_20260507_165249_skips.csv"
+    },
+    "balanced_soft": {
+      "summary": "export\\live_faithful_balanced_soft_20260507_165249.json",
+      "trades": "export\\live_faithful_balanced_soft_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_balanced_soft_20260507_165249_skips.csv"
+    },
+    "tf_profile": {
+      "summary": "export\\live_faithful_tf_profile_20260507_165249.json",
+      "trades": "export\\live_faithful_tf_profile_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_tf_profile_20260507_165249_skips.csv"
+    },
+    "guarded": {
+      "summary": "export\\live_faithful_guarded_20260507_165249.json",
+      "trades": "export\\live_faithful_guarded_20260507_165249_trades.csv",
+      "skips": "export\\live_faithful_guarded_20260507_165249_skips.csv"
+    }
+  }
+}

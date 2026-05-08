@@ -137,7 +137,12 @@ class Settings(BaseSettings):
     entry_touch_timeout_buckets: int = 2
     entry_notification_catchup_minutes: int = 60
     trade_signals_active_tag: str | None = "v2_balanced"
+    continuation_feedback_source_tag: str | None = None
     strategy_version: str = "v2_balanced"
+    v2_qmid_quality_min: float = 0.35
+    v2_qmid_quality_max: float = 0.55
+    v2_qmid_market_pressure_4h_max_p06: float = 0.60
+    v2_qmid_market_pressure_4h_max_p07: float = 0.70
     trade_signals_active_since: datetime | None = datetime(2026, 4, 2, 5, 0, 0, tzinfo=UTC)
     entry_filter_min_clarity_confidence: float = 0.65
     entry_filter_min_volume_z: float = 1.15

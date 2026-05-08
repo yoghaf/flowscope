@@ -194,6 +194,40 @@ def test_demo_auto_execute_catchup_skips_stale_and_pre_session_signals() -> None
     asyncio.run(run())
 
 
+def test_demo_auto_execute_catchup_skips_signal_before_auto_execute_enabled() -> None:
+    async def run() -> None:
+        original_engine = demo_api._demo_engine
+        original_settings = demo_api._demo_settings
+        now = datetime.now(timezone.utc)
+        engine = FakeDemoEngine()
+        engine.started_at = now - timedelta(hours=2)
+        demo_api._demo_engine = engine
+        demo_api._demo_settings = DemoSettings(
+            auto_execute=True,
+            auto_execute_enabled_at=now,
+            enabled_timeframes=["4h"],
+            enabled_setups=["Continuation"],
+            enabled_regimes=["Trending"],
+        )
+        trade = make_trade_signal(
+            timeframe="4h",
+            created_at=now - timedelta(hours=1),
+            entry_touched_at=now - timedelta(hours=1),
+        )
+
+        try:
+            result = await demo_api._catch_up_demo_auto_execute(FakeDatabase([trade]))
+
+            assert result["attempted"] == 0
+            assert result["skipped"] == 1
+            assert engine.calls == []
+        finally:
+            demo_api._demo_engine = original_engine
+            demo_api._demo_settings = original_settings
+
+    asyncio.run(run())
+
+
 def test_demo_auto_execute_catchup_can_include_pre_session_signal() -> None:
     async def run() -> None:
         original_engine = demo_api._demo_engine
@@ -223,6 +257,52 @@ def test_demo_auto_execute_catchup_can_include_pre_session_signal() -> None:
             assert result["attempted"] == 1
             assert result["opened"] == 1
             assert len(engine.calls) == 1
+        finally:
+            demo_api._demo_engine = original_engine
+            demo_api._demo_settings = original_settings
+
+    asyncio.run(run())
+
+
+def test_live_demo_auto_execute_skips_signal_before_auto_execute_enabled() -> None:
+    async def run() -> None:
+        original_engine = demo_api._demo_engine
+        original_settings = demo_api._demo_settings
+        now = datetime.now(timezone.utc)
+        engine = FakeDemoEngine()
+        engine.started_at = now - timedelta(hours=2)
+        demo_api._demo_engine = engine
+        demo_api._demo_settings = DemoSettings(
+            auto_execute=True,
+            auto_execute_enabled_at=now,
+            enabled_timeframes=["4h"],
+            enabled_setups=["Continuation"],
+            enabled_regimes=["Trending"],
+        )
+
+        service = SignalService.__new__(SignalService)
+        action = SimpleNamespace(setup_type="Continuation", bias="Bullish", signal="Continuation")
+        execution = SimpleNamespace(
+            entry_min=1.0,
+            invalidation=0.95,
+            target=1.1,
+            target_1=1.05,
+            target_2=1.1,
+        )
+
+        try:
+            await service._maybe_execute_demo_trade(
+                symbol="TONUSDT",
+                timeframe="4h",
+                market_regime="Trending",
+                action=action,
+                execution=execution,
+                confidence=0.8,
+                position_size_multiplier=1.0,
+                signal_time=now - timedelta(hours=1),
+            )
+
+            assert engine.calls == []
         finally:
             demo_api._demo_engine = original_engine
             demo_api._demo_settings = original_settings

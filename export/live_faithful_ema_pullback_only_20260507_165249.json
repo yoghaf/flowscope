@@ -1,0 +1,75 @@
+{
+  "candidate": "ema_pullback_only",
+  "entered_trades": 65,
+  "closed_trades": 61,
+  "open_trades": 4,
+  "wins": 21,
+  "losses": 40,
+  "breakevens": 0,
+  "timeouts": 0,
+  "winrate_pct": 34.4262,
+  "total_r": -15.336629,
+  "avg_r": -0.25142,
+  "allocated_r": -14.981348,
+  "avg_allocated_r": -0.245596,
+  "gross_win_r": 20.334569,
+  "gross_loss_r": 35.671197,
+  "profit_factor_r": 0.570056,
+  "max_drawdown_r": -19.277115,
+  "max_loss_streak": 6,
+  "max_win_streak": 4,
+  "skipped_signals": 118,
+  "skip_counts": {
+    "guard_ema_trend_not_aligned": 69,
+    "guard_ema_extension_too_far": 32,
+    "guard_ema_slope_not_aligned": 12,
+    "guard_ema_missing": 2,
+    "entry_guard_rejected": 2,
+    "symbol_locked_open_position": 1
+  },
+  "entry_guard_counts": {
+    "entry_drift_too_far": 3,
+    "market_tp1_progress_too_far": 2,
+    "price_already_touched_sl_before_entry": 2,
+    "pullback_tp1_progress_too_far": 1,
+    "tp1_already_touched_before_entry": 1
+  },
+  "by_timeframe": {
+    "15m": {
+      "closed": 31,
+      "wins": 12,
+      "losses": 19,
+      "winrate_pct": 38.7097,
+      "total_r": -6.113254,
+      "allocated_r": -3.577554
+    },
+    "1h": {
+      "closed": 2,
+      "wins": 0,
+      "losses": 2,
+      "winrate_pct": 0.0,
+      "total_r": -0.94,
+      "allocated_r": -1.20262
+    },
+    "24h": {
+      "closed": 4,
+      "wins": 3,
+      "losses": 1,
+      "winrate_pct": 75.0,
+      "total_r": 0.535,
+      "allocated_r": 0.30361
+    },
+    "4h": {
+      "closed": 24,
+      "wins": 6,
+      "losses": 18,
+      "winrate_pct": 25.0,
+      "total_r": -8.818374,
+      "allocated_r": -10.504784
+    }
+  },
+  "processed_signals": 183,
+  "market_entries": 63,
+  "pending_entries": 2,
+  "elapsed_seconds": 0.016
+}

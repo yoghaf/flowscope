@@ -86,6 +86,24 @@ class ReplayBiasOverrideConfig:
         return bool(self.reverse_regimes)
 
 
+@dataclass(slots=True)
+class ReplayReadyPromotionConfig:
+    setup_types: frozenset[str] = frozenset()
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.setup_types)
+
+
+@dataclass(slots=True)
+class ReplaySetupFilterConfig:
+    setup_types: frozenset[str] = frozenset()
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.setup_types)
+
+
 def _normalize_regime_name(value: object) -> str | None:
     text = str(value or "").strip().lower()
     mapping = {
@@ -152,6 +170,50 @@ def _install_replay_bias_override(
         return service._action_with_bias(action, _reverse_bias(action.bias))
 
     service.execution_engine.build_action = build_action_with_override
+
+
+def _install_replay_ready_promotion(
+    service: SignalService,
+    *,
+    config: ReplayReadyPromotionConfig,
+) -> None:
+    if not config.enabled:
+        return
+
+    original_maybe_record = service._maybe_record_trade_signal
+
+    async def maybe_record_with_ready_promotion(*args, **kwargs):
+        action = kwargs.get("action")
+        setup_type = getattr(action, "setup_type", None)
+        if (
+            action is not None
+            and getattr(action, "status", None) == "Ready"
+            and setup_type in config.setup_types
+            and getattr(action, "bias", None) in {"Bullish", "Bearish"}
+        ):
+            kwargs["action"] = service._action_with_status(action, "Triggered")
+        return await original_maybe_record(*args, **kwargs)
+
+    service._maybe_record_trade_signal = maybe_record_with_ready_promotion
+
+
+def _install_replay_setup_filter(
+    service: SignalService,
+    *,
+    config: ReplaySetupFilterConfig,
+) -> None:
+    if not config.enabled:
+        return
+
+    original_maybe_record = service._maybe_record_trade_signal
+
+    async def maybe_record_with_setup_filter(*args, **kwargs):
+        action = kwargs.get("action")
+        if getattr(action, "setup_type", None) not in config.setup_types:
+            return None
+        return await original_maybe_record(*args, **kwargs)
+
+    service._maybe_record_trade_signal = maybe_record_with_setup_filter
 
 
 def _safe_console_text(value: object) -> str:
@@ -507,6 +569,8 @@ async def replay_symbol(
     buckets: dict[str, list[TimeframeBucket]],
     context_soft_gate_enabled: bool = False,
     bias_override: ReplayBiasOverrideConfig | None = None,
+    ready_promotion: ReplayReadyPromotionConfig | None = None,
+    setup_filter: ReplaySetupFilterConfig | None = None,
 ) -> tuple[list[TradeSignal], ReplayDiagnostics]:
     diagnostics = ReplayDiagnostics(
         stage_counts=Counter(),
@@ -542,6 +606,14 @@ async def replay_symbol(
     _install_replay_bias_override(
         service,
         config=bias_override or ReplayBiasOverrideConfig(),
+    )
+    _install_replay_ready_promotion(
+        service,
+        config=ready_promotion or ReplayReadyPromotionConfig(),
+    )
+    _install_replay_setup_filter(
+        service,
+        config=setup_filter or ReplaySetupFilterConfig(),
     )
     seen_filter_events: set[tuple[str, datetime, str, bool, tuple[str, ...]]] = set()
     seen_15m_candidate_events: set[tuple[datetime, str, str, str, str, tuple[str, ...]]] = set()

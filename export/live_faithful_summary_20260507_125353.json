@@ -1,0 +1,113 @@
+{
+  "created_at": "2026-05-07T12:53:54.293420+00:00",
+  "database": "postgresql+asyncpg://localhost:5432/flowscope_replay_vps_20260507_123757",
+  "engine_tag": "v2_balanced",
+  "signal_count": 20,
+  "assumptions": {
+    "event_order": "created_at asc, id asc",
+    "execution_lock": "one active position or pending order per symbol",
+    "entry_guard": "market plus pullback limit guard mirrors demo defaults",
+    "exit_model": "scripts.replay_full_strategy._evaluate_trade_bucket"
+  },
+  "candidates": {
+    "baseline": {
+      "candidate": "baseline",
+      "entered_trades": 18,
+      "closed_trades": 18,
+      "open_trades": 0,
+      "wins": 7,
+      "losses": 11,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 38.8889,
+      "total_r": -1.590736,
+      "avg_r": -0.088374,
+      "allocated_r": -1.426168,
+      "avg_allocated_r": -0.079232,
+      "skipped_signals": 2,
+      "skip_counts": {
+        "entry_guard_rejected": 2
+      },
+      "entry_guard_counts": {
+        "price_already_touched_sl_before_entry": 4
+      },
+      "by_timeframe": {
+        "15m": {
+          "closed": 9,
+          "wins": 3,
+          "losses": 6,
+          "winrate_pct": 33.3333,
+          "total_r": -2.955874,
+          "allocated_r": -3.159822
+        },
+        "1h": {
+          "closed": 2,
+          "wins": 1,
+          "losses": 1,
+          "winrate_pct": 50.0,
+          "total_r": 1.243956,
+          "allocated_r": 1.613625
+        },
+        "24h": {
+          "closed": 3,
+          "wins": 1,
+          "losses": 2,
+          "winrate_pct": 33.3333,
+          "total_r": 0.131182,
+          "allocated_r": 0.221585
+        },
+        "4h": {
+          "closed": 4,
+          "wins": 2,
+          "losses": 2,
+          "winrate_pct": 50.0,
+          "total_r": -0.01,
+          "allocated_r": -0.101556
+        }
+      },
+      "processed_signals": 20,
+      "market_entries": 18,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.005
+    },
+    "guarded": {
+      "candidate": "guarded",
+      "entered_trades": 0,
+      "closed_trades": 0,
+      "open_trades": 0,
+      "wins": 0,
+      "losses": 0,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 0.0,
+      "total_r": 0,
+      "avg_r": 0.0,
+      "allocated_r": 0,
+      "avg_allocated_r": 0.0,
+      "skipped_signals": 20,
+      "skip_counts": {
+        "guard_quality_not_ready": 18,
+        "guard_low_volatility": 1,
+        "guard_timeframe_1h": 1
+      },
+      "entry_guard_counts": {},
+      "by_timeframe": {},
+      "processed_signals": 20,
+      "market_entries": 0,
+      "pending_entries": 0,
+      "elapsed_seconds": 0.001
+    }
+  },
+  "outputs": {
+    "baseline": {
+      "summary": "export\\live_faithful_baseline_20260507_125353.json",
+      "trades": "export\\live_faithful_baseline_20260507_125353_trades.csv",
+      "skips": "export\\live_faithful_baseline_20260507_125353_skips.csv"
+    },
+    "guarded": {
+      "summary": "export\\live_faithful_guarded_20260507_125353.json",
+      "trades": "export\\live_faithful_guarded_20260507_125353_trades.csv",
+      "skips": "export\\live_faithful_guarded_20260507_125353_skips.csv"
+    }
+  }
+}
