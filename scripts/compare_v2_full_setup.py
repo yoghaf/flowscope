@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -207,6 +208,17 @@ def export_trades(path: Path, strategy_trades: dict[str, list[object]]) -> None:
         "oi_delta_z_15m",
         "market_pressure_4h",
         "entry_type",
+        "token_intent_state",
+        "token_intent_positioning_side",
+        "token_intent_entry_permission",
+        "token_intent_entry_quality",
+        "token_intent_long_score",
+        "token_intent_short_score",
+        "token_intent_crowding_score",
+        "token_intent_distribution_score",
+        "token_intent_failed_pullback_score",
+        "token_intent_range_position",
+        "token_intent_reasons",
     ]
     with path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=headers)
@@ -242,6 +254,17 @@ def export_trades(path: Path, strategy_trades: dict[str, list[object]]) -> None:
                         "oi_delta_z_15m": feature_value(trade, "oi_delta_z_15m"),
                         "market_pressure_4h": feature_value(trade, "market_pressure_4h"),
                         "entry_type": feature_value(trade, "entry_type"),
+                        "token_intent_state": feature_value(trade, "token_intent_state"),
+                        "token_intent_positioning_side": feature_value(trade, "token_intent_positioning_side"),
+                        "token_intent_entry_permission": feature_value(trade, "token_intent_entry_permission"),
+                        "token_intent_entry_quality": feature_value(trade, "token_intent_entry_quality"),
+                        "token_intent_long_score": feature_value(trade, "token_intent_long_score"),
+                        "token_intent_short_score": feature_value(trade, "token_intent_short_score"),
+                        "token_intent_crowding_score": feature_value(trade, "token_intent_crowding_score"),
+                        "token_intent_distribution_score": feature_value(trade, "token_intent_distribution_score"),
+                        "token_intent_failed_pullback_score": feature_value(trade, "token_intent_failed_pullback_score"),
+                        "token_intent_range_position": feature_value(trade, "token_intent_range_position"),
+                        "token_intent_reasons": feature_value(trade, "token_intent_reasons"),
                     }
                 )
 
@@ -332,6 +355,75 @@ def print_metric_line(name: str, metrics: dict[str, Any]) -> None:
     )
 
 
+def format_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
+def format_top_reasons(reasons: Counter[str], limit: int = 3) -> str:
+    if not reasons:
+        return "-"
+    return ", ".join(f"{reason}:{count}" for reason, count in reasons.most_common(limit))
+
+
+def format_active_symbols(in_flight: dict[str, float], now: float, limit: int = 6) -> str:
+    if not in_flight:
+        return "-"
+    active = sorted(in_flight.items(), key=lambda item: item[1])
+    labels = [f"{symbol}:{format_duration(now - started)}" for symbol, started in active[:limit]]
+    if len(active) > limit:
+        labels.append(f"+{len(active) - limit} more")
+    return ", ".join(labels)
+
+
+def print_progress(
+    *,
+    name: str,
+    processed: int,
+    total: int,
+    started_at: float,
+    current_symbol: str,
+    trades: list[object],
+    reasons: Counter[str],
+) -> None:
+    elapsed = time.perf_counter() - started_at
+    rate = processed / elapsed if elapsed > 0 else 0.0
+    remaining = max(total - processed, 0)
+    eta = remaining / rate if rate > 0 else 0.0
+    pct = (processed / total * 100.0) if total else 100.0
+    metrics = calculate_metrics(trades)
+    print(
+        "[PROGRESS] {name} {processed}/{total} ({pct:.1f}%) "
+        "current={current} elapsed={elapsed} eta={eta} rate={rate:.2f} sym/s "
+        "trades={signals} closed={closed} open={open} W/L={wins}/{losses} "
+        "R={total_r:.2f} DD={dd:.2f} top_reject={top_reject}".format(
+            name=name,
+            processed=processed,
+            total=total,
+            pct=pct,
+            current=current_symbol,
+            elapsed=format_duration(elapsed),
+            eta=format_duration(eta),
+            rate=rate,
+            signals=metrics["signals"],
+            closed=metrics["closed"],
+            open=metrics["open"],
+            wins=metrics["wins"],
+            losses=metrics["losses"],
+            total_r=metrics["total_r"],
+            dd=metrics["max_drawdown_r"],
+            top_reject=format_top_reasons(reasons),
+        ),
+        flush=True,
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare v2 continuation-only against v2 full setup replay experiments.")
     parser.add_argument("--database-url")
@@ -340,6 +432,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--days", type=int, default=0)
     parser.add_argument("--limit-per-symbol", type=int, default=0)
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--progress-every", type=int, default=10, help="Print progress every N completed symbols")
+    parser.add_argument("--heartbeat-seconds", type=int, default=5, help="Print alive status every N seconds while symbols are running")
+    parser.add_argument("--log-symbol-starts", action="store_true", help="Print a line whenever a symbol starts processing")
+    parser.add_argument("--include-filter-variants", action="store_true", help="Also replay v2 continuation timeframe/bias filter variants")
     parser.add_argument("--output-dir", default="export")
     return parser.parse_args()
 
@@ -364,36 +460,113 @@ async def run_strategy(
     symbols: list[str],
     buckets_by_symbol: dict[str, dict[str, list[Any]]],
     workers: int,
+    progress_every: int,
+    heartbeat_seconds: int,
+    log_symbol_starts: bool,
     setup_filter: ReplaySetupFilterConfig | None = None,
     ready_promotion: ReplayReadyPromotionConfig | None = None,
 ) -> tuple[list[object], Counter[str]]:
+    total_symbols = len(symbols)
+    started_at = time.perf_counter()
     print(f"=== RUNNING {name} ===", flush=True)
+    print(
+        f"[RUN] {name} symbols={total_symbols} workers={workers} "
+        f"progress_every={max(1, progress_every)} heartbeat={max(1, heartbeat_seconds)}s",
+        flush=True,
+    )
     semaphore = asyncio.Semaphore(max(1, workers))
-    processed = 0
+    status = {"processed": 0, "started": 0}
+    last_done = {"symbol": "-", "at": started_at}
+    in_flight: dict[str, float] = {}
     diagnostics_reasons: Counter[str] = Counter()
     trades_out: list[object] = []
 
-    async def process_symbol(symbol: str) -> tuple[list[object], Counter[str]]:
-        async with semaphore:
-            trades, diagnostics = await replay_symbol(
-                settings=settings,
-                symbol=symbol,
-                buckets=buckets_by_symbol[symbol],
-                setup_filter=setup_filter,
-                ready_promotion=ready_promotion,
+    async def heartbeat() -> None:
+        while status["processed"] < total_symbols:
+            await asyncio.sleep(max(1, heartbeat_seconds))
+            if status["processed"] >= total_symbols:
+                break
+            now = time.perf_counter()
+            processed = status["processed"]
+            pct = (processed / total_symbols * 100.0) if total_symbols else 100.0
+            elapsed = now - started_at
+            rate = processed / elapsed if elapsed > 0 else 0.0
+            eta = (total_symbols - processed) / rate if rate > 0 else 0.0
+            print(
+                "[HEARTBEAT] {name} done={processed}/{total} ({pct:.1f}%) "
+                "started={started} active={active}/{workers} pending={pending} "
+                "elapsed={elapsed} eta={eta} no_complete_for={quiet} "
+                "last_done={last_done} active_symbols={active_symbols}".format(
+                    name=name,
+                    processed=processed,
+                    total=total_symbols,
+                    pct=pct,
+                    started=status["started"],
+                    active=len(in_flight),
+                    workers=max(1, workers),
+                    pending=max(total_symbols - status["started"], 0),
+                    elapsed=format_duration(elapsed),
+                    eta=format_duration(eta),
+                    quiet=format_duration(now - last_done["at"]),
+                    last_done=last_done["symbol"],
+                    active_symbols=format_active_symbols(in_flight, now),
+                ),
+                flush=True,
             )
-            return trades, diagnostics.reason_counts
 
-    tasks = [process_symbol(symbol) for symbol in symbols]
-    for future in asyncio.as_completed(tasks):
-        trades, reasons = await future
-        trades_out.extend(trades)
-        diagnostics_reasons.update(reasons)
-        processed += 1
-        if processed == 1 or processed % 20 == 0 or processed == len(symbols):
-            print(f"Progress {name}: {processed}/{len(symbols)} symbols", flush=True)
+    async def process_symbol(symbol: str) -> tuple[str, list[object], Counter[str]]:
+        async with semaphore:
+            status["started"] += 1
+            in_flight[symbol] = time.perf_counter()
+            if log_symbol_starts or status["started"] <= max(1, workers):
+                print(
+                    f"[START] {name} {symbol} started={status['started']}/{total_symbols} active={len(in_flight)}",
+                    flush=True,
+                )
+            try:
+                trades, diagnostics = await replay_symbol(
+                    settings=settings,
+                    symbol=symbol,
+                    buckets=buckets_by_symbol[symbol],
+                    setup_filter=setup_filter,
+                    ready_promotion=ready_promotion,
+                )
+                return symbol, trades, diagnostics.reason_counts
+            finally:
+                in_flight.pop(symbol, None)
 
-    print(f"=== COMPLETED {name}: trades={len(trades_out)} ===\n", flush=True)
+    tasks = [asyncio.create_task(process_symbol(symbol)) for symbol in symbols]
+    heartbeat_task = asyncio.create_task(heartbeat())
+    try:
+        for future in asyncio.as_completed(tasks):
+            symbol, trades, reasons = await future
+            trades_out.extend(trades)
+            diagnostics_reasons.update(reasons)
+            status["processed"] += 1
+            last_done["symbol"] = symbol
+            last_done["at"] = time.perf_counter()
+            processed = status["processed"]
+            if processed == 1 or processed % max(1, progress_every) == 0 or processed == total_symbols:
+                print_progress(
+                    name=name,
+                    processed=processed,
+                    total=total_symbols,
+                    started_at=started_at,
+                    current_symbol=symbol,
+                    trades=trades_out,
+                    reasons=diagnostics_reasons,
+                )
+    finally:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+
+    elapsed = time.perf_counter() - started_at
+    print(f"=== COMPLETED {name}: trades={len(trades_out)} elapsed={format_duration(elapsed)} ===", flush=True)
+    print_metric_line(name, calculate_metrics(trades_out))
+    print(f"[REJECT] {name} top={format_top_reasons(diagnostics_reasons, 8)}\n", flush=True)
     return trades_out, diagnostics_reasons
 
 
@@ -428,6 +601,11 @@ async def async_main(args: argparse.Namespace) -> int:
 
         strategy_trades: dict[str, list[object]] = {}
         strategy_reasons: dict[str, Counter[str]] = {}
+        strategy_notes: dict[str, str] = {
+            "v2_balanced_continuation_only": "Replay v2 with persisted entries restricted to Continuation.",
+            "v2_all_setups_triggered_only": "Replay v2 without setup restriction; only naturally Triggered setups are recorded.",
+            "v2_full_setup_ready_entry": "Replay v2 with Ready non-Continuation setups promoted to replay entries after existing filters/execution checks.",
+        }
 
         continuation_trades, continuation_reasons = await run_strategy(
             name="v2_balanced_continuation_only",
@@ -435,10 +613,150 @@ async def async_main(args: argparse.Namespace) -> int:
             symbols=symbols,
             buckets_by_symbol=buckets_by_symbol,
             workers=args.workers,
+            progress_every=args.progress_every,
+            heartbeat_seconds=args.heartbeat_seconds,
+            log_symbol_starts=args.log_symbol_starts,
             setup_filter=ReplaySetupFilterConfig(frozenset({"Continuation"})),
         )
         strategy_trades["v2_balanced_continuation_only"] = continuation_trades
         strategy_reasons["v2_balanced_continuation_only"] = continuation_reasons
+
+        if args.include_filter_variants:
+            variants = [
+                (
+                    "v2_continuation_no_1h",
+                    ReplaySetupFilterConfig(setup_types=frozenset({"Continuation"}), timeframes=frozenset({"15m", "4h"})),
+                    "Replay v2 Continuation only on 15m and 4h; excludes historically weak 1h continuation.",
+                ),
+                (
+                    "v2_continuation_4h_only",
+                    ReplaySetupFilterConfig(setup_types=frozenset({"Continuation"}), timeframes=frozenset({"4h"})),
+                    "Replay v2 Continuation only on 4h.",
+                ),
+                (
+                    "v2_continuation_15m_only",
+                    ReplaySetupFilterConfig(setup_types=frozenset({"Continuation"}), timeframes=frozenset({"15m"})),
+                    "Replay v2 Continuation only on 15m.",
+                ),
+                (
+                    "v2_continuation_15m_4h_bullish_only",
+                    ReplaySetupFilterConfig(
+                        setup_types=frozenset({"Continuation"}),
+                        timeframes=frozenset({"15m", "4h"}),
+                        biases=frozenset({"Bullish"}),
+                    ),
+                    "Replay v2 Continuation on 15m/4h, Bullish bias only. This is regime-sensitive and should be tested out-of-sample.",
+                ),
+            ]
+            for variant_name, setup_filter, note in variants:
+                variant_trades, variant_reasons = await run_strategy(
+                    name=variant_name,
+                    settings=settings_base.model_copy(update={"strategy_version": "v2_balanced"}),
+                    symbols=symbols,
+                    buckets_by_symbol=buckets_by_symbol,
+                    workers=args.workers,
+                    progress_every=args.progress_every,
+                    heartbeat_seconds=args.heartbeat_seconds,
+                    log_symbol_starts=args.log_symbol_starts,
+                    setup_filter=setup_filter,
+                )
+                strategy_trades[variant_name] = variant_trades
+                strategy_reasons[variant_name] = variant_reasons
+                strategy_notes[variant_name] = note
+
+            short_4h_name = "v2_4h_healthy_short_only"
+            short_4h_filter = ReplaySetupFilterConfig(
+                setup_types=frozenset({"Continuation"}),
+                timeframes=frozenset({"4h"}),
+                biases=frozenset({"Bearish"}),
+                token_intent_states=frozenset({"healthy_short_build"}),
+                token_entry_permissions=frozenset({"short_ready"}),
+            )
+            short_4h_trades, short_4h_reasons = await run_strategy(
+                name=short_4h_name,
+                settings=settings_base.model_copy(update={"strategy_version": "v2_balanced"}),
+                symbols=symbols,
+                buckets_by_symbol=buckets_by_symbol,
+                workers=args.workers,
+                progress_every=args.progress_every,
+                heartbeat_seconds=args.heartbeat_seconds,
+                log_symbol_starts=args.log_symbol_starts,
+                setup_filter=short_4h_filter,
+            )
+            strategy_trades[short_4h_name] = short_4h_trades
+            strategy_reasons[short_4h_name] = short_4h_reasons
+            strategy_notes[short_4h_name] = (
+                "Research replay: Continuation shorts only on 4h where TokenIntentClassifier says healthy_short_build/short_ready."
+            )
+
+            hybrid_name = "v2_15m_4h_bullish_plus_4h_short"
+            strategy_trades[hybrid_name] = [
+                *strategy_trades.get("v2_continuation_15m_4h_bullish_only", []),
+                *short_4h_trades,
+            ]
+            strategy_reasons[hybrid_name] = Counter()
+            strategy_reasons[hybrid_name].update(strategy_reasons.get("v2_continuation_15m_4h_bullish_only", Counter()))
+            strategy_reasons[hybrid_name].update(short_4h_reasons)
+            strategy_notes[hybrid_name] = (
+                "Research hybrid: best current bullish baseline plus 4h healthy short intent entries."
+            )
+            print_metric_line(hybrid_name, calculate_metrics(strategy_trades[hybrid_name]))
+
+            distribution_short_name = "v2_distribution_to_short_watch"
+            distribution_short_filter = ReplaySetupFilterConfig(
+                setup_types=frozenset({"Continuation"}),
+                timeframes=frozenset({"4h"}),
+                biases=frozenset({"Bearish"}),
+                token_intent_states=frozenset({"distribution_wait"}),
+            )
+            distribution_short_trades, distribution_short_reasons = await run_strategy(
+                name=distribution_short_name,
+                settings=settings_base.model_copy(update={"strategy_version": "v2_balanced"}),
+                symbols=symbols,
+                buckets_by_symbol=buckets_by_symbol,
+                workers=args.workers,
+                progress_every=args.progress_every,
+                heartbeat_seconds=args.heartbeat_seconds,
+                log_symbol_starts=args.log_symbol_starts,
+                setup_filter=distribution_short_filter,
+            )
+            strategy_trades[distribution_short_name] = distribution_short_trades
+            strategy_reasons[distribution_short_name] = distribution_short_reasons
+            strategy_notes[distribution_short_name] = (
+                "Research replay: 4h bearish continuation entries whose token intent is distribution_wait. "
+                "This is a probe for a future distribution -> bearish_watch -> short_ready route."
+            )
+
+            april_fix_name = "v2_continuation_15m_4h_bullish_april_fix"
+            april_fix_filter = ReplaySetupFilterConfig(
+                setup_types=frozenset({"Continuation"}),
+                timeframes=frozenset({"15m", "4h"}),
+                biases=frozenset({"Bullish"}),
+            )
+            april_fix_trades, april_fix_reasons = await run_strategy(
+                name=april_fix_name,
+                settings=settings_base.model_copy(
+                    update={
+                        "strategy_version": "v2_balanced_april_fix",
+                        "v2_april_fix_enabled": True,
+                        "trade_signals_active_tag": "v2_balanced_april_fix",
+                    }
+                ),
+                symbols=symbols,
+                buckets_by_symbol=buckets_by_symbol,
+                workers=args.workers,
+                progress_every=args.progress_every,
+                heartbeat_seconds=args.heartbeat_seconds,
+                log_symbol_starts=args.log_symbol_starts,
+                setup_filter=april_fix_filter,
+            )
+            strategy_trades[april_fix_name] = april_fix_trades
+            strategy_reasons[april_fix_name] = april_fix_reasons
+            strategy_notes[april_fix_name] = (
+                "Replay v2 Continuation on 15m/4h, Bullish only, with April autopsy fixes: "
+                "1h disabled, 4h micro confirmation, crowded-chase/pullback-reclaim guards, "
+                "mixed-context sizing penalty, and MFE protection."
+            )
 
         natural_trades, natural_reasons = await run_strategy(
             name="v2_all_setups_triggered_only",
@@ -446,6 +764,9 @@ async def async_main(args: argparse.Namespace) -> int:
             symbols=symbols,
             buckets_by_symbol=buckets_by_symbol,
             workers=args.workers,
+            progress_every=args.progress_every,
+            heartbeat_seconds=args.heartbeat_seconds,
+            log_symbol_starts=args.log_symbol_starts,
         )
         strategy_trades["v2_all_setups_triggered_only"] = natural_trades
         strategy_reasons["v2_all_setups_triggered_only"] = natural_reasons
@@ -456,6 +777,9 @@ async def async_main(args: argparse.Namespace) -> int:
             symbols=symbols,
             buckets_by_symbol=buckets_by_symbol,
             workers=args.workers,
+            progress_every=args.progress_every,
+            heartbeat_seconds=args.heartbeat_seconds,
+            log_symbol_starts=args.log_symbol_starts,
             ready_promotion=ReplayReadyPromotionConfig(FULL_SETUP_TYPES),
         )
         strategy_trades["v2_full_setup_ready_entry"] = full_trades
@@ -471,11 +795,7 @@ async def async_main(args: argparse.Namespace) -> int:
             },
             "days": args.days,
             "symbols": len(symbols),
-            "strategy_notes": {
-                "v2_balanced_continuation_only": "Replay v2 with persisted entries restricted to Continuation.",
-                "v2_all_setups_triggered_only": "Replay v2 without setup restriction; only naturally Triggered setups are recorded.",
-                "v2_full_setup_ready_entry": "Replay v2 with Ready non-Continuation setups promoted to replay entries after existing filters/execution checks.",
-            },
+            "strategy_notes": strategy_notes,
             "statistics": {strategy: calculate_metrics(trades) for strategy, trades in strategy_trades.items()},
             "by_setup": {strategy: split_metrics(trades, "setup_type") for strategy, trades in strategy_trades.items()},
             "by_timeframe": {strategy: split_metrics(trades, "timeframe") for strategy, trades in strategy_trades.items()},

@@ -43,9 +43,9 @@ class BinanceCollector(BaseCollector):
     Architecture:
     1. WebSocket ``!markPrice@arr`` pushes price + funding for ALL symbols
        every 3 seconds at **zero** API weight cost.
-    2. Bulk REST ``ticker/24hr`` fetches volume/24h stats for ALL symbols
+    2. Bulk REST ``ticker/24hr`` provides price fallback for ALL symbols
        in a single call (weight 40).
-    3. Rotary REST fetcher pulls OI / long-short ratio / taker ratio in
+    3. Rotary REST fetcher pulls OI / long-short ratio / taker ratio / 1m volume in
        small batches spread across minutes so we never exceed the 6000
        weight-per-minute hard cap.
 
@@ -55,8 +55,9 @@ class BinanceCollector(BaseCollector):
         OI  40 symbols/min   :   40
         Ratio 10 symbols/min :   50
         Taker 10 symbols/min :   50
+        Volume 200x2/min     :  400
         --------------------------
-        Total                : ~148 / 6000  ✅
+        Total                : ~548 / 6000
     """
 
     exchange_name = "binance"
@@ -77,14 +78,19 @@ class BinanceCollector(BaseCollector):
         self._ls_ratio_cache: dict[str, float] = {}
         self._taker_ratio_cache: dict[str, float] = {}
         self._liquidation_cache: dict[str, tuple[float, float]] = {}
+        self._futures_kline_volume_cache: dict[str, float] = {}
+        self._spot_kline_volume_cache: dict[str, float] = {}
 
         # ── rotary state ──────────────────────────────────────────────
         self._oi_batch_size = getattr(settings, "oi_batch_size", 40)
         self._ratio_batch_size = getattr(settings, "ratio_batch_size", 10)
         self._taker_batch_size = getattr(settings, "taker_batch_size", 10)
+        self._volume_batch_size = getattr(settings, "volume_batch_size", 50)
+        self._volume_refresh_seconds = getattr(settings, "volume_refresh_seconds", 15)
         self._oi_offset = 0
         self._ratio_offset = 0
         self._taker_offset = 0
+        self._volume_offset = 0
 
         # ── WS state ─────────────────────────────────────────────────
         self._ws_task: asyncio.Task[None] | None = None
@@ -109,14 +115,16 @@ class BinanceCollector(BaseCollector):
             asyncio.create_task(self._rotary_oi_loop()),
             asyncio.create_task(self._rotary_ratio_loop()),
             asyncio.create_task(self._rotary_taker_loop()),
+            asyncio.create_task(self._rotary_volume_loop()),
         ]
         logger.info(
             "BinanceCollector background started: %d symbols, "
-            "OI batch=%d, ratio batch=%d, taker batch=%d",
+            "OI batch=%d, ratio batch=%d, taker batch=%d, volume batch=%d",
             len(symbols),
             self._oi_batch_size,
             self._ratio_batch_size,
             self._taker_batch_size,
+            self._volume_batch_size,
         )
 
     async def stop_background(self) -> None:
@@ -264,6 +272,20 @@ class BinanceCollector(BaseCollector):
                 logger.error("Taker rotary error: %s", exc)
             await asyncio.sleep(60)
 
+    async def _rotary_volume_loop(self) -> None:
+        """Fetch recent 1m kline quote volume for live volume metrics."""
+        await asyncio.sleep(3)
+        while self._running:
+            try:
+                batch = self._next_batch(
+                    self._symbols, self._volume_batch_size, "_volume_offset"
+                )
+                await self._fetch_live_volume_batch(batch)
+                logger.debug("Live volume batch done: %d symbols", len(batch))
+            except Exception as exc:
+                logger.error("Live volume rotary error: %s", exc)
+            await asyncio.sleep(max(self._volume_refresh_seconds, 1))
+
     def _next_batch(self, symbols: list[str], size: int, offset_attr: str) -> list[str]:
         offset = getattr(self, offset_attr)
         batch = symbols[offset: offset + size]
@@ -371,6 +393,47 @@ class BinanceCollector(BaseCollector):
 
         await asyncio.gather(*(fetch_one(s) for s in symbols))
 
+    async def _fetch_live_volume_batch(self, symbols: list[str]) -> None:
+        """Fetch current 1m quote volume; 24h ticker volume is not candle volume."""
+        semaphore = asyncio.Semaphore(self.settings.exchange_request_concurrency)
+
+        async def fetch_one(symbol: str) -> None:
+            async with semaphore:
+                futures_volume = 0.0
+                spot_volume = 0.0
+                try:
+                    response = await self.client.get(
+                        f"{self.rest_url}{_FAPI_KLINES}",
+                        params={"symbol": symbol, "interval": "1m", "limit": 1},
+                    )
+                    response.raise_for_status()
+                    entries = response.json()
+                    if entries:
+                        item = entries[-1]
+                        futures_volume = self.parse_float(item[7] if len(item) > 7 else item[5])
+                except Exception as exc:
+                    logger.debug("Futures live volume fetch failed %s: %s", symbol, exc)
+
+                try:
+                    response = await self.client.get(
+                        f"{self.spot_rest_url}{_SPOT_KLINES}",
+                        params={"symbol": symbol, "interval": "1m", "limit": 1},
+                    )
+                    response.raise_for_status()
+                    entries = response.json()
+                    if entries:
+                        item = entries[-1]
+                        spot_volume = self.parse_float(item[7] if len(item) > 7 else item[5])
+                except Exception as exc:
+                    logger.debug("Spot live volume fetch failed %s: %s", symbol, exc)
+
+                if futures_volume > 0.0:
+                    self._futures_kline_volume_cache[symbol] = futures_volume
+                if spot_volume > 0.0:
+                    self._spot_kline_volume_cache[symbol] = spot_volume
+
+        await asyncio.gather(*(fetch_one(s) for s in symbols))
+
     # ─── main fetch interface ─────────────────────────────────────────
 
     async def fetch_snapshots(self, symbols: list[str]) -> dict[str, ExchangeSnapshot]:
@@ -380,11 +443,8 @@ class BinanceCollector(BaseCollector):
         Only the bulk ticker calls consume API weight here; everything
         else is already cached by background tasks.
         """
-        # Refresh bulk tickers (weight 40 + 40 = 80 total, once per call)
-        await asyncio.gather(
-            self._fetch_bulk_tickers(),
-            self._fetch_bulk_spot_tickers(),
-        )
+        # Refresh futures ticker for price fallback. Volume comes from live klines.
+        await self._fetch_bulk_tickers()
 
         timestamp = self.utcnow()
         snapshots: dict[str, ExchangeSnapshot] = {}
@@ -399,13 +459,10 @@ class BinanceCollector(BaseCollector):
             if price <= 0:
                 continue  # skip symbols with no price data at all
 
-            # Futures volume from bulk ticker
-            futures_ticker = self._bulk_ticker.get(symbol, {})
-            futures_volume = self.parse_float(futures_ticker.get("quoteVolume"))
-
-            # Spot volume from bulk spot ticker
-            spot_ticker = self._spot_ticker.get(symbol, {})
-            spot_volume = self.parse_float(spot_ticker.get("quoteVolume"))
+            # Quote volume from recent klines. The 24h ticker quoteVolume is a
+            # rolling gauge, so using it as a monotonic counter corrupts volume_z.
+            futures_volume = self._futures_kline_volume_cache.get(symbol, 0.0)
+            spot_volume = self._spot_kline_volume_cache.get(symbol, 0.0)
 
             # Funding from WS
             funding_rate = self._ws_funding.get(symbol, 0.0)
@@ -486,6 +543,17 @@ class BinanceCollector(BaseCollector):
             logger.error("Kline fetch failed %s: %s", symbol, exc)
             return []
 
+    def _parse_long_short_ratio_entry(self, entry: dict[str, Any]) -> float:
+        ratio = self.parse_float(entry.get("longShortRatio"), 0.0)
+        if ratio > 0.0:
+            return ratio
+
+        long_account = self.parse_float(entry.get("longAccount"), 0.5)
+        short_account = self.parse_float(entry.get("shortAccount"), 0.5)
+        if short_account > 0.0:
+            return long_account / short_account
+        return 1.0
+
     async def fetch_historical_buckets(
         self,
         symbols: list[str],
@@ -520,6 +588,7 @@ class BinanceCollector(BaseCollector):
                 futures_klines: list[Any] = []
                 spot_klines: list[Any] = []
                 oi_entries: list[dict[str, Any]] = []
+                ls_entries: list[dict[str, Any]] = []
                 funding_entries: list[dict[str, Any]] = []
 
                 async def fetch_futures_klines() -> None:
@@ -549,6 +618,15 @@ class BinanceCollector(BaseCollector):
                     response.raise_for_status()
                     oi_entries = response.json()
 
+                async def fetch_ls_history() -> None:
+                    nonlocal ls_entries
+                    response = await self.client.get(
+                        f"{self.rest_url}{_FAPI_GLOBAL_LS_RATIO}",
+                        params={"symbol": symbol, "period": interval, "limit": min(limit, 500)},
+                    )
+                    response.raise_for_status()
+                    ls_entries = response.json()
+
                 async def fetch_funding_history() -> None:
                     nonlocal funding_entries
                     response = await self.client.get(
@@ -562,10 +640,11 @@ class BinanceCollector(BaseCollector):
                 optional_tasks = [
                     fetch_spot_klines(),
                     fetch_oi_history(),
+                    fetch_ls_history(),
                     fetch_funding_history(),
                 ]
 
-                futures_result, spot_result, oi_result, funding_result = await asyncio.gather(
+                futures_result, spot_result, oi_result, ls_result, funding_result = await asyncio.gather(
                     futures_task,
                     *optional_tasks,
                     return_exceptions=True,
@@ -580,6 +659,9 @@ class BinanceCollector(BaseCollector):
                 if isinstance(oi_result, Exception):
                     logger.debug("Backfill OI history unavailable %s/%s: %s", symbol, tf, oi_result)
                     oi_entries = []
+                if isinstance(ls_result, Exception):
+                    logger.debug("Backfill L/S history unavailable %s/%s: %s", symbol, tf, ls_result)
+                    ls_entries = []
                 if isinstance(funding_result, Exception):
                     logger.debug("Backfill funding history unavailable %s/%s: %s", symbol, tf, funding_result)
                     funding_entries = []
@@ -605,6 +687,16 @@ class BinanceCollector(BaseCollector):
                             self.parse_float(entry.get("fundingRate")),
                         )
                         for entry in funding_entries
+                    ),
+                    key=lambda item: item[0],
+                )
+                ls_series = sorted(
+                    (
+                        (
+                            int(str(entry.get("timestamp", "0"))),
+                            self._parse_long_short_ratio_entry(entry),
+                        )
+                        for entry in ls_entries
                     ),
                     key=lambda item: item[0],
                 )
@@ -638,6 +730,7 @@ class BinanceCollector(BaseCollector):
                     oi_close = latest_series_value(oi_series, timestamp_ms, previous_oi_close)
                     oi_open = previous_oi_close if previous_oi_close > 0.0 else oi_close
                     funding_rate = latest_series_value(funding_series, int(item[6]), 0.0)
+                    long_short_ratio = latest_series_value(ls_series, timestamp_ms, 1.0)
 
                     bucket = TimeframeBucket(
                         symbol=symbol,
@@ -661,8 +754,8 @@ class BinanceCollector(BaseCollector):
                         futures_volume_delta=futures_quote_volume,
                         funding_rate_sum=funding_rate,
                         funding_rate_close=funding_rate,
-                        long_short_ratio_sum=1.0,
-                        long_short_ratio_close=1.0,
+                        long_short_ratio_sum=long_short_ratio,
+                        long_short_ratio_close=long_short_ratio,
                         taker_buy_sell_ratio_sum=taker_ratio,
                         taker_buy_sell_ratio_close=taker_ratio,
                         long_liquidations_close=0.0,

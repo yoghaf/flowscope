@@ -9,6 +9,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 UTC = timezone.utc
+from types import SimpleNamespace
 from typing import Any
 
 from backend.config import Settings, TIMEFRAME_PROFILES
@@ -24,6 +25,7 @@ from backend.engines.sharpness_filter import SharpnessAssessment, SharpnessFilte
 from backend.engines.phase_engine import PhaseAssessment, PhaseEngine
 from backend.engines.portfolio_manager import PortfolioManager
 from backend.engines.state_engine import StateAssessment, StateEngine
+from backend.engines.token_intent_classifier import TokenIntentClassifier
 from backend.schemas import (
     AlertEntry,
     AlertPreferences,
@@ -148,6 +150,7 @@ class SignalService:
         self.market_interpreter = MarketInterpreterEngine()
         self.context_bridge = ContextBridgeEngine()
         self.positioning_engine = PositioningEngine()
+        self.token_intent_classifier = TokenIntentClassifier()
         self.sharpness_filter = SharpnessFilter()
         self.phase_engine = PhaseEngine()
         self.performance_engine = PerformanceEngine(database)
@@ -2878,10 +2881,22 @@ class SignalService:
         volatility = self._volatility_regime(flow_metrics, timeframe)
         clarity_confidence = self._trade_confidence_from_asset_state(asset_state, state.confidence)
         entry_flow_alignment = self._entry_flow_alignment_from_asset_state(asset_state)
+        raw_market_interpretation = getattr(asset_state, "market_interpretation", None)
+        classifier_market_interpretation = (
+            SimpleNamespace(**raw_market_interpretation)
+            if isinstance(raw_market_interpretation, dict)
+            else raw_market_interpretation
+        )
         features = self._entry_features_from_context(
             flow_metrics=flow_metrics,
             action=action,
             asset_state=asset_state,
+            timeframe=timeframe,
+            bucket=bucket,
+            execution=execution,
+            market_interpretation=classifier_market_interpretation,
+            market_regime=regime,
+            volatility_regime=volatility,
         )
         execution_entry_type = getattr(execution, "entry_type", None)
         if execution_entry_type:
@@ -4770,7 +4785,7 @@ class SignalService:
             position_quality = "Pre-Squeeze-Ready" if oi_intensity == "High" else "Pre-Squeeze-Building"
             decision = "Squeeze-Immediate" if oi_intensity == "High" else "Watchlist-Squeeze"
         elif state_name == "Trap":
-            if price_change >= 0 or oi_delta_z_signed >= 0:
+            if price_change >= 0:
                 intent = "Long Build-up"
                 position_quality = "Trapped Longs"
                 decision = "Trap-Short"
@@ -4901,6 +4916,18 @@ class SignalService:
             execution.position_size_multiplier *= 0.5
         elif scenario_label == "mixed_signals":
             execution.position_size_multiplier *= 0.5
+        if self._v2_april_fix_enabled():
+            if scenario_label == "mixed_context":
+                execution.position_size_multiplier *= self.settings.v2_april_fix_mixed_context_size_multiplier
+            if self._v2_april_fix_late_crowded_chase(
+                action=action,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                market_interpretation=market_interpretation,
+            ):
+                execution.position_size_multiplier *= self.settings.v2_april_fix_crowded_size_multiplier
+            if self._volatility_regime(flow_metrics, timeframe) == "High":
+                execution.position_size_multiplier *= self.settings.v2_april_fix_high_vol_size_multiplier
 
         execution.position_size_multiplier *= min(1.0, max(0.0, flow_alignment + 0.15))
         if action.setup_type == "Continuation":
@@ -4929,6 +4956,111 @@ class SignalService:
         execution.position_size_multiplier *= self.portfolio_manager.get_global_size_multiplier()
         execution.position_size_multiplier = round(max(0.1, execution.position_size_multiplier), 4)
         return profile
+
+    def _v2_april_fix_enabled(self) -> bool:
+        return (
+            bool(getattr(self.settings, "v2_april_fix_enabled", False))
+            or getattr(self.settings, "strategy_version", "") == "v2_balanced_april_fix"
+        )
+
+    def _v2_april_fix_late_crowded_chase(
+        self,
+        *,
+        action: ActionAssessment,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        market_interpretation: MarketInterpretationAssessment | None,
+    ) -> bool:
+        if action.setup_type != "Continuation" or action.bias != "Bullish":
+            return False
+        ls_level = float(getattr(flow_metrics, f"long_short_ratio_level_{timeframe}", 0.0) or 0.0)
+        funding = float(getattr(flow_metrics, f"funding_level_{timeframe}", 0.0) or 0.0)
+        taker_level = float(getattr(flow_metrics, f"taker_buy_sell_ratio_level_{timeframe}", 0.0) or 0.0)
+        taker_delta = float(getattr(flow_metrics, f"taker_buy_sell_ratio_delta_{timeframe}", 0.0) or 0.0)
+        price_change = float(getattr(flow_metrics, f"price_change_{timeframe}", 0.0) or 0.0)
+        oi_percentile = float(getattr(flow_metrics, f"oi_percentile_{timeframe}", 0.0) or 0.0)
+        recent_high = float(getattr(flow_metrics, f"recent_high_{timeframe}", 0.0) or 0.0)
+        recent_low = float(getattr(flow_metrics, f"recent_low_{timeframe}", 0.0) or 0.0)
+        range_position = 0.0
+        if recent_high > recent_low > 0:
+            close_price = float(getattr(market_interpretation, "range_mid", 0.0) or 0.0)
+            if close_price <= 0:
+                close_price = recent_high
+            range_position = (close_price - recent_low) / max(recent_high - recent_low, VALUE_EPSILON)
+
+        crowded_positioning = (
+            ls_level >= math.log(max(self.settings.v2_april_fix_max_long_ls_level, 1.01))
+            or funding >= self.settings.v2_april_fix_max_long_funding
+        )
+        aggressive_chase = (
+            taker_level >= math.log(max(self.settings.v2_april_fix_max_taker_level, 1.01))
+            or taker_delta >= self.settings.v2_april_fix_max_taker_level - 1.0
+        )
+        late_location = range_position >= self.settings.v2_april_fix_max_long_range_position_4h
+        return bool(crowded_positioning and (aggressive_chase or late_location or oi_percentile >= 0.85) and price_change >= 0)
+
+    def _v2_april_fix_entry_reasons(
+        self,
+        *,
+        action: ActionAssessment,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        market_interpretation: MarketInterpretationAssessment | None,
+        scenario_label: str | None,
+        state_name: str | None,
+        execution: ExecutionPlan | None = None,
+    ) -> list[str]:
+        if not self._v2_april_fix_enabled():
+            return []
+        if action.setup_type != "Continuation":
+            return []
+
+        reasons: list[str] = []
+        is_bullish = action.bias == "Bullish"
+        if timeframe == "1h":
+            reasons.append("v2_april_fix_1h_continuation_disabled")
+
+        if scenario_label == "mixed_context":
+            taker_delta = float(getattr(flow_metrics, f"taker_buy_sell_ratio_delta_{timeframe}", 0.0) or 0.0)
+            direction = 1 if action.bias == "Bullish" else -1 if action.bias == "Bearish" else 0
+            if direction == 0 or direction * taker_delta <= 0:
+                reasons.append("v2_april_fix_mixed_context_without_taker_confirmation")
+
+        if self._v2_april_fix_late_crowded_chase(
+            action=action,
+            flow_metrics=flow_metrics,
+            timeframe=timeframe,
+            market_interpretation=market_interpretation,
+        ):
+            reasons.append("v2_april_fix_late_crowded_chase")
+
+        if is_bullish and timeframe == "4h":
+            taker_delta_15m = float(getattr(flow_metrics, "taker_buy_sell_ratio_delta_15m", 0.0) or 0.0)
+            volume_z_15m = float(getattr(flow_metrics, "volume_z_15m", 0.0) or 0.0)
+            market_pressure_1h = float(getattr(flow_metrics, "market_pressure_1h", 0.0) or 0.0)
+            price_change_15m = float(getattr(flow_metrics, "price_change_15m", 0.0) or 0.0)
+            oi_change_4h = float(getattr(flow_metrics, "oi_change_4h", 0.0) or 0.0)
+            price_change_4h = float(getattr(flow_metrics, "price_change_4h", 0.0) or 0.0)
+            if taker_delta_15m < self.settings.v2_april_fix_4h_min_taker_delta_15m:
+                reasons.append("v2_april_fix_4h_micro_taker_not_confirmed")
+            if volume_z_15m < self.settings.v2_april_fix_4h_min_volume_z_15m:
+                reasons.append("v2_april_fix_4h_micro_volume_fading")
+            if market_pressure_1h < self.settings.v2_april_fix_4h_min_market_pressure_1h:
+                reasons.append("v2_april_fix_4h_1h_pressure_contra")
+            if price_change_15m < self.settings.v2_april_fix_4h_min_price_change_15m:
+                reasons.append("v2_april_fix_4h_micro_price_not_accepted")
+            if oi_change_4h > 0.0005 and price_change_4h <= 0:
+                reasons.append("v2_april_fix_4h_oi_build_without_price_acceptance")
+
+        if is_bullish and execution is not None and execution.entry_type == "Continuation Pullback":
+            taker_delta = float(getattr(flow_metrics, f"taker_buy_sell_ratio_delta_{timeframe}", 0.0) or 0.0)
+            price_change = float(getattr(flow_metrics, f"price_change_{timeframe}", 0.0) or 0.0)
+            if price_change < self.settings.v2_april_fix_min_followthrough_15m:
+                reasons.append("v2_april_fix_pullback_reclaim_missing")
+            if taker_delta <= 0:
+                reasons.append("v2_april_fix_pullback_taker_not_reclaimed")
+
+        return reasons
 
     def _continuation_size_multiplier(
         self,
@@ -5962,6 +6094,16 @@ class SignalService:
                 state_name=state_name,
             )
         )
+        reasons.extend(
+            self._v2_april_fix_entry_reasons(
+                action=action,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                market_interpretation=market_interpretation,
+                scenario_label=scenario_label,
+                state_name=state_name,
+            )
+        )
         if clarity_confidence < 0.35:
             is_v3 = getattr(self.settings, "strategy_version", "") == "v3_adaptive"
             if not (is_v3 and action.bias == "Bearish"):  # Hanya turunkan untuk Short V3
@@ -5999,9 +6141,9 @@ class SignalService:
         if action.setup_type in {"Breakout", "Continuation"} and not is_trap_setup:
             ls_level_15m = getattr(flow_metrics, "long_short_ratio_level_15m", 0.0) or 0.0
             funding_lvl_15m = getattr(flow_metrics, "funding_level_15m", 0.0) or 0.0
-            if action.bias == "Bullish" and ls_level_15m > 2.0:
+            if action.bias == "Bullish" and ls_level_15m > math.log(2.0):
                 reasons.append("overcrowded_long_positioning")
-            elif action.bias == "Bearish" and ls_level_15m < 0.5:
+            elif action.bias == "Bearish" and ls_level_15m < math.log(0.5):
                 # V3 EMA No BTC: Disable overcrowded short filter for V3 variants
                 if not is_v3 and not is_v3_no_btc:
                     reasons.append("overcrowded_short_positioning")
@@ -6156,6 +6298,17 @@ class SignalService:
                 execution=execution,
             )
         )
+        reasons.extend(
+            self._v2_april_fix_entry_reasons(
+                action=action,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                market_interpretation=market_interpretation,
+                scenario_label=None,
+                state_name=state_name,
+                execution=execution,
+            )
+        )
         return reasons
 
     def _continuation_late_entry_reasons(
@@ -6264,8 +6417,9 @@ class SignalService:
             elif aligned_taker <= taker_threshold:
                 reasons.append("squeeze_taker_below_threshold")
 
-            # Interpret positive OI delta as breakout-aligned OI expansion in the trade direction.
-            if oi_change * direction <= 0:
+            # Squeezes can expand with fresh positions or unwind with OI closing;
+            # require OI to move, but do not force the sign to match trade direction.
+            if abs(oi_change) <= 0.0005:
                 reasons.append("squeeze_oi_not_confirmed")
 
             if wick_ratio > 0.4:
@@ -6431,12 +6585,19 @@ class SignalService:
         flow_metrics: FlowMetrics,
         action: ActionAssessment,
         asset_state: AssetState | Any,
+        timeframe: str | None = None,
+        bucket: TimeframeBucket | None = None,
+        execution: ExecutionPlan | None = None,
+        market_interpretation: MarketInterpretationAssessment | None = None,
+        market_regime: str | None = None,
+        volatility_regime: str | None = None,
     ) -> dict[str, Any]:
         features = flow_metrics.model_dump()
         features["insights"] = self._generate_trade_insights(flow_metrics, action.bias)
 
-        market_interpretation = getattr(asset_state, "market_interpretation", None)
-        if isinstance(market_interpretation, dict):
+        classifier_market_interpretation = market_interpretation
+        raw_market_interpretation = getattr(asset_state, "market_interpretation", None)
+        if isinstance(raw_market_interpretation, dict):
             interpretive_fields = (
                 "clarity_confidence",
                 "flow_alignment",
@@ -6452,7 +6613,7 @@ class SignalService:
                 "action",
             )
             for field in interpretive_fields:
-                value = market_interpretation.get(field)
+                value = raw_market_interpretation.get(field)
                 if isinstance(value, (int, float, bool, str)):
                     features[field] = value
 
@@ -6511,6 +6672,31 @@ class SignalService:
         features["decision_bias"] = action.bias
         features["decision_setup_gate"] = action.setup_type
         features["decision_status"] = action.status
+        if bucket is not None and timeframe is not None:
+            classifier = getattr(self, "token_intent_classifier", TokenIntentClassifier())
+            token_intent = classifier.evaluate(
+                bucket=bucket,
+                metrics=flow_metrics,
+                timeframe=timeframe,
+                action=action,
+                execution=execution,
+                market_interpretation=classifier_market_interpretation,
+                market_regime=market_regime,
+                volatility_regime=volatility_regime,
+            )
+            token_intent_data = token_intent.to_dict()
+            features["token_intent_state"] = token_intent_data["intent_state"]
+            features["token_intent_market_bias"] = token_intent_data["market_bias"]
+            features["token_intent_positioning_side"] = token_intent_data["positioning_side"]
+            features["token_intent_entry_permission"] = token_intent_data["entry_permission"]
+            features["token_intent_entry_quality"] = token_intent_data["entry_quality"]
+            features["token_intent_long_score"] = token_intent_data["long_score"]
+            features["token_intent_short_score"] = token_intent_data["short_score"]
+            features["token_intent_crowding_score"] = token_intent_data["crowding_score"]
+            features["token_intent_distribution_score"] = token_intent_data["distribution_score"]
+            features["token_intent_failed_pullback_score"] = token_intent_data["failed_pullback_score"]
+            features["token_intent_range_position"] = token_intent_data["range_position"]
+            features["token_intent_reasons"] = token_intent_data["reasons"]
         return features
 
     def _sync_pending_squeeze_htf(

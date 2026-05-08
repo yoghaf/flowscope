@@ -73,7 +73,7 @@ def make_metrics(**overrides: float) -> FlowMetrics:
         "funding_trend_15m": -0.00002,
         "funding_level_15m": 0.0,
         "long_short_ratio_delta_15m": 0.01,
-        "long_short_ratio_level_15m": 1.0,
+        "long_short_ratio_level_15m": 0.0,
         "taker_buy_sell_ratio_delta_15m": -0.005,
         "liq_pressure_15m": 0.0,
         "atr_15m": 0.003,
@@ -216,11 +216,11 @@ def test_breakdown_trigger_requires_enter_plus_valid_break() -> None:
         low_price=0.95,
         close_price=0.97,
         oi_open=1000.0,
-        oi_close=940.0,
+        oi_close=1060.0,
     )
     metrics = make_metrics(
         price_change_15m=-0.02,
-        oi_change_15m=-0.06,
+        oi_change_15m=0.06,
         oi_delta_z_15m=1.1,
         volume_z_15m=1.6,
         market_pressure_15m=-0.45,
@@ -263,6 +263,62 @@ def test_breakdown_trigger_requires_enter_plus_valid_break() -> None:
 
     assert execution is not None
     assert execution.breakout_valid is True
+
+
+def test_bearish_continuation_does_not_treat_oi_closing_as_fresh_breakout() -> None:
+    execution_engine = ExecutionEngine()
+    bucket = make_bucket(
+        10,
+        open_price=1.00,
+        high_price=1.00,
+        low_price=0.95,
+        close_price=0.97,
+        oi_open=1000.0,
+        oi_close=940.0,
+    )
+    metrics = make_metrics(
+        price_change_15m=-0.02,
+        oi_change_15m=-0.06,
+        oi_delta_z_15m=1.1,
+        volume_z_15m=1.6,
+        market_pressure_15m=-0.45,
+        recent_high_15m=1.02,
+        recent_low_15m=0.95,
+        range_mid_15m=0.985,
+    )
+    interpretation = manual_interpretation(
+        trend="Bearish",
+        control="Seller Dominant",
+        state="Trend continuation",
+        action="ENTER",
+        clarity_confidence=0.82,
+    )
+
+    action = execution_engine.build_action(
+        positioning=make_positioning(),
+        state=make_state(),
+        metrics=metrics,
+        timeframe="15m",
+        bucket=bucket,
+        profile=TIMEFRAME_PROFILES["15m"],
+        market_interpretation=interpretation,
+    )
+
+    assert action is not None
+    assert action.bias == "Bearish"
+    assert action.status == "Ready"
+
+    execution = execution_engine.build_execution(
+        action=action,
+        bucket=bucket,
+        metrics=metrics,
+        timeframe="15m",
+        profile=TIMEFRAME_PROFILES["15m"],
+        confidence=interpretation.clarity_confidence,
+    )
+
+    assert execution is not None
+    assert execution.breakout_valid is False
 
 
 def test_enter_action_stays_ready_when_breakout_level_has_not_been_touched() -> None:

@@ -217,18 +217,27 @@ class StateEngine:
         adaptive: AdaptiveThresholds,
         taker_available: bool,
     ) -> float:
-        oi_delta_z = direction * self._metric(metrics, "oi_delta_z", timeframe)
+        oi_change = self._metric(metrics, "oi_change", timeframe)
+        oi_building = oi_change > 0.0005
+        oi_closing = oi_change < -0.0005
+        oi_delta_z = abs(self._metric(metrics, "oi_delta_z", timeframe)) if oi_building else 0.0
         price_change = direction * self._metric(metrics, "price_change", timeframe)
         volume_z = self._metric(metrics, "volume_z", timeframe)
         liq_pressure = (-direction) * self._metric(metrics, "liq_pressure", timeframe)
+        price_score = self._ratio_score(price_change, max(adaptive.price_move, float(profile["price_flat"]) * 0.5))
         confirm_score = self._weighted_confirm_score(direction, metrics, timeframe, profile, taker_available)
-        return round(
-            (0.4 * self._ratio_score(oi_delta_z, max(adaptive.oi_abs, 0.3)))
-            + (0.3 * self._ratio_score(price_change, max(adaptive.price_move, float(profile["price_flat"]) * 0.5)))
+        directional_evidence = max(price_score, confirm_score)
+        oi_score = self._ratio_score(oi_delta_z, max(adaptive.oi_abs, 0.3))
+        activity_score = max(self._ratio_score(volume_z, max(adaptive.volume, 0.35)), self._ratio_score(liq_pressure, 0.2))
+        score = (
+            (0.4 * oi_score * directional_evidence)
+            + (0.3 * price_score)
             + (0.2 * confirm_score)
-            + (0.1 * max(self._ratio_score(volume_z, max(adaptive.volume, 0.35)), self._ratio_score(liq_pressure, 0.2))),
-            4,
+            + (0.1 * activity_score * directional_evidence)
         )
+        if oi_closing:
+            score *= 0.65
+        return round(score, 4)
 
     def _weighted_confirm_score(
         self,

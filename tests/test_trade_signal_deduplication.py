@@ -666,7 +666,7 @@ def test_squeeze_breakout_filters_reject_weak_taker_unconfirmed_oi_and_high_wick
         flow_metrics=FlowMetrics(
             oi_percentile_15m=0.60,
             taker_buy_sell_ratio_delta_15m=-0.05,
-            oi_change_15m=0.01,
+            oi_change_15m=0.0,
             wick_ratio_15m=0.45,
         ),
         timeframe="15m",

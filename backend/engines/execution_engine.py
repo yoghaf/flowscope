@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 from backend.config import get_settings
 from backend.engines.market_interpreter import MarketInterpretationAssessment
@@ -146,7 +147,10 @@ class ExecutionEngine:
                 bias = "Neutral"
 
         # --- ROUTE 3: BREAKOUT / CONTINUATION (Real Flow) ---
-        elif state_label == "Trend continuation" or positioning.decision.startswith("Continuation"):
+        elif state_label == "Trend continuation" or (
+            positioning.decision.startswith("Continuation")
+            and state_label not in {"Pause after selloff", "Pause after rally"}
+        ):
             setup_type = "Continuation"
             # Direction: FOLLOW the move
             if market_interpretation.control == "Buyer Dominant" or market_interpretation.trend == "Bullish":
@@ -159,12 +163,12 @@ class ExecutionEngine:
             # --- OVERCROWDED GUARD (Breakout-only) ---
             # Block Long entries when the crowd is already max-long
             if bias == "Bullish":
-                if ls_level > 2.0:
+                if ls_level > math.log(2.0):
                     bias = "Neutral"  # Overcrowded longs → don't enter
                 elif abs(funding_level) >= 0.0004 and funding_level > 0:
                     bias = "Neutral"  # Longs paying extreme funding → don't chase
             elif bias == "Bearish":
-                if ls_level < 0.5:
+                if ls_level < math.log(0.5):
                     bias = "Neutral"  # Overcrowded shorts → don't enter
                 elif abs(funding_level) >= 0.0004 and funding_level < 0:
                     bias = "Neutral"  # Shorts paying extreme funding → don't chase
@@ -172,14 +176,7 @@ class ExecutionEngine:
         # --- ROUTE 4: ACCUMULATION / PAUSE ---
         elif state_label in {"Pause after selloff", "Pause after rally"}:
             setup_type = "Accumulation"
-            if market_interpretation.control == "Buyer Dominant" or market_interpretation.trend == "Bullish":
-                bias = "Bullish"
-            elif market_interpretation.control == "Seller Dominant" or market_interpretation.trend == "Bearish":
-                bias = "Bearish"
-            elif "Pre-Breakdown" in state_label:
-                bias = "Bearish"
-            else:
-                bias = "Neutral"
+            bias = "Neutral"
 
         # --- ROUTE 5: BREAKOUT (from Expansion state) ---
         elif state.state == "Expansion":
@@ -215,7 +212,7 @@ class ExecutionEngine:
             abs(price_change) >= float(profile["price_break"])
             and volume_z >= 0.8
             and abs(oi_delta_z) >= 0.6
-            and oi_change * direction > 0
+            and oi_change > 0
         )
         trigger_distance_limit = max(float(profile["price_break"]), 0.02)
 
@@ -313,7 +310,7 @@ class ExecutionEngine:
                 abs(price_change) >= float(profile["price_break"])
                 and volume_z >= 0.8
                 and abs(oi_delta_z) >= 0.6
-                and oi_change * direction > 0
+                and oi_change > 0
             )
         breakout_entry = self._breakout_entry(direction, bucket, recent_high, recent_low)
         breakout_touched = self._entry_touched(direction, bucket, breakout_entry)

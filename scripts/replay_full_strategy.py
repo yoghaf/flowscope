@@ -12,6 +12,7 @@ from datetime import datetime, timezone, timedelta
 UTC = timezone.utc
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -98,10 +99,20 @@ class ReplayReadyPromotionConfig:
 @dataclass(slots=True)
 class ReplaySetupFilterConfig:
     setup_types: frozenset[str] = frozenset()
+    timeframes: frozenset[str] = frozenset()
+    biases: frozenset[str] = frozenset()
+    token_intent_states: frozenset[str] = frozenset()
+    token_entry_permissions: frozenset[str] = frozenset()
 
     @property
     def enabled(self) -> bool:
-        return bool(self.setup_types)
+        return bool(
+            self.setup_types
+            or self.timeframes
+            or self.biases
+            or self.token_intent_states
+            or self.token_entry_permissions
+        )
 
 
 def _normalize_regime_name(value: object) -> str | None:
@@ -209,8 +220,39 @@ def _install_replay_setup_filter(
 
     async def maybe_record_with_setup_filter(*args, **kwargs):
         action = kwargs.get("action")
-        if getattr(action, "setup_type", None) not in config.setup_types:
+        if config.setup_types and getattr(action, "setup_type", None) not in config.setup_types:
             return None
+        if config.timeframes and kwargs.get("timeframe") not in config.timeframes:
+            return None
+        if config.biases and getattr(action, "bias", None) not in config.biases:
+            return None
+        if config.token_intent_states or config.token_entry_permissions:
+            bucket = kwargs.get("bucket")
+            flow_metrics = kwargs.get("flow_metrics")
+            timeframe = kwargs.get("timeframe")
+            asset_state = kwargs.get("asset_state")
+            raw_market_interpretation = getattr(asset_state, "market_interpretation", None)
+            market_interpretation = (
+                SimpleNamespace(**raw_market_interpretation)
+                if isinstance(raw_market_interpretation, dict)
+                else raw_market_interpretation
+            )
+            if bucket is None or flow_metrics is None or not isinstance(timeframe, str):
+                return None
+            intent = service.token_intent_classifier.evaluate(
+                bucket=bucket,
+                metrics=flow_metrics,
+                timeframe=timeframe,
+                action=action,
+                execution=kwargs.get("execution"),
+                market_interpretation=market_interpretation,
+                market_regime=service._market_regime(flow_metrics, timeframe),
+                volatility_regime=service._volatility_regime(flow_metrics, timeframe),
+            )
+            if config.token_intent_states and intent.intent_state not in config.token_intent_states:
+                return None
+            if config.token_entry_permissions and intent.entry_permission not in config.token_entry_permissions:
+                return None
         return await original_maybe_record(*args, **kwargs)
 
     service._maybe_record_trade_signal = maybe_record_with_setup_filter

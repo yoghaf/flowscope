@@ -653,7 +653,7 @@ class MarketInterpreterEngine:
             abs(price_change) >= float(profile["price_break"])
             and volume_z >= 0.8
             and abs(oi_delta_z) >= 0.6
-            and (oi_change * direction) > 0
+            and oi_change > 0
         )
 
     def evaluate(

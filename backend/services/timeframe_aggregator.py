@@ -152,6 +152,8 @@ class TimeframeBucket:
         futures_volume_close = (
             point.futures_volume if point.futures_volume > 0 else futures_volume_open
         )
+        spot_volume_delta = cls._volume_increment(spot_volume_open, spot_volume_close)
+        futures_volume_delta = cls._volume_increment(futures_volume_open, futures_volume_close)
         long_liquidations_close = max(point.long_liquidations, 0.0)
         short_liquidations_close = max(point.short_liquidations, 0.0)
         long_liquidations_baseline = (
@@ -176,10 +178,10 @@ class TimeframeBucket:
             open_interest_close=open_interest_close,
             spot_volume_open=spot_volume_open,
             spot_volume_close=spot_volume_close,
-            spot_volume_delta=max(spot_volume_close - spot_volume_open, 0.0),
+            spot_volume_delta=spot_volume_delta if previous_bucket is not None else 0.0,
             futures_volume_open=futures_volume_open,
             futures_volume_close=futures_volume_close,
-            futures_volume_delta=max(futures_volume_close - futures_volume_open, 0.0),
+            futures_volume_delta=futures_volume_delta if previous_bucket is not None else 0.0,
             funding_rate_sum=point.funding_rate,
             funding_rate_close=point.funding_rate,
             long_short_ratio_sum=point.long_short_ratio,
@@ -232,8 +234,8 @@ class TimeframeBucket:
         self.open_interest_low = min(self.open_interest_low, point.open_interest)
         self.open_interest_close = point.open_interest
 
-        self.spot_volume_delta += max(point.spot_volume - self.spot_volume_close, 0.0)
-        self.futures_volume_delta += max(point.futures_volume - self.futures_volume_close, 0.0)
+        self.spot_volume_delta += self._volume_increment(self.spot_volume_close, point.spot_volume)
+        self.futures_volume_delta += self._volume_increment(self.futures_volume_close, point.futures_volume)
         self.spot_volume_close = point.spot_volume
         self.futures_volume_close = point.futures_volume
 
@@ -249,6 +251,16 @@ class TimeframeBucket:
         self.short_liquidations_close = max(point.short_liquidations, 0.0)
         self.exchange_count_sum += max(point.exchange_count, 0)
         self.sample_count += 1
+
+    @staticmethod
+    def _volume_increment(previous_value: float, current_value: float) -> float:
+        if current_value <= 0.0:
+            return 0.0
+        if previous_value <= 0.0:
+            return current_value
+        if current_value >= previous_value:
+            return current_value - previous_value
+        return current_value
 
     def apply_signal(
         self,

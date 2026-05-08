@@ -235,6 +235,14 @@ class TradeEvaluator:
                     and self._post_tp1_bucket_stop_is_active(bucket=bucket, tp1_hit_at=tp1_hit_at, tp1_just_hit=tp1_just_hit)
                 )
                 active_stop_price = trailing_stop_price if tp1_stop_active_for_bucket else trade.invalidation_price
+                active_stop_price = self._v2_april_fix_mfe_protected_stop(
+                    trade=trade,
+                    direction=direction,
+                    active_stop_price=active_stop_price,
+                    max_profit_pct=max_profit_pct,
+                    risk_pct=risk_pct,
+                    strategy_version=strategy_version,
+                )
                 
                 hit_stop = False
                 if active_stop_price is not None:
@@ -411,6 +419,14 @@ class TradeEvaluator:
                             and not tp1_hit_this_evaluation
                         )
                         else trade.invalidation_price
+                    )
+                    rt_active_stop = self._v2_april_fix_mfe_protected_stop(
+                        trade=trade,
+                        direction=direction,
+                        active_stop_price=rt_active_stop,
+                        max_profit_pct=max_profit_pct,
+                        risk_pct=risk_pct,
+                        strategy_version=strategy_version,
                     )
                     rt_hit_stop = False
                     if rt_active_stop is not None:
@@ -612,6 +628,42 @@ class TradeEvaluator:
             if timestamp is not None:
                 return timestamp
         return None
+
+    def _v2_april_fix_mfe_protected_stop(
+        self,
+        *,
+        trade: object,
+        direction: int,
+        active_stop_price: float | None,
+        max_profit_pct: float,
+        risk_pct: float | None,
+        strategy_version: str,
+    ) -> float | None:
+        enabled = (
+            strategy_version == "v2_balanced_april_fix"
+            or bool(getattr(self.settings, "v2_april_fix_enabled", False))
+        )
+        if not enabled or active_stop_price is None or risk_pct is None or risk_pct <= BREAKEVEN_EPSILON:
+            return active_stop_price
+        entry_price = getattr(trade, "entry_price", None)
+        if entry_price is None or entry_price <= BREAKEVEN_EPSILON:
+            return active_stop_price
+
+        mfe_r = max_profit_pct / risk_pct
+        floor_r: float | None = None
+        if mfe_r >= self.settings.v2_april_fix_mfe_tight_trail_r:
+            floor_r = self.settings.v2_april_fix_mfe_tight_trail_floor_r
+        elif mfe_r >= self.settings.v2_april_fix_mfe_breakeven_r:
+            floor_r = 0.0
+        elif mfe_r >= self.settings.v2_april_fix_mfe_lock_r:
+            floor_r = self.settings.v2_april_fix_mfe_lock_floor_r
+        if floor_r is None:
+            return active_stop_price
+
+        protected_stop = entry_price + (direction * (risk_pct / 100.0) * entry_price * floor_r)
+        if direction > 0:
+            return max(active_stop_price, protected_stop)
+        return min(active_stop_price, protected_stop)
 
     @staticmethod
     def _post_tp1_bucket_stop_is_active(*, bucket: object, tp1_hit_at: datetime | None, tp1_just_hit: bool) -> bool:
