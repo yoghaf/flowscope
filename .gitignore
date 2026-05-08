@@ -29,3 +29,10 @@ replay-performance-report.csv
 replay-performance-summary.json
 replay_results*.csv
 trade_autopsies/
+
+# Local replay/lab artifacts
+export/
+scratch/
+nul
+*.dump
+*.dump.sha256
