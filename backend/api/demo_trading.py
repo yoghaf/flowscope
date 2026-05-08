@@ -205,6 +205,8 @@ def _demo_auto_execute_skip_reason(
         return "demo_session_not_running"
     if getattr(trade, "result", None) != "open":
         return "trade_signal_not_open"
+    if getattr(trade, "closed_at", None) is not None or getattr(trade, "close_reason", None):
+        return "trade_signal_already_closed"
     if getattr(trade, "status", None) != "Triggered":
         return "signal_not_triggered"
 
@@ -355,6 +357,7 @@ async def _catch_up_demo_auto_execute(
             max_pullback_tp1_progress_pct=settings.max_pullback_tp1_progress_pct,
             entry_mode=settings.entry_mode,
             tp1_close_pct=settings.tp1_close_pct,
+            source_signal_id=getattr(trade, "id", None),
         )
         item["result"] = result
         if result.get("success"):

@@ -213,6 +213,7 @@ class DemoExecutionEngine:
         max_pullback_tp1_progress_pct: float | None = DEFAULT_MAX_PULLBACK_TP1_PROGRESS_PCT,
         entry_mode: str = ENTRY_MODE_MARKET_PULLBACK_LIMIT,
         tp1_close_pct: float = 50.0,
+        source_signal_id: int | None = None,
     ) -> dict[str, Any]:
         """
         Execute a trading signal on Binance Testnet.
@@ -236,6 +237,7 @@ class DemoExecutionEngine:
             position_size_multiplier: V3 dynamic position sizing multiplier
             risk_usdt: Fixed USDT risk amount. If provided with stop_loss,
                 quantity is sized so SL loss approximates this value.
+                Signal multipliers are metadata only in fixed-risk mode.
             max_slippage_pct: Deprecated absolute price guard, used only when
                 SL-based drift cannot be calculated.
             max_entry_drift_pct: Reject market entry when adverse movement from
@@ -390,7 +392,7 @@ class DemoExecutionEngine:
                 risk_per_unit = abs(order_price_basis - sl_level)
                 if risk_per_unit <= VALUE_EPSILON:
                     return {"success": False, "error": "Invalid risk distance: entry and SL are too close"}
-                risk_amount = risk_usdt * position_size_multiplier
+                risk_amount = risk_usdt
                 quantity = risk_amount / risk_per_unit
             else:
                 base_risk_pct = 0.01  # 1% risk per trade
@@ -460,6 +462,8 @@ class DemoExecutionEngine:
                     "confidence": confidence,
                     "position_size_multiplier": position_size_multiplier,
                     "risk_usdt": risk_usdt,
+                    "effective_risk_usdt": risk_amount,
+                    "source_signal_id": source_signal_id,
                     "max_entry_drift_pct": max_entry_drift_pct,
                     "max_market_tp1_progress_pct": max_market_tp1_progress_pct,
                     "max_pullback_tp1_progress_pct": max_pullback_tp1_progress_pct,
@@ -482,6 +486,8 @@ class DemoExecutionEngine:
                     "take_profit_1": tp1_level,
                     "take_profit_2": tp2_level,
                     "risk_usdt": risk_usdt,
+                    "effective_risk_usdt": risk_amount,
+                    "source_signal_id": source_signal_id,
                     "entry_decision": entry_decision,
                     "message": (
                         f"Market entry skipped for {clean_symbol}; pullback limit placed at "
@@ -505,6 +511,7 @@ class DemoExecutionEngine:
                 take_profit_1=tp1_level,
                 take_profit_2=tp2_level,
                 tp1_close_pct=tp1_close_pct,
+                source_signal_id=source_signal_id,
             )
 
             # Log trade to database
@@ -528,6 +535,8 @@ class DemoExecutionEngine:
                     "planned_entry_price": entry_price,
                     "actual_entry_price": actual_entry_price,
                     "risk_usdt": risk_usdt,
+                    "effective_risk_usdt": risk_amount,
+                    "source_signal_id": source_signal_id,
                     "max_slippage_pct": max_slippage_pct,
                     "max_entry_drift_pct": max_entry_drift_pct,
                     "max_market_tp1_progress_pct": max_market_tp1_progress_pct,
@@ -542,6 +551,31 @@ class DemoExecutionEngine:
             }
 
             await self._save_trade(trade_record)
+
+            if sl_level is not None and not protective.get("protected", False):
+                close_result = await self.close_position(
+                    clean_symbol,
+                    reason="Protective SL Failed",
+                )
+                return {
+                    "success": False,
+                    "error": f"Protective SL failed for {clean_symbol}; position closed",
+                    "order_id": order_result.get("order_id"),
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "entry_price": actual_entry_price,
+                    "stop_loss": sl_level,
+                    "take_profit": tp_level,
+                    "take_profit_1": tp1_level,
+                    "take_profit_2": tp2_level,
+                    "protected": False,
+                    "protective": protective,
+                    "close_result": close_result,
+                    "effective_risk_usdt": risk_amount,
+                    "entry_decision": entry_decision,
+                    "timestamp": trade_record["timestamp"],
+                }
 
             logger.info(
                 f"Executed {signal_type} {bias} signal on {symbol}: "
@@ -560,6 +594,7 @@ class DemoExecutionEngine:
                 "take_profit_1": tp1_level,
                 "take_profit_2": tp2_level,
                 "risk_usdt": risk_usdt,
+                "effective_risk_usdt": risk_amount,
                 "protected": protective.get("protected", False),
                 "protective": protective,
                 "entry_decision": entry_decision,
@@ -569,6 +604,44 @@ class DemoExecutionEngine:
         except Exception as e:
             logger.error(f"Error executing signal: {e}")
             return {"success": False, "error": str(e)}
+
+    async def close_managed_signal(
+        self,
+        symbol: str,
+        *,
+        reason: str,
+        source_signal_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Close or cancel a demo entry that belongs to a FlowScope signal."""
+        clean_symbol = self._normalize_symbol(symbol) or symbol.upper()
+        result: dict[str, Any] = {
+            "success": False,
+            "symbol": clean_symbol,
+            "managed": False,
+            "pending_cancelled": False,
+        }
+
+        pending = self._pending_entries.get(clean_symbol)
+        if pending is not None and self._source_signal_matches(pending, source_signal_id):
+            await self._cancel_pending_entry(symbol=clean_symbol, meta=pending, reason=reason)
+            result["pending_cancelled"] = True
+
+        meta = self._managed_positions.get(clean_symbol)
+        if meta is None:
+            result["success"] = bool(result["pending_cancelled"])
+            result["skipped"] = True
+            result["reason"] = "managed_position_missing"
+            return result
+        if not self._source_signal_matches(meta, source_signal_id):
+            result["skipped"] = True
+            result["reason"] = "source_signal_mismatch"
+            return result
+
+        result["managed"] = True
+        close_result = await self.close_position(clean_symbol, reason=reason)
+        result["close_result"] = close_result
+        result["success"] = bool(close_result.get("success"))
+        return result
 
     async def close_position(
         self,
@@ -604,6 +677,7 @@ class DemoExecutionEngine:
                 side=side,
                 quantity=position["size"],
                 order_type="MARKET",
+                reduce_only=True,
             )
 
             if close_result.get("error"):
@@ -762,6 +836,10 @@ class DemoExecutionEngine:
                 market_reasons.append(
                     f"entry drift {drift_pct:.2f}% of SL risk > max {max_entry_drift_pct:.2f}%"
                 )
+                if metrics["adverse_move"] > VALUE_EPSILON:
+                    pullback_reasons.append(
+                        f"price drifted toward SL by {drift_pct:.2f}% of risk before entry"
+                    )
         elif max_slippage_pct is not None and max_slippage_pct >= 0:
             legacy_slippage_pct = metrics["entry_drift_pct_of_price"]
             if legacy_slippage_pct > max_slippage_pct:
@@ -813,7 +891,9 @@ class DemoExecutionEngine:
         take_profit_1: float | None,
     ) -> dict[str, Any]:
         direction = 1 if bias == "Bullish" else -1
-        adverse_move = max((current_price - entry_price) * direction, 0.0)
+        signed_move = (current_price - entry_price) * direction
+        favorable_move = max(signed_move, 0.0)
+        adverse_move = max(-signed_move, 0.0)
         risk_distance = (
             abs(entry_price - stop_loss)
             if stop_loss is not None and stop_loss > 0
@@ -830,12 +910,12 @@ class DemoExecutionEngine:
         )
 
         entry_drift_pct_of_risk = (
-            adverse_move / risk_distance * 100
+            abs(current_price - entry_price) / risk_distance * 100
             if risk_distance is not None and risk_distance > VALUE_EPSILON
             else None
         )
         tp1_progress_pct = (
-            adverse_move / tp1_distance * 100
+            favorable_move / tp1_distance * 100
             if tp1_direction_valid and tp1_distance is not None and tp1_distance > VALUE_EPSILON
             else None
         )
@@ -854,6 +934,8 @@ class DemoExecutionEngine:
             "entry_price": entry_price,
             "stop_loss": stop_loss,
             "take_profit_1": take_profit_1,
+            "signed_move": signed_move,
+            "favorable_move": favorable_move,
             "adverse_move": adverse_move,
             "risk_distance": risk_distance,
             "tp1_distance": tp1_distance,
@@ -1032,6 +1114,7 @@ class DemoExecutionEngine:
         take_profit_1: float | None,
         take_profit_2: float | None,
         tp1_close_pct: float,
+        source_signal_id: int | None = None,
     ) -> dict[str, Any]:
         """Place reduce-only SL/TP orders after market entry.
 
@@ -1147,6 +1230,7 @@ class DemoExecutionEngine:
             "symbol": clean_symbol,
             "close_side": close_side,
             "entry_price": entry_price,
+            "stop_loss": stop_loss,
             "initial_qty": quantity,
             "tp1_qty": tp1_qty if split_targets else 0.0,
             "remaining_qty": tp2_qty if split_targets else quantity,
@@ -1157,6 +1241,7 @@ class DemoExecutionEngine:
             "tp2_price": take_profit_2,
             "tp1_hit": False,
             "be_stop_order_id": None,
+            "source_signal_id": source_signal_id,
             "created_at": datetime.now(UTC).isoformat(),
         }
         return result
@@ -1183,12 +1268,22 @@ class DemoExecutionEngine:
             if position is None:
                 self._managed_positions.pop(symbol, None)
                 continue
-            if meta.get("tp1_hit"):
-                continue
 
             tp1_qty = self._to_float(meta.get("tp1_qty"))
             initial_qty = self._to_float(meta.get("initial_qty"))
             current_qty = self._to_float(position.get("size"))
+            if current_qty <= VALUE_EPSILON:
+                self._managed_positions.pop(symbol, None)
+                continue
+
+            sl_closed = await self._fallback_sl_check(
+                symbol=symbol,
+                meta=meta,
+                current_qty=current_qty,
+            )
+            if sl_closed or meta.get("tp1_hit"):
+                continue
+
             if tp1_qty <= VALUE_EPSILON or initial_qty <= VALUE_EPSILON:
                 continue
 
@@ -1249,10 +1344,51 @@ class DemoExecutionEngine:
             meta["be_stop_order_id"] = be_order.get("order_id")
             meta["sl_order_id"] = be_order.get("order_id")
             meta["remaining_qty"] = remaining_qty
+            meta["stop_loss"] = entry_price
             meta["moved_to_be_at"] = datetime.now(UTC).isoformat()
             logger.info("[DEMO PROTECTION] %s TP1 observed, SL moved to BE at %.8f", symbol, entry_price)
         else:
             logger.error("[DEMO PROTECTION] Failed to move %s SL to BE: %s", symbol, be_order.get("error"))
+
+    async def _fallback_sl_check(
+        self,
+        *,
+        symbol: str,
+        meta: dict[str, Any],
+        current_qty: float,
+    ) -> bool:
+        """Market-close a managed position if its SL is crossed but protection missed."""
+        stop_loss = self._to_float(meta.get("stop_loss"), default=0.0)
+        close_side = str(meta.get("close_side") or "")
+        if stop_loss <= VALUE_EPSILON or current_qty <= VALUE_EPSILON:
+            return False
+        if close_side not in {"BUY", "SELL"}:
+            return False
+
+        current_price = await self.client.get_current_price(symbol)
+        if current_price is None or current_price <= 0:
+            return False
+
+        sl_touched = (
+            (close_side == "SELL" and current_price <= stop_loss)
+            or (close_side == "BUY" and current_price >= stop_loss)
+        )
+        if not sl_touched:
+            return False
+
+        logger.warning(
+            "[DEMO PROTECTION] %s FALLBACK SL: price %.8f crossed stop %.8f "
+            "while position qty %.8f is still open; closing at market",
+            symbol,
+            current_price,
+            stop_loss,
+            current_qty,
+        )
+        close_result = await self.close_position(symbol, reason="Fallback SL Hit")
+        if close_result.get("success"):
+            return True
+        logger.error("[DEMO PROTECTION] %s FALLBACK SL close FAILED: %s", symbol, close_result.get("error"))
+        return False
 
     async def _fallback_tp_check(
         self,
@@ -1589,6 +1725,18 @@ class DemoExecutionEngine:
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def _source_signal_matches(meta: dict[str, Any], source_signal_id: int | None) -> bool:
+        if source_signal_id is None:
+            return True
+        meta_signal_id = meta.get("source_signal_id")
+        if meta_signal_id in (None, ""):
+            return True
+        try:
+            return int(meta_signal_id) == int(source_signal_id)
+        except (TypeError, ValueError):
+            return False
 
     @staticmethod
     def _normalize_symbol(symbol: Any) -> str | None:

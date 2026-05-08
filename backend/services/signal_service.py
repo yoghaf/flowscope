@@ -3045,6 +3045,7 @@ class SignalService:
                 state=asset_state,
             )
             await self._maybe_execute_demo_trade(
+                trade_signal_id=trade_id,
                 symbol=symbol,
                 timeframe=timeframe,
                 market_regime=regime,
@@ -3067,6 +3068,7 @@ class SignalService:
     async def _maybe_execute_demo_trade(
         self,
         *,
+        trade_signal_id: int | None = None,
         symbol: str,
         timeframe: str,
         market_regime: str,
@@ -3150,6 +3152,7 @@ class SignalService:
                 max_pullback_tp1_progress_pct=demo_settings.max_pullback_tp1_progress_pct,
                 entry_mode=demo_settings.entry_mode,
                 tp1_close_pct=demo_settings.tp1_close_pct,
+                source_signal_id=trade_signal_id,
             )
             if result.get("success"):
                 logger.info("Demo auto-execute opened %s result=%s", symbol, result)

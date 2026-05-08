@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 UTC = timezone.utc
 from types import SimpleNamespace
 
+import backend.api.demo_trading as demo_api
 from backend.config import Settings
 from backend.services.timeframe_aggregator import TimeframeBucket
 from backend.services.trade_evaluator import TradeEvaluator
@@ -75,9 +76,20 @@ class FakeSignalService:
         return self._price
 
 
+class FakeManagedDemoEngine:
+    def __init__(self) -> None:
+        self.running = True
+        self.close_calls: list[dict[str, object]] = []
+
+    async def close_managed_signal(self, symbol: str, **kwargs: object) -> dict[str, object]:
+        self.close_calls.append({"symbol": symbol, **kwargs})
+        return {"success": True}
+
+
 def make_bucket(
     now: datetime,
     *,
+    symbol: str = "ARIAUSDT",
     timeframe: str = "15m",
     open_price: float = 0.34,
     high_price: float = 0.34576,
@@ -93,7 +105,7 @@ def make_bucket(
     delta = delta_map.get(timeframe, timedelta(minutes=15))
     bucket_start = now - delta
     return TimeframeBucket(
-        symbol="ARIAUSDT",
+        symbol=symbol,
         timeframe=timeframe,
         bucket_start=bucket_start,
         bucket_end=now,
@@ -223,6 +235,63 @@ def test_trade_evaluator_closes_trade_when_historical_bucket_hits_invalidation()
         assert payload["result"] == "loss"
         assert payload["close_reason"] == "Invalidation"
         assert payload["closed_at"] == stop_hit_bucket_time
+
+    asyncio.run(run())
+
+
+def test_trade_evaluator_syncs_demo_managed_position_on_invalidation() -> None:
+    async def run() -> None:
+        original_engine = demo_api._demo_engine
+        fake_engine = FakeManagedDemoEngine()
+        demo_api._demo_engine = fake_engine
+        stop_hit_bucket_time = datetime(2026, 3, 30, 9, 15, 0, tzinfo=UTC)
+        trade = SimpleNamespace(
+            id=22,
+            symbol="DOGSUSDT",
+            timeframe="15m",
+            bias="Bullish",
+            status="Triggered",
+            result="open",
+            timestamp=datetime(2026, 3, 30, 8, 45, 0, tzinfo=UTC),
+            created_at=datetime(2026, 3, 30, 8, 45, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 3, 30, 9, 0, 0, tzinfo=UTC),
+            entry_price=0.000008590,
+            invalidation_price=0.000008316,
+            target_price_1=0.000008861,
+            target_price_2=0.000009138,
+            tp1_hit=False,
+            trailing_stop_price=0.000008316,
+            pnl_pct=0.0,
+            max_profit_pct=0.0,
+            max_drawdown_pct=0.0,
+            entry_touched_at=datetime(2026, 3, 30, 8, 45, 0, tzinfo=UTC),
+            closed_at=None,
+            close_reason=None,
+            entry_notification_sent_at=None,
+        )
+        buckets = [
+            make_bucket(
+                stop_hit_bucket_time,
+                symbol="DOGSUSDT",
+                open_price=0.000008590,
+                high_price=0.000008620,
+                low_price=0.000008300,
+                close_price=0.000008310,
+            ),
+        ]
+        database = FakeDatabase(trade, buckets=buckets)
+        signal_service = FakeSignalService(buckets, price=0.000008310, symbol="DOGSUSDT")
+        evaluator = TradeEvaluator(Settings(), database, signal_service)
+
+        try:
+            await evaluator.evaluate()
+        finally:
+            demo_api._demo_engine = original_engine
+
+        assert len(fake_engine.close_calls) == 1
+        assert fake_engine.close_calls[0]["symbol"] == "DOGSUSDT"
+        assert fake_engine.close_calls[0]["reason"] == "Signal Invalidation"
+        assert fake_engine.close_calls[0]["source_signal_id"] == 22
 
     asyncio.run(run())
 

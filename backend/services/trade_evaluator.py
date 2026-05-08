@@ -490,6 +490,11 @@ class TradeEvaluator:
                 setattr(trade, key, value)
             if result in {"win", "loss", "breakeven"} and hasattr(self.signal_service, "record_continuation_feedback_trade"):
                 self.signal_service.record_continuation_feedback_trade(trade)
+            if result in {"win", "loss", "breakeven"}:
+                await self._sync_demo_managed_close(
+                    trade=trade,
+                    close_reason=close_reason or result,
+                )
 
             updated_result = result
             updated_entry_touched_at = entry_touched_at
@@ -508,6 +513,45 @@ class TradeEvaluator:
             logger.exception("Trade evaluator failed for trade_id=%s symbol=%s", getattr(trade, "id", "?"), getattr(trade, "symbol", "?"))
 
         logger.info("Trade evaluator scanned open_trades=%d catchup_queued=%d", len(open_trades), catchup_queued)
+
+    async def _sync_demo_managed_close(self, *, trade: object, close_reason: str) -> None:
+        """Mirror FlowScope signal closes into demo positions opened by auto-execute."""
+        try:
+            from backend.api.demo_trading import get_demo_engine
+
+            engine = get_demo_engine()
+            if engine is None or not getattr(engine, "running", False):
+                return
+            close_managed_signal = getattr(engine, "close_managed_signal", None)
+            if close_managed_signal is None:
+                return
+            result = await close_managed_signal(
+                getattr(trade, "symbol", ""),
+                reason=f"Signal {close_reason}",
+                source_signal_id=getattr(trade, "id", None),
+            )
+            if result.get("success"):
+                logger.warning(
+                    "Demo managed position synced closed trade_id=%s symbol=%s reason=%s result=%s",
+                    getattr(trade, "id", None),
+                    getattr(trade, "symbol", None),
+                    close_reason,
+                    result,
+                )
+            elif not result.get("skipped"):
+                logger.warning(
+                    "Demo managed position close failed trade_id=%s symbol=%s reason=%s result=%s",
+                    getattr(trade, "id", None),
+                    getattr(trade, "symbol", None),
+                    close_reason,
+                    result,
+                )
+        except Exception:
+            logger.exception(
+                "Failed to sync demo managed close for trade_id=%s symbol=%s",
+                getattr(trade, "id", "?"),
+                getattr(trade, "symbol", "?"),
+            )
 
     def _current_flow_alignment(self, *, symbol: str, timeframe: str) -> float | None:
         timeframe = self._normalize_timeframe(timeframe)
