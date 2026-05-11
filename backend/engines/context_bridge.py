@@ -156,6 +156,12 @@ class ContextBridgeEngine:
         liq_pressure_1h = self._metric(flow_metrics, "liq_pressure", "1h")
         compression_tf = self._metric(flow_metrics, "compression_score", timeframe)
 
+        # Patch 3: Foundation Version Protection
+        is_volume_untrusted = getattr(flow_metrics, f"foundation_version_{timeframe}", "v1_reconstructed") != "v2_option_a"
+        if is_volume_untrusted:
+            volume_z_15m = 0.0
+            volume_change_4h = 0.0
+
         aligned_pressure_tf = direction * market_pressure_tf
         aligned_pressure_1h = direction * market_pressure_1h
         aligned_taker_4h = direction * taker_delta_4h
@@ -230,6 +236,8 @@ class ContextBridgeEngine:
                 reasons.append("directional_liquidation_spike")
             if abs(oi_delta_z_15m) <= 0.20 and abs(price_change_tf) >= 0.03:
                 reasons.append("price_without_fresh_oi")
+            if is_volume_untrusted:
+                reasons.append("foundation_version_untrusted")
             return ContextScenarioAssessment(
                 label="climax_event",
                 score=round(self._clamp(max(extension_score, 0.55 + 0.1 * climax_signals)), 4),
@@ -246,6 +254,8 @@ class ContextBridgeEngine:
                 reasons.append("4h_volume_surge")
             if abs(volume_z_15m) >= 1.8:
                 reasons.append("15m_volume_stretched")
+            if is_volume_untrusted:
+                reasons.append("foundation_version_untrusted")
             return ContextScenarioAssessment(
                 label="late_expansion",
                 score=round(extension_score, 4),
@@ -266,6 +276,8 @@ class ContextBridgeEngine:
                 reasons.append("low_oi_percentile_1h")
             if oi_percentile_4h < 0.45:
                 reasons.append("low_oi_percentile_4h")
+            if is_volume_untrusted:
+                reasons.append("foundation_version_untrusted")
             return ContextScenarioAssessment(
                 label="weak_propulsion",
                 score=round(self._clamp(0.35 + 0.1 * weak_build_signals), 4),
@@ -289,6 +301,8 @@ class ContextBridgeEngine:
                 reasons.append("supportive_4h_taker")
             if phase.phase in {"Silent Accumulation", "Early Accumulation", "Pump"}:
                 reasons.append(f"phase_{phase.phase.lower().replace(' ', '_')}")
+            if is_volume_untrusted:
+                reasons.append("foundation_version_untrusted")
             return ContextScenarioAssessment(
                 label="efficient_build",
                 score=round(self._clamp((structural_support + aligned_pressure_tf + aligned_pressure_1h) / 3.0), 4),
@@ -302,5 +316,5 @@ class ContextBridgeEngine:
             score=round(self._clamp((structural_support + max(aligned_pressure_tf, 0.0)) / 2.0), 4),
             disposition="observe",
             rationale="Context is not broken, but it also does not strongly identify an early or late phase yet.",
-            reasons=["mixed_signals"],
+            reasons=["mixed_signals"] + (["foundation_version_untrusted"] if is_volume_untrusted else []),
         )

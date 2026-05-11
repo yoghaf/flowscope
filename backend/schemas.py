@@ -81,10 +81,25 @@ class FlowMetrics(BaseModel):
     history_length_4h: int = 0
     history_length_24h: int = 0
     compression_score: float = 0.0
-    price_change_15m: float = 0.0
+    price_change_15m: float = 0.0 # Deprecated: Alias for body_change
     price_change_1h: float = 0.0
     price_change_4h: float = 0.0
     price_change_24h: float = 0.0
+    
+    body_change_15m: float = 0.0
+    body_change_1h: float = 0.0
+    body_change_4h: float = 0.0
+    body_change_24h: float = 0.0
+    
+    close_to_close_change_15m: float = 0.0
+    close_to_close_change_1h: float = 0.0
+    close_to_close_change_4h: float = 0.0
+    close_to_close_change_24h: float = 0.0
+    
+    rolling_change_15m: float = 0.0
+    rolling_change_1h: float = 0.0
+    rolling_change_4h: float = 0.0
+    rolling_change_24h: float = 0.0
     oi_change_15m: float = 0.0
     oi_change_1h: float = 0.0
     oi_change_4h: float = 0.0
@@ -169,6 +184,31 @@ class FlowMetrics(BaseModel):
     market_pressure_1h: float = 0.0
     market_pressure_4h: float = 0.0
     market_pressure_24h: float = 0.0
+    
+    market_pressure_status_15m: str = "VALID"
+    market_pressure_status_1h: str = "VALID"
+    market_pressure_status_4h: str = "VALID"
+    market_pressure_status_24h: str = "VALID"
+    
+    market_pressure_component_count_15m: int = 0
+    market_pressure_component_count_1h: int = 0
+    market_pressure_component_count_4h: int = 0
+    market_pressure_component_count_24h: int = 0
+    
+    market_pressure_missing_components_15m: list[str] = Field(default_factory=list)
+    market_pressure_missing_components_1h: list[str] = Field(default_factory=list)
+    market_pressure_missing_components_4h: list[str] = Field(default_factory=list)
+    market_pressure_missing_components_24h: list[str] = Field(default_factory=list)
+    
+    market_pressure_stale_components_15m: list[str] = Field(default_factory=list)
+    market_pressure_stale_components_1h: list[str] = Field(default_factory=list)
+    market_pressure_stale_components_4h: list[str] = Field(default_factory=list)
+    market_pressure_stale_components_24h: list[str] = Field(default_factory=list)
+    
+    market_pressure_valid_15m: bool = True
+    market_pressure_valid_1h: bool = True
+    market_pressure_valid_4h: bool = True
+    market_pressure_valid_24h: bool = True
     recent_high_15m: float = 0.0
     recent_high_1h: float = 0.0
     recent_high_4h: float = 0.0
@@ -181,6 +221,374 @@ class FlowMetrics(BaseModel):
     range_mid_1h: float = 0.0
     range_mid_4h: float = 0.0
     range_mid_24h: float = 0.0
+
+    # --- Semantic Diagnostic Fields (Patch 1-5) ---
+    # Effort vs Result (Patch 1)
+    effort_vs_result_ratio_15m: float | None = None
+    effort_vs_result_ratio_1h: float | None = None
+    effort_vs_result_ratio_4h: float | None = None
+    effort_vs_result_ratio_24h: float | None = None
+
+    effort_result_state_15m: str | None = None
+    effort_result_state_1h: str | None = None
+    effort_result_state_4h: str | None = None
+    effort_result_state_24h: str | None = None
+
+    absorption_candidate_15m: bool = False
+    absorption_candidate_1h: bool = False
+    absorption_candidate_4h: bool = False
+    absorption_candidate_24h: bool = False
+
+    climax_candidate_15m: bool = False
+    climax_candidate_1h: bool = False
+    climax_candidate_4h: bool = False
+    climax_candidate_24h: bool = False
+
+    efficient_move_candidate_15m: bool = False
+    efficient_move_candidate_1h: bool = False
+    efficient_move_candidate_4h: bool = False
+    efficient_move_candidate_24h: bool = False
+
+    # OI Semantic Classification (Patch 2)
+    oi_build_type_15m: str | None = None
+    oi_build_type_1h: str | None = None
+    oi_build_type_4h: str | None = None
+    oi_build_type_24h: str | None = None
+
+    oi_semantic_state_15m: str | None = None
+    oi_semantic_state_1h: str | None = None
+    oi_semantic_state_4h: str | None = None
+    oi_semantic_state_24h: str | None = None
+
+    oi_semantic_reliable_15m: bool = False
+    oi_semantic_reliable_1h: bool = False
+    oi_semantic_reliable_4h: bool = False
+    oi_semantic_reliable_24h: bool = False
+
+    # Taker-Price Divergence (Patch 3)
+    taker_price_alignment_15m: bool = False
+    taker_price_alignment_1h: bool = False
+    taker_price_alignment_4h: bool = False
+    taker_price_alignment_24h: bool = False
+
+    taker_price_divergence_15m: bool = False
+    taker_price_divergence_1h: bool = False
+    taker_price_divergence_4h: bool = False
+    taker_price_divergence_24h: bool = False
+
+    buyer_absorption_candidate_15m: bool = False
+    buyer_absorption_candidate_1h: bool = False
+    buyer_absorption_candidate_4h: bool = False
+    buyer_absorption_candidate_24h: bool = False
+
+    seller_absorption_candidate_15m: bool = False
+    seller_absorption_candidate_1h: bool = False
+    seller_absorption_candidate_4h: bool = False
+    seller_absorption_candidate_24h: bool = False
+
+    # Crowding Context (Patch 4)
+    crowding_score_15m: float | None = None
+    crowding_score_1h: float | None = None
+    crowding_score_4h: float | None = None
+    crowding_score_24h: float | None = None
+
+    crowding_status_15m: str | None = None
+    crowding_status_1h: str | None = None
+    crowding_status_4h: str | None = None
+    crowding_status_24h: str | None = None
+
+    crowding_side_15m: str | None = None
+    crowding_side_1h: str | None = None
+    crowding_side_4h: str | None = None
+    crowding_side_24h: str | None = None
+
+    # Z-Score Reliability (Patch 6)
+    volume_z_reliable_15m: bool = True
+    volume_z_reliable_1h: bool = True
+    volume_z_reliable_4h: bool = True
+    volume_z_reliable_24h: bool = True
+
+    oi_delta_z_reliable_15m: bool = True
+    oi_delta_z_reliable_1h: bool = True
+    oi_delta_z_reliable_4h: bool = True
+    oi_delta_z_reliable_24h: bool = True
+
+    zscore_baseline_status_15m: str = "NORMAL"
+    zscore_baseline_status_1h: str = "NORMAL"
+    zscore_baseline_status_4h: str = "NORMAL"
+    zscore_baseline_status_24h: str = "NORMAL"
+
+    # Efficient Build Quality Diagnostics (Patch 7)
+    efficient_build_quality_15m: str | None = None
+    efficient_build_quality_1h: str | None = None
+    efficient_build_quality_4h: str | None = None
+    efficient_build_quality_24h: str | None = None
+
+    efficient_build_quality_reason_15m: str | None = None
+    efficient_build_quality_reason_1h: str | None = None
+    efficient_build_quality_reason_4h: str | None = None
+    efficient_build_quality_reason_24h: str | None = None
+
+    efficient_build_quality_score_15m: float | None = None
+    efficient_build_quality_score_1h: float | None = None
+    efficient_build_quality_score_4h: float | None = None
+    efficient_build_quality_score_24h: float | None = None
+
+    # Liquidation Context (Patch 5)
+    liq_contribution_ratio_15m: float | None = None
+    liq_contribution_ratio_1h: float | None = None
+    liq_contribution_ratio_4h: float | None = None
+    liq_contribution_ratio_24h: float | None = None
+
+    liquidation_context_15m: str | None = None
+    liquidation_context_1h: str | None = None
+    liquidation_context_4h: str | None = None
+    liquidation_context_24h: str | None = None
+
+    # Data Quality Foundation
+    data_quality_score_15m: float = 1.0
+    data_quality_score_1h: float = 1.0
+    data_quality_score_4h: float = 1.0
+    data_quality_score_24h: float = 1.0
+    
+    data_quality_status_15m: str = "FRESH"
+    data_quality_status_1h: str = "FRESH"
+    data_quality_status_4h: str = "FRESH"
+    data_quality_status_24h: str = "FRESH"
+    
+    stale_fields_15m: list[str] = Field(default_factory=list)
+    stale_fields_1h: list[str] = Field(default_factory=list)
+    stale_fields_4h: list[str] = Field(default_factory=list)
+    stale_fields_24h: list[str] = Field(default_factory=list)
+    
+    fallback_fields_15m: list[str] = Field(default_factory=list)
+    fallback_fields_1h: list[str] = Field(default_factory=list)
+    fallback_fields_4h: list[str] = Field(default_factory=list)
+    fallback_fields_24h: list[str] = Field(default_factory=list)
+    
+    bucket_is_closed_15m: bool = False
+    bucket_is_closed_1h: bool = False
+    bucket_is_closed_4h: bool = False
+    bucket_is_closed_24h: bool = False
+    
+    # Volume Reliability Foundation
+    foundation_version_15m: str = "v1_reconstructed"
+    foundation_version_1h: str = "v1_reconstructed"
+    foundation_version_4h: str = "v1_reconstructed"
+    foundation_version_24h: str = "v1_reconstructed"
+    
+    volume_metric_status_15m: str = "LEGACY_UNTRUSTED"
+    volume_metric_status_1h: str = "LEGACY_UNTRUSTED"
+    volume_metric_status_4h: str = "LEGACY_UNTRUSTED"
+    volume_metric_status_24h: str = "LEGACY_UNTRUSTED"
+    
+    # --- Semantic Diagnostic Fields (Patch 1-5) ---
+    effort_vs_result_ratio_15m: float | None = None
+    effort_vs_result_ratio_1h: float | None = None
+    effort_vs_result_ratio_4h: float | None = None
+    effort_vs_result_ratio_24h: float | None = None
+
+    effort_result_state_15m: str | None = None
+    effort_result_state_1h: str | None = None
+    effort_result_state_4h: str | None = None
+    effort_result_state_24h: str | None = None
+
+    absorption_candidate_15m: bool = False
+    absorption_candidate_1h: bool = False
+    absorption_candidate_4h: bool = False
+    absorption_candidate_24h: bool = False
+
+    climax_candidate_15m: bool = False
+    climax_candidate_1h: bool = False
+    climax_candidate_4h: bool = False
+    climax_candidate_24h: bool = False
+
+    efficient_move_candidate_15m: bool = False
+    efficient_move_candidate_1h: bool = False
+    efficient_move_candidate_4h: bool = False
+    efficient_move_candidate_24h: bool = False
+
+    oi_build_type_15m: str | None = None
+    oi_build_type_1h: str | None = None
+    oi_build_type_4h: str | None = None
+    oi_build_type_24h: str | None = None
+
+    oi_semantic_state_15m: str | None = None
+    oi_semantic_state_1h: str | None = None
+    oi_semantic_state_4h: str | None = None
+    oi_semantic_state_24h: str | None = None
+
+    oi_semantic_reliable_15m: bool = False
+    oi_semantic_reliable_1h: bool = False
+    oi_semantic_reliable_4h: bool = False
+    oi_semantic_reliable_24h: bool = False
+
+    taker_price_alignment_15m: bool = False
+    taker_price_alignment_1h: bool = False
+    taker_price_alignment_4h: bool = False
+    taker_price_alignment_24h: bool = False
+
+    taker_price_divergence_15m: bool = False
+    taker_price_divergence_1h: bool = False
+    taker_price_divergence_4h: bool = False
+    taker_price_divergence_24h: bool = False
+
+    buyer_absorption_candidate_15m: bool = False
+    buyer_absorption_candidate_1h: bool = False
+    buyer_absorption_candidate_4h: bool = False
+    buyer_absorption_candidate_24h: bool = False
+
+    seller_absorption_candidate_15m: bool = False
+    seller_absorption_candidate_1h: bool = False
+    seller_absorption_candidate_4h: bool = False
+    seller_absorption_candidate_24h: bool = False
+
+    crowding_score_15m: float | None = None
+    crowding_score_1h: float | None = None
+    crowding_score_4h: float | None = None
+    crowding_score_24h: float | None = None
+
+    crowding_status_15m: str | None = None
+    crowding_status_1h: str | None = None
+    crowding_status_4h: str | None = None
+    crowding_status_24h: str | None = None
+
+    crowding_side_15m: str | None = None
+    crowding_side_1h: str | None = None
+    crowding_side_4h: str | None = None
+    crowding_side_24h: str | None = None
+
+    liq_contribution_ratio_15m: float | None = None
+    liq_contribution_ratio_1h: float | None = None
+    liq_contribution_ratio_4h: float | None = None
+    liq_contribution_ratio_24h: float | None = None
+
+    liquidation_context_15m: str | None = None
+    liquidation_context_1h: str | None = None
+    liquidation_context_4h: str | None = None
+    liquidation_context_24h: str | None = None
+    
+    volume_metric_reliable_15m: bool = False
+    volume_metric_reliable_1h: bool = False
+    volume_metric_reliable_4h: bool = False
+    volume_metric_reliable_24h: bool = False
+    
+    bucket_completion_pct_15m: float = 0.0
+    bucket_completion_pct_1h: float = 0.0
+    bucket_completion_pct_4h: float = 0.0
+    bucket_completion_pct_24h: float = 0.0
+    
+    # OI Alignment Metadata
+    oi_open_timestamp_15m: datetime | None = None
+    oi_open_timestamp_1h: datetime | None = None
+    oi_open_timestamp_4h: datetime | None = None
+    oi_open_timestamp_24h: datetime | None = None
+    
+    oi_close_timestamp_15m: datetime | None = None
+    oi_close_timestamp_1h: datetime | None = None
+    oi_close_timestamp_4h: datetime | None = None
+    oi_close_timestamp_24h: datetime | None = None
+    
+    oi_open_age_seconds_15m: float | None = None
+    oi_open_age_seconds_1h: float | None = None
+    oi_open_age_seconds_4h: float | None = None
+    oi_open_age_seconds_24h: float | None = None
+    
+    oi_close_age_seconds_15m: float | None = None
+    oi_close_age_seconds_1h: float | None = None
+    oi_close_age_seconds_4h: float | None = None
+    oi_close_age_seconds_24h: float | None = None
+    
+    oi_alignment_status_15m: str = "MISSING"
+    oi_alignment_status_1h: str = "MISSING"
+    oi_alignment_status_4h: str = "MISSING"
+    oi_alignment_status_24h: str = "MISSING"
+    
+    oi_delta_reliable_15m: bool = False
+    oi_delta_reliable_1h: bool = False
+    oi_delta_reliable_4h: bool = False
+    oi_delta_reliable_24h: bool = False
+
+    # Detailed Metadata (for trade auditing)
+    # 15m
+    price_age_seconds_15m: float | None = None
+    futures_volume_age_seconds_15m: float | None = None
+    open_interest_age_seconds_15m: float | None = None
+    funding_age_seconds_15m: float | None = None
+    long_short_ratio_age_seconds_15m: float | None = None
+    taker_ratio_age_seconds_15m: float | None = None
+    liquidation_age_seconds_15m: float | None = None
+    price_source_15m: str = "missing"
+    volume_source_15m: str = "missing"
+    open_interest_source_15m: str = "missing"
+    funding_source_15m: str = "missing"
+    long_short_ratio_source_15m: str = "missing"
+    taker_ratio_source_15m: str = "missing"
+    liquidation_source_15m: str = "missing"
+    taker_ratio_is_default_15m: bool = False
+    long_short_ratio_is_default_15m: bool = False
+    data_was_coalesced_15m: bool = False
+    liquidation_is_reset_suspected_15m: bool = False
+
+    # 1h
+    price_age_seconds_1h: float | None = None
+    futures_volume_age_seconds_1h: float | None = None
+    open_interest_age_seconds_1h: float | None = None
+    funding_age_seconds_1h: float | None = None
+    long_short_ratio_age_seconds_1h: float | None = None
+    taker_ratio_age_seconds_1h: float | None = None
+    liquidation_age_seconds_1h: float | None = None
+    price_source_1h: str = "missing"
+    volume_source_1h: str = "missing"
+    open_interest_source_1h: str = "missing"
+    funding_source_1h: str = "missing"
+    long_short_ratio_source_1h: str = "missing"
+    taker_ratio_source_1h: str = "missing"
+    liquidation_source_1h: str = "missing"
+    taker_ratio_is_default_1h: bool = False
+    long_short_ratio_is_default_1h: bool = False
+    data_was_coalesced_1h: bool = False
+    liquidation_is_reset_suspected_1h: bool = False
+
+    # 4h
+    price_age_seconds_4h: float | None = None
+    futures_volume_age_seconds_4h: float | None = None
+    open_interest_age_seconds_4h: float | None = None
+    funding_age_seconds_4h: float | None = None
+    long_short_ratio_age_seconds_4h: float | None = None
+    taker_ratio_age_seconds_4h: float | None = None
+    liquidation_age_seconds_4h: float | None = None
+    price_source_4h: str = "missing"
+    volume_source_4h: str = "missing"
+    open_interest_source_4h: str = "missing"
+    funding_source_4h: str = "missing"
+    long_short_ratio_source_4h: str = "missing"
+    taker_ratio_source_4h: str = "missing"
+    liquidation_source_4h: str = "missing"
+    taker_ratio_is_default_4h: bool = False
+    long_short_ratio_is_default_4h: bool = False
+    data_was_coalesced_4h: bool = False
+    liquidation_is_reset_suspected_4h: bool = False
+
+    # 24h
+    price_age_seconds_24h: float | None = None
+    futures_volume_age_seconds_24h: float | None = None
+    open_interest_age_seconds_24h: float | None = None
+    funding_age_seconds_24h: float | None = None
+    long_short_ratio_age_seconds_24h: float | None = None
+    taker_ratio_age_seconds_24h: float | None = None
+    liquidation_age_seconds_24h: float | None = None
+    price_source_24h: str = "missing"
+    volume_source_24h: str = "missing"
+    open_interest_source_24h: str = "missing"
+    funding_source_24h: str = "missing"
+    long_short_ratio_source_24h: str = "missing"
+    taker_ratio_source_24h: str = "missing"
+    liquidation_source_24h: str = "missing"
+    taker_ratio_is_default_24h: bool = False
+    long_short_ratio_is_default_24h: bool = False
+    data_was_coalesced_24h: bool = False
+    liquidation_is_reset_suspected_24h: bool = False
 
 
 class ScoreBreakdown(BaseModel):
@@ -277,6 +685,37 @@ class AssetSnapshot(BaseModel):
     short_liquidations: float = 0.0
     flow_metrics: FlowMetrics = Field(default_factory=FlowMetrics)
     score: float = 0.0
+
+    # Data Quality
+    data_quality_score: float = 1.0
+    data_quality_status: str = "FRESH"
+    stale_fields: list[str] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    fallback_fields: list[str] = Field(default_factory=list)
+    
+    price_age_seconds: float | None = None
+    futures_volume_age_seconds: float | None = None
+    open_interest_age_seconds: float | None = None
+    funding_age_seconds: float | None = None
+    long_short_ratio_age_seconds: float | None = None
+    taker_ratio_age_seconds: float | None = None
+    liquidation_age_seconds: float | None = None
+    
+    price_source: str = "missing"
+    volume_source: str = "missing"
+    open_interest_source: str = "missing"
+    funding_source: str = "missing"
+    long_short_ratio_source: str = "missing"
+    taker_ratio_source: str = "missing"
+    liquidation_source: str = "missing"
+    
+    taker_ratio_is_default: bool = False
+    long_short_ratio_is_default: bool = False
+    liquidation_is_reset_suspected: bool = False
+    data_was_coalesced: bool = False
+
+    bucket_is_closed: bool = False
+    bucket_completion_pct: float = 0.0
     signal: SignalType = "Neutral"
     signal_status: SignalStatus = "NO_SIGNAL"
     data_status: DataStatus = "VALID"

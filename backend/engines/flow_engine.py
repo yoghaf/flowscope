@@ -21,7 +21,43 @@ class HistoryPoint:
     futures_volume: float
     long_liquidations: float
     short_liquidations: float
-    exchange_count: int
+    
+    # Timeframe-specific OHLCV (Official Kline Ground Truth)
+    futures_ohlc_15m: dict[str, float] | None = None
+    futures_ohlc_1h: dict[str, float] | None = None
+    futures_ohlc_4h: dict[str, float] | None = None
+    futures_ohlc_24h: dict[str, float] | None = None
+    
+    exchange_count: int = 0
+    
+    # Data Quality Metadata
+    price_updated_at: datetime | None = None
+    spot_volume_updated_at: datetime | None = None
+    futures_volume_updated_at: datetime | None = None
+    open_interest_updated_at: datetime | None = None
+    funding_rate_updated_at: datetime | None = None
+    long_short_ratio_updated_at: datetime | None = None
+    taker_buy_sell_ratio_updated_at: datetime | None = None
+    liquidation_updated_at: datetime | None = None
+
+    price_source: str = "missing"
+    volume_source: str = "missing"
+    open_interest_source: str = "missing"
+    funding_source: str = "missing"
+    long_short_ratio_source: str = "missing"
+    taker_ratio_source: str = "missing"
+    liquidation_source: str = "missing"
+
+    data_was_coalesced: bool = False
+    liquidation_is_reset_suspected: bool = False
+    
+    # OI Boundary Alignment
+    oi_open_timestamp: datetime | None = None
+    oi_close_timestamp: datetime | None = None
+    oi_open_age: float | None = None
+    oi_close_age: float | None = None
+    oi_alignment_status: str = "MISSING" # ALIGNED, PARTIAL, MISALIGNED, MISSING
+    oi_delta_reliable: bool = False
 
 
 class FlowEngine:

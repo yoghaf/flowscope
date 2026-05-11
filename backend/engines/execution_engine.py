@@ -222,7 +222,7 @@ class ExecutionEngine:
             status = "Ready"
         elif breakout_valid and breakout_distance <= trigger_distance_limit and confidence >= 0.72 and bias != "Neutral":
             status = "Ready"
-        elif confidence >= 0.6 and market_interpretation.action == "WAIT":
+        elif confidence >= 0.6 and market_interpretation.action == "WAIT" and self.settings.allow_wait_to_ready:
             status = "Ready"
         else:
             status = "Building"

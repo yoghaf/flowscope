@@ -338,6 +338,7 @@ class DatabaseManager:
                 "taker_buy_sell_ratio_close": excluded.taker_buy_sell_ratio_close,
                 "long_liquidations_total": excluded.long_liquidations_total,
                 "short_liquidations_total": excluded.short_liquidations_total,
+                "foundation_version": excluded.foundation_version,
                 "exchange_count_avg": excluded.exchange_count_avg,
                 "sample_count": excluded.sample_count,
                 "score": excluded.score,

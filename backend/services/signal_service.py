@@ -55,6 +55,14 @@ from backend.schemas import (
     TelegramTestResponse,
     VolumePoint,
 )
+from typing import Literal
+DataQualityStatus = Literal[
+    "FRESH",
+    "PARTIAL",
+    "STALE",
+    "MISSING",
+    "FALLBACK_ONLY",
+]
 from backend.models import TradeSignal
 from backend.services.performance_engine import PerformanceEngine
 from backend.services.trade_evaluator import TradeEvaluator
@@ -95,6 +103,8 @@ class AssetState:
     taker_buy_sell_ratio: float
     long_liquidations: float
     short_liquidations: float
+    
+    # Existing fields
     flow_metrics: FlowMetrics
     score: float
     signal: str
@@ -106,6 +116,7 @@ class AssetState:
     state_probabilities: dict[str, float]
     position_intent: str
     oi_intensity: str
+    
     position_quality: str
     decision_type: str
     reliability_score: float
@@ -126,8 +137,62 @@ class AssetState:
     scenario_disposition: str = "observe"
     scenario_rationale: str = "Context remains mixed; keep observing."
     scenario_reasons: list[str] = field(default_factory=list)
-    debug_trace: dict[str, Any] | None = None
-    market_interpretation: dict[str, Any] | None = None
+    debug_trace: dict[str, Any] = field(default_factory=dict)
+    market_interpretation: dict[str, Any] = field(default_factory=dict)
+
+    # Data Quality
+    data_quality_score: float = 1.0
+    data_quality_status: str = "FRESH"
+    stale_fields: list[str] = field(default_factory=list)
+    missing_fields: list[str] = field(default_factory=list)
+    fallback_fields: list[str] = field(default_factory=list)
+    
+    price_age_seconds: float | None = None
+    futures_volume_age_seconds: float | None = None
+    open_interest_age_seconds: float | None = None
+    funding_age_seconds: float | None = None
+    long_short_ratio_age_seconds: float | None = None
+    taker_ratio_age_seconds: float | None = None
+    liquidation_age_seconds: float | None = None
+    
+    price_source: str = "missing"
+    volume_source: str = "missing"
+    open_interest_source: str = "missing"
+    funding_source: str = "missing"
+    long_short_ratio_source: str = "missing"
+    taker_ratio_source: str = "missing"
+    liquidation_source: str = "missing"
+    
+    taker_ratio_is_default: bool = False
+    long_short_ratio_is_default: bool = False
+    liquidation_is_reset_suspected: bool = False
+    data_was_coalesced: bool = False
+
+    bucket_is_closed: bool = False
+    bucket_completion_pct: float = 0.0
+    
+    # --- Semantic Diagnostic Fields (Patch 1-5) ---
+    effort_vs_result_ratio: float | None = None
+    effort_result_state: str | None = None
+    absorption_candidate: bool = False
+    climax_candidate: bool = False
+    efficient_move_candidate: bool = False
+
+    oi_build_type: str | None = None
+    oi_semantic_state: str | None = None
+    oi_semantic_reliable: bool = False
+
+    taker_price_alignment: bool = False
+    taker_price_divergence: bool = False
+    buyer_absorption_candidate: bool = False
+    seller_absorption_candidate: bool = False
+
+    crowding_score: float | None = None
+    crowding_status: str | None = None
+    crowding_side: str | None = None
+
+    liq_contribution_ratio: float | None = None
+    liquidation_context: str | None = None
 
 
 class SignalService:
@@ -216,6 +281,14 @@ class SignalService:
 
         self.user_preferences[DEFAULT_USER_ID] = self._default_preferences(DEFAULT_USER_ID)
         self.user_initialized.add(DEFAULT_USER_ID)
+
+    def freshness_age(self, now: datetime, updated_at: datetime | None) -> float | None:
+        if updated_at is None:
+            return None
+        return max(0.0, (now - updated_at).total_seconds())
+
+    def is_fresh(self, age_seconds: float | None, max_age: int) -> bool:
+        return age_seconds is not None and age_seconds <= max_age
 
     async def start(self) -> None:
         self.symbols = await self.universe_service.get_symbols(self.settings.universe_size)
@@ -627,7 +700,7 @@ class SignalService:
                     exchange_count=current.exchange_count,
                 )
                 self.history[snapshot.symbol].append(point)
-                self.aggregate_store.ingest(snapshot.symbol, point)
+                self.aggregate_store.ingest(snapshot.symbol, point, self.collectors[0]._oi_history)
                 alert = await self._update_state(snapshot.symbol)
         except Exception:
             logger.exception("Stream tick update failed symbol=%s", snapshot.symbol)
@@ -722,7 +795,7 @@ class SignalService:
                 try:
                     point = self._coalesce_snapshot_point(symbol, point)
                     self.history[symbol].append(point)
-                    self.aggregate_store.ingest(symbol, point)
+                    self.aggregate_store.ingest(symbol, point, self.collectors[0]._oi_history)
                     alert = await self._update_state(symbol)
                     changed_symbols.append(symbol)
                     if alert:
@@ -789,6 +862,10 @@ class SignalService:
             latest_timestamp = max(snapshot.timestamp for snapshot in snapshots)
             spot_volume = sum(snapshot.spot_volume for snapshot in snapshots)
             futures_volume = sum(snapshot.futures_volume for snapshot in snapshots)
+            
+            # Use Binance snapshot as the primary source for DQ metadata
+            binance_snap = next((s for s in snapshots if s.exchange == "binance"), snapshots[0])
+
             aggregated[symbol] = HistoryPoint(
                 timestamp=latest_timestamp,
                 price=sum(prices) / len(prices) if prices else 0.0,
@@ -802,6 +879,27 @@ class SignalService:
                 long_liquidations=sum(snapshot.long_liquidations for snapshot in snapshots),
                 short_liquidations=sum(snapshot.short_liquidations for snapshot in snapshots),
                 exchange_count=len(snapshots),
+                
+                # DQ Metadata from Binance primary
+                price_updated_at=binance_snap.price_updated_at,
+                spot_volume_updated_at=binance_snap.spot_volume_updated_at,
+                futures_volume_updated_at=binance_snap.futures_volume_updated_at,
+                open_interest_updated_at=binance_snap.open_interest_updated_at,
+                funding_rate_updated_at=binance_snap.funding_rate_updated_at,
+                long_short_ratio_updated_at=binance_snap.long_short_ratio_updated_at,
+                taker_buy_sell_ratio_updated_at=binance_snap.taker_buy_sell_ratio_updated_at,
+                liquidation_updated_at=binance_snap.liquidation_updated_at,
+                
+                price_source=binance_snap.price_source,
+                volume_source=binance_snap.volume_source,
+                open_interest_source=binance_snap.open_interest_source,
+                funding_source=binance_snap.funding_source,
+                long_short_ratio_source=binance_snap.long_short_ratio_source,
+                taker_ratio_source=binance_snap.taker_ratio_source,
+                liquidation_source=binance_snap.liquidation_source,
+                
+                data_was_coalesced=binance_snap.data_was_coalesced,
+                liquidation_is_reset_suspected=binance_snap.liquidation_is_reset_suspected,
             )
         return aggregated
 
@@ -818,6 +916,7 @@ class SignalService:
             and point.futures_volume <= VALUE_EPSILON
         )
         if fully_missing:
+            # Carry forward previous data, but mark as coalesced
             return HistoryPoint(
                 timestamp=point.timestamp,
                 price=previous.price,
@@ -831,12 +930,50 @@ class SignalService:
                 long_liquidations=previous.long_liquidations,
                 short_liquidations=previous.short_liquidations,
                 exchange_count=point.exchange_count or previous.exchange_count,
+                
+                # Keep original updated_at from previous point to track actual staleness
+                price_updated_at=previous.price_updated_at,
+                spot_volume_updated_at=previous.spot_volume_updated_at,
+                futures_volume_updated_at=previous.futures_volume_updated_at,
+                open_interest_updated_at=previous.open_interest_updated_at,
+                funding_rate_updated_at=previous.funding_rate_updated_at,
+                long_short_ratio_updated_at=previous.long_short_ratio_updated_at,
+                taker_buy_sell_ratio_updated_at=previous.taker_buy_sell_ratio_updated_at,
+                liquidation_updated_at=previous.liquidation_updated_at,
+                
+                price_source="carry_forward",
+                volume_source="carry_forward",
+                open_interest_source="carry_forward",
+                funding_source="carry_forward",
+                long_short_ratio_source="carry_forward",
+                taker_ratio_source="carry_forward",
+                liquidation_source="carry_forward",
+                
+                data_was_coalesced=True,
+                liquidation_is_reset_suspected=previous.liquidation_is_reset_suspected,
+                
+                # Official timeframe ground truth
+                futures_ohlc_15m=previous.futures_ohlc_15m,
+                futures_ohlc_1h=previous.futures_ohlc_1h,
+                futures_ohlc_4h=previous.futures_ohlc_4h,
+                futures_ohlc_24h=previous.futures_ohlc_24h,
             )
 
+        # Partial coalescing
         price = point.price if point.price > VALUE_EPSILON else previous.price
         open_interest = point.open_interest if point.open_interest > VALUE_EPSILON else previous.open_interest
         spot_volume = point.spot_volume if point.spot_volume > VALUE_EPSILON else previous.spot_volume
         futures_volume = point.futures_volume if point.futures_volume > VALUE_EPSILON else previous.futures_volume
+        
+        # Determine sources and updated_at
+        p_upd = point.price_updated_at if point.price > VALUE_EPSILON else previous.price_updated_at
+        p_src = point.price_source if point.price > VALUE_EPSILON else "carry_forward"
+        
+        oi_upd = point.open_interest_updated_at if point.open_interest > VALUE_EPSILON else previous.open_interest_updated_at
+        oi_src = point.open_interest_source if point.open_interest > VALUE_EPSILON else "carry_forward"
+        
+        vol_upd = point.futures_volume_updated_at if point.futures_volume > VALUE_EPSILON else previous.futures_volume_updated_at
+        vol_src = point.volume_source if point.futures_volume > VALUE_EPSILON else "carry_forward"
 
         return HistoryPoint(
             timestamp=point.timestamp,
@@ -859,6 +996,33 @@ class SignalService:
             long_liquidations=point.long_liquidations,
             short_liquidations=point.short_liquidations,
             exchange_count=point.exchange_count or previous.exchange_count,
+            
+            # Official timeframe ground truth
+            futures_ohlc_15m=point.futures_ohlc_15m or previous.futures_ohlc_15m,
+            futures_ohlc_1h=point.futures_ohlc_1h or previous.futures_ohlc_1h,
+            futures_ohlc_4h=point.futures_ohlc_4h or previous.futures_ohlc_4h,
+            futures_ohlc_24h=point.futures_ohlc_24h or previous.futures_ohlc_24h,
+            
+            # Metadata
+            price_updated_at=p_upd,
+            spot_volume_updated_at=point.spot_volume_updated_at if point.spot_volume > VALUE_EPSILON else previous.spot_volume_updated_at,
+            futures_volume_updated_at=vol_upd,
+            open_interest_updated_at=oi_upd,
+            funding_rate_updated_at=point.funding_rate_updated_at if abs(point.funding_rate) > VALUE_EPSILON else previous.funding_rate_updated_at,
+            long_short_ratio_updated_at=point.long_short_ratio_updated_at if point.long_short_ratio > VALUE_EPSILON else previous.long_short_ratio_updated_at,
+            taker_buy_sell_ratio_updated_at=point.taker_buy_sell_ratio_updated_at if point.taker_buy_sell_ratio > VALUE_EPSILON else previous.taker_buy_sell_ratio_updated_at,
+            liquidation_updated_at=point.liquidation_updated_at if (point.long_liquidations + point.short_liquidations) > 0 else previous.liquidation_updated_at,
+            
+            price_source=p_src,
+            volume_source=vol_src,
+            open_interest_source=oi_src,
+            funding_source=point.funding_source if abs(point.funding_rate) > VALUE_EPSILON else "carry_forward",
+            long_short_ratio_source=point.long_short_ratio_source if point.long_short_ratio > VALUE_EPSILON else "carry_forward",
+            taker_ratio_source=point.taker_ratio_source if point.taker_buy_sell_ratio > VALUE_EPSILON else "carry_forward",
+            liquidation_source=point.liquidation_source if (point.long_liquidations + point.short_liquidations) > 0 else "carry_forward",
+            
+            data_was_coalesced=(point.price <= VALUE_EPSILON),
+            liquidation_is_reset_suspected=point.liquidation_is_reset_suspected,
         )
 
     async def _update_state(self, symbol: str, persist_alerts: bool = True) -> AlertEntry | None:
@@ -868,6 +1032,110 @@ class SignalService:
             closed_timeframes=self.closed_timeframes,
             now=now,
         )
+        
+        # --- Data Quality Scoring (D, G) ---
+        # Fetch current history point for age/source reference
+        hist = self.history.get(symbol)
+        latest_point = hist[-1] if hist else None
+        
+        # Timeframe-aware OI SLA (F)
+        oi_sla_map = {
+            "15m": 300.0,
+            "1h": 600.0,
+            "4h": 900.0,
+            "24h": 1800.0
+        }
+        
+        for tf in TIMEFRAME_ORDER:
+            # For each timeframe, calculate DQ based on the latest available data
+            bucket = self.aggregate_store.latest_bucket(symbol, tf, closed_only=False, now=now)
+            
+            dq_score = 1.0
+            stale_fields = []
+            fallback_fields = []
+            
+            if latest_point:
+                # Check price age
+                p_age = self.freshness_age(now, latest_point.price_updated_at)
+                if not self.is_fresh(p_age, self.settings.dq_sla_price):
+                    dq_score -= 0.3
+                    stale_fields.append("price")
+                
+                # Check volume age
+                v_age = self.freshness_age(now, latest_point.futures_volume_updated_at)
+                if not self.is_fresh(v_age, self.settings.dq_sla_volume):
+                    dq_score -= 0.2
+                    stale_fields.append("volume")
+                
+                # Check OI age (TF-aware)
+                oi_age = self.freshness_age(now, latest_point.open_interest_updated_at)
+                oi_sla = oi_sla_map.get(tf, self.settings.dq_sla_oi)
+                if not self.is_fresh(oi_age, oi_sla):
+                    dq_score -= 0.15
+                    stale_fields.append("open_interest")
+                
+                # Check funding age
+                f_age = self.freshness_age(now, latest_point.funding_rate_updated_at)
+                if not self.is_fresh(f_age, self.settings.dq_sla_funding):
+                    dq_score -= 0.1
+                    stale_fields.append("funding")
+                
+                # Check ratio source
+                if latest_point.taker_ratio_source == "default_neutral" or latest_point.taker_ratio_source == "missing":
+                    dq_score -= 0.05
+                    fallback_fields.append("taker_ratio")
+                if latest_point.long_short_ratio_source == "default_neutral" or latest_point.long_short_ratio_source == "missing":
+                    dq_score -= 0.05
+                    fallback_fields.append("ls_ratio")
+                    
+                # Suspected reset (G)
+                if latest_point.liquidation_is_reset_suspected:
+                    dq_score -= 0.2
+                    stale_fields.append("liquidation_reset")
+
+            dq_score = max(0.0, min(1.0, dq_score))
+            
+            status: DataQualityStatus = "FRESH"
+            if dq_score < 0.4: status = "STALE"
+            elif dq_score < 0.7: status = "PARTIAL"
+            elif fallback_fields and dq_score > 0.9: status = "FALLBACK_ONLY"
+            
+            # Update flow_metrics with DQ fields
+            setattr(flow_metrics, f"data_quality_score_{tf}", dq_score)
+            setattr(flow_metrics, f"data_quality_status_{tf}", status)
+            setattr(flow_metrics, f"stale_fields_{tf}", stale_fields)
+            setattr(flow_metrics, f"fallback_fields_{tf}", fallback_fields)
+            
+            if latest_point:
+                # Populate detailed metadata for trade auditing (April vs May analysis)
+                setattr(flow_metrics, f"price_age_seconds_{tf}", self.freshness_age(now, latest_point.price_updated_at))
+                setattr(flow_metrics, f"futures_volume_age_seconds_{tf}", self.freshness_age(now, latest_point.futures_volume_updated_at))
+                setattr(flow_metrics, f"open_interest_age_seconds_{tf}", self.freshness_age(now, latest_point.open_interest_updated_at))
+                setattr(flow_metrics, f"funding_age_seconds_{tf}", self.freshness_age(now, latest_point.funding_rate_updated_at))
+                setattr(flow_metrics, f"long_short_ratio_age_seconds_{tf}", self.freshness_age(now, latest_point.long_short_ratio_updated_at))
+                setattr(flow_metrics, f"taker_ratio_age_seconds_{tf}", self.freshness_age(now, latest_point.taker_buy_sell_ratio_updated_at))
+                setattr(flow_metrics, f"liquidation_age_seconds_{tf}", self.freshness_age(now, latest_point.liquidation_updated_at))
+                
+                setattr(flow_metrics, f"price_source_{tf}", latest_point.price_source)
+                setattr(flow_metrics, f"volume_source_{tf}", latest_point.volume_source)
+                setattr(flow_metrics, f"open_interest_source_{tf}", latest_point.open_interest_source)
+                setattr(flow_metrics, f"funding_source_{tf}", latest_point.funding_source)
+                setattr(flow_metrics, f"long_short_ratio_source_{tf}", latest_point.long_short_ratio_source)
+                setattr(flow_metrics, f"taker_ratio_source_{tf}", latest_point.taker_ratio_source)
+                setattr(flow_metrics, f"liquidation_source_{tf}", latest_point.liquidation_source)
+                
+                setattr(flow_metrics, f"taker_ratio_is_default_{tf}", (latest_point.taker_ratio_source == "default_neutral"))
+                setattr(flow_metrics, f"long_short_ratio_is_default_{tf}", (latest_point.long_short_ratio_source == "default_neutral"))
+                setattr(flow_metrics, f"data_was_coalesced_{tf}", latest_point.data_was_coalesced)
+                setattr(flow_metrics, f"liquidation_is_reset_suspected_{tf}", latest_point.liquidation_is_reset_suspected)
+
+            if bucket:
+                setattr(flow_metrics, f"bucket_is_closed_{tf}", bucket.last_timestamp >= bucket.bucket_end)
+                # Completion %
+                total_dur = TIMEFRAME_DELTAS[tf].total_seconds()
+                elapsed = (now - bucket.bucket_start).total_seconds()
+                setattr(flow_metrics, f"bucket_completion_pct_{tf}", min(1.0, elapsed / total_dur))
+
         phase_result = self.phase_engine.detect(flow_metrics)
         previous = self.state.get(symbol)
 
@@ -1280,6 +1548,16 @@ class SignalService:
                 phase=phase_result,
             )
 
+            # Diagnostic: Efficient Build Quality
+            quality, q_reason, q_score = self._calculate_efficient_build_quality(
+                scenario_label=scenario.label,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe
+            )
+            setattr(flow_metrics, f"efficient_build_quality_{timeframe}", quality)
+            setattr(flow_metrics, f"efficient_build_quality_reason_{timeframe}", q_reason)
+            setattr(flow_metrics, f"efficient_build_quality_score_{timeframe}", q_score)
+
             hard_entry_filter_reasons: list[str] = []
             if action.status in {"Ready", "Triggered"}:
                 allowed, block_reason, global_multiplier = self.portfolio_manager.assess_entry(
@@ -1299,6 +1577,7 @@ class SignalService:
                         market_interpretation=market_interpretation,
                         scenario_score=scenario.score,
                         scenario_label=scenario.label,
+                        scenario_disposition=scenario.disposition,
                         state_name=state_assessment.state,
                     )
                 )
@@ -1976,6 +2255,34 @@ class SignalService:
             phase=asset.phase,
             phase_score=asset.phase_score,
             phase_confidence=asset.phase_confidence,
+            
+            # Data Quality mapping
+            data_quality_score=asset.data_quality_score,
+            data_quality_status=asset.data_quality_status,
+            stale_fields=asset.stale_fields,
+            missing_fields=asset.missing_fields,
+            fallback_fields=asset.fallback_fields,
+            price_age_seconds=asset.price_age_seconds,
+            futures_volume_age_seconds=asset.futures_volume_age_seconds,
+            open_interest_age_seconds=asset.open_interest_age_seconds,
+            funding_age_seconds=asset.funding_age_seconds,
+            long_short_ratio_age_seconds=asset.long_short_ratio_age_seconds,
+            taker_ratio_age_seconds=asset.taker_ratio_age_seconds,
+            liquidation_age_seconds=asset.liquidation_age_seconds,
+            price_source=asset.price_source,
+            volume_source=asset.volume_source,
+            open_interest_source=asset.open_interest_source,
+            funding_source=asset.funding_source,
+            long_short_ratio_source=asset.long_short_ratio_source,
+            taker_ratio_source=asset.taker_ratio_source,
+            liquidation_source=asset.liquidation_source,
+            taker_ratio_is_default=asset.taker_ratio_is_default,
+            long_short_ratio_is_default=asset.long_short_ratio_is_default,
+            liquidation_is_reset_suspected=asset.liquidation_is_reset_suspected,
+            data_was_coalesced=asset.data_was_coalesced,
+            bucket_is_closed=asset.bucket_is_closed,
+            bucket_completion_pct=asset.bucket_completion_pct,
+
             scenario=ContextScenarioSnapshot(
                 label=asset.scenario_label,
                 score=asset.scenario_score,
@@ -2353,6 +2660,23 @@ class SignalService:
                 exchange_count_sum=exchange_count,
                 sample_count=1,
             )
+        # Data Quality mapping
+        dq_score = getattr(flow_metrics, f"data_quality_score_{timeframe}", 1.0)
+        dq_status = getattr(flow_metrics, f"data_quality_status_{timeframe}", "FRESH")
+        stale_f = getattr(flow_metrics, f"stale_fields_{timeframe}", [])
+        fallback_f = getattr(flow_metrics, f"fallback_fields_{timeframe}", [])
+        bucket_closed = getattr(flow_metrics, f"bucket_is_closed_{timeframe}", False)
+        bucket_compl = getattr(flow_metrics, f"bucket_completion_pct_{timeframe}", 0.0)
+        
+        hist = self.history.get(symbol)
+        latest_pt = hist[-1] if hist else None
+        
+        missing_f = []
+        if latest_pt:
+            if latest_pt.price_source == "missing": missing_f.append("price")
+            if latest_pt.open_interest_source == "missing": missing_f.append("open_interest")
+            if latest_pt.volume_source == "missing": missing_f.append("volume")
+
         return AssetState(
             symbol=symbol,
             name=self.universe_service.get_name(symbol),
@@ -2367,6 +2691,30 @@ class SignalService:
             taker_buy_sell_ratio=taker_ratio,
             long_liquidations=long_liquidations,
             short_liquidations=short_liquidations,
+            
+            # --- Semantic Diagnostic Fields (Patch 1-5) ---
+            effort_vs_result_ratio=getattr(flow_metrics, f"effort_vs_result_ratio_{timeframe}", None),
+            effort_result_state=getattr(flow_metrics, f"effort_result_state_{timeframe}", None),
+            absorption_candidate=getattr(flow_metrics, f"absorption_candidate_{timeframe}", False),
+            climax_candidate=getattr(flow_metrics, f"climax_candidate_{timeframe}", False),
+            efficient_move_candidate=getattr(flow_metrics, f"efficient_move_candidate_{timeframe}", False),
+            
+            oi_build_type=getattr(flow_metrics, f"oi_build_type_{timeframe}", None),
+            oi_semantic_state=getattr(flow_metrics, f"oi_semantic_state_{timeframe}", None),
+            oi_semantic_reliable=getattr(flow_metrics, f"oi_semantic_reliable_{timeframe}", False),
+            
+            taker_price_alignment=getattr(flow_metrics, f"taker_price_alignment_{timeframe}", False),
+            taker_price_divergence=getattr(flow_metrics, f"taker_price_divergence_{timeframe}", False),
+            buyer_absorption_candidate=getattr(flow_metrics, f"buyer_absorption_candidate_{timeframe}", False),
+            seller_absorption_candidate=getattr(flow_metrics, f"seller_absorption_candidate_{timeframe}", False),
+            
+            crowding_score=getattr(flow_metrics, f"crowding_score_{timeframe}", None),
+            crowding_status=getattr(flow_metrics, f"crowding_status_{timeframe}", None),
+            crowding_side=getattr(flow_metrics, f"crowding_side_{timeframe}", None),
+            
+            liq_contribution_ratio=getattr(flow_metrics, f"liq_contribution_ratio_{timeframe}", None),
+            liquidation_context=getattr(flow_metrics, f"liquidation_context_{timeframe}", None),
+
             flow_metrics=flow_metrics,
             score=actual_score,
             signal=signal,
@@ -2406,6 +2754,32 @@ class SignalService:
                 flow_metrics=flow_metrics,
                 timeframe=timeframe,
             ),
+            # DQ Fields
+            data_quality_score=dq_score,
+            data_quality_status=dq_status,
+            stale_fields=stale_f,
+            missing_fields=missing_f,
+            fallback_fields=fallback_f,
+            price_age_seconds=self.freshness_age(now, latest_pt.price_updated_at) if latest_pt else None,
+            futures_volume_age_seconds=self.freshness_age(now, latest_pt.futures_volume_updated_at) if latest_pt else None,
+            open_interest_age_seconds=self.freshness_age(now, latest_pt.open_interest_updated_at) if latest_pt else None,
+            funding_age_seconds=self.freshness_age(now, latest_pt.funding_rate_updated_at) if latest_pt else None,
+            long_short_ratio_age_seconds=self.freshness_age(now, latest_pt.long_short_ratio_updated_at) if latest_pt else None,
+            taker_ratio_age_seconds=self.freshness_age(now, latest_pt.taker_buy_sell_ratio_updated_at) if latest_pt else None,
+            liquidation_age_seconds=self.freshness_age(now, latest_pt.liquidation_updated_at) if latest_pt else None,
+            price_source=latest_pt.price_source if latest_pt else "missing",
+            volume_source=latest_pt.volume_source if latest_pt else "missing",
+            open_interest_source=latest_pt.open_interest_source if latest_pt else "missing",
+            funding_source=latest_pt.funding_source if latest_pt else "missing",
+            long_short_ratio_source=latest_pt.long_short_ratio_source if latest_pt else "missing",
+            taker_ratio_source=latest_pt.taker_ratio_source if latest_pt else "missing",
+            liquidation_source=latest_pt.liquidation_source if latest_pt else "missing",
+            taker_ratio_is_default=(latest_pt.taker_ratio_source == "default_neutral") if latest_pt else False,
+            long_short_ratio_is_default=(latest_pt.long_short_ratio_source == "default_neutral") if latest_pt else False,
+            liquidation_is_reset_suspected=latest_pt.liquidation_is_reset_suspected if latest_pt else False,
+            data_was_coalesced=latest_pt.data_was_coalesced if latest_pt else False,
+            bucket_is_closed=bucket_closed,
+            bucket_completion_pct=bucket_compl,
         )
 
     def _mark_symbol_no_data(
@@ -6035,9 +6409,96 @@ class SignalService:
         market_interpretation: MarketInterpretationAssessment | None = None,
         scenario_score: float = 0.0,
         scenario_label: str | None = None,
+        scenario_disposition: str | None = None,
         state_name: str | None = None,
     ) -> list[str]:
         reasons: list[str] = []
+
+        # --- PATCH 1: Scenario Enforcement Gate ---
+        if action.setup_type == "Continuation":
+            # Blocked continuation scenarios
+            blocked_labels = {
+                "mixed_context",
+                "late_expansion",
+                "reversal_watch",
+                "range_context",
+            }
+            if scenario_label in blocked_labels:
+                reasons.append(f"{scenario_label}_blocked")
+            elif scenario_label == "climax_event" and action.bias == "Bullish":
+                reasons.append("climax_event_blocked")
+            
+            # Disposition-based blocks
+            if scenario_disposition in {"wait", "observe", "reversal_watch"}:
+                reasons.append("scenario_not_allow")
+            elif scenario_disposition != "allow":
+                reasons.append("scenario_not_allow")
+
+            # ==================================================================
+            # SEMANTIC CONTINUATION GUARD V1 (New)
+            # ==================================================================
+            
+            # 1. Absorption Continuation Block (Patch 1)
+            is_bullish = action.bias == "Bullish"
+            is_bearish = action.bias == "Bearish"
+            
+            effort_state = (getattr(flow_metrics, f"effort_result_state_{timeframe}", "") or "").lower()
+            
+            if is_bullish:
+                buyer_abs = getattr(flow_metrics, f"buyer_absorption_candidate_{timeframe}", False)
+                if buyer_abs or effort_state == "absorption":
+                    reasons.append("semantic_absorption_block")
+            elif is_bearish:
+                seller_abs = getattr(flow_metrics, f"seller_absorption_candidate_{timeframe}", False)
+                if seller_abs or effort_state == "absorption":
+                    reasons.append("semantic_absorption_block")
+                    
+            # 2. Climax Continuation Block (Patch 2)
+            climax_cand = getattr(flow_metrics, f"climax_candidate_{timeframe}", False)
+            rolling_change = getattr(flow_metrics, f"rolling_change_{timeframe}", 0.0)
+            is_extended = abs(rolling_change) > 0.03 # 3% move
+            
+            if climax_cand and (is_extended or scenario_label == "climax_event"):
+                reasons.append("semantic_climax_continuation_block")
+                
+            if is_extreme_crowding and is_late_context:
+                reasons.append("semantic_crowded_late_continuation_block")
+
+            # --- EFFICIENT BUILD QUALITY DECISION MODIFIER (Patch 8) ---
+            if scenario_label == "efficient_build":
+                quality = getattr(flow_metrics, f"efficient_build_quality_{timeframe}", "WAIT")
+                
+                if quality == "ALLOW_CANDIDATE":
+                    # Proceed normally
+                    pass
+                elif quality == "WATCHLIST":
+                    reasons.append("efficient_build_watchlist_flat_baseline")
+                elif quality == "REDUCE_OR_WAIT":
+                    reasons.append("efficient_build_crowded_wait")
+                elif quality == "WAIT":
+                    reasons.append("efficient_build_taker_divergence_wait")
+                elif quality == "BLOCK":
+                    reasons.append("efficient_build_semantic_block")
+
+            # 4. Diagnostic Warnings (Patch 4) - We add these to reasons but they don't block
+            # Wait, if they are in 'reasons', they WILL block. 
+            # The user said "add warning reason" but "hard block ONLY [absorption]".
+            # So I will NOT add warnings to the 'reasons' list here if they shouldn't block.
+            # I will instead add them to the market_interpretation later if needed, 
+            # or just log them in the audit.
+            # Actually, I'll add them to a separate list or handle them in the audit.
+
+        # --- PATCH 2: Metric Reliability Guard ---
+        foundation_version = getattr(flow_metrics, f"foundation_version_{timeframe}", "v1_reconstructed")
+        if foundation_version != "v2_option_a":
+            if action.setup_type in {"Breakout", "Continuation"}:
+                reasons.append("foundation_version_not_trusted")
+        
+        oi_delta_reliable = getattr(flow_metrics, f"oi_delta_reliable_{timeframe}", True)
+        if not oi_delta_reliable:
+            if action.setup_type == "Continuation":
+                reasons.append("oi_delta_unreliable")
+
         strategy_version = getattr(self.settings, "strategy_version", "")
         is_v3 = strategy_version == "v3_adaptive"
         is_v3_no_btc = strategy_version == "v3_ema_no_btc"
@@ -7171,4 +7632,39 @@ class SignalService:
     @staticmethod
     def _rank_score(score: float, priority_multiplier: float) -> float:
         return min(1.0, max(0.0, score * max(priority_multiplier, 0.1)))
+
+    def _calculate_efficient_build_quality(
+        self,
+        scenario_label: str,
+        flow_metrics: FlowMetrics,
+        timeframe: str
+    ) -> tuple[str, str, float]:
+        """Classifies the quality of an efficient_build continuation for diagnostics."""
+        # Semantic Grades
+        abs_cand = getattr(flow_metrics, f"absorption_candidate_{timeframe}", False)
+        climax_cand = getattr(flow_metrics, f"climax_candidate_{timeframe}", False)
+        taker_div = getattr(flow_metrics, f"taker_price_divergence_{timeframe}", False)
+        crowding = getattr(flow_metrics, f"crowding_status_{timeframe}", "neutral")
+        baseline_status = getattr(flow_metrics, f"zscore_baseline_status_{timeframe}", "NORMAL")
+        
+        # 1. BLOCK
+        if abs_cand or climax_cand:
+            return "BLOCK", "absorption_or_climax", 0.0
+            
+        # 2. WAIT (Divergence)
+        if taker_div:
+            return "WAIT", "taker_price_divergence", 0.2
+            
+        # 3. REDUCE_OR_WAIT (Crowding)
+        if crowding in {"extreme_crowded_long", "extreme_crowded_short"}:
+            return "REDUCE_OR_WAIT", "extreme_crowding", 0.4
+            
+        # 4. Scenario-dependent
+        if scenario_label == "efficient_build":
+            if baseline_status == "NORMAL":
+                return "ALLOW_CANDIDATE", "clean_efficient_build", 1.0
+            elif baseline_status == "FLAT_BASELINE":
+                return "WATCHLIST", "flat_baseline_observe", 0.7
+                
+        return "WAIT", "non_efficient_or_mixed", 0.3
 

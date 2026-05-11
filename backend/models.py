@@ -87,6 +87,16 @@ class MarketDataBucket(Base):
     taker_buy_sell_ratio_close: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     long_liquidations_total: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     short_liquidations_total: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    foundation_version: Mapped[str] = mapped_column(String(32), nullable=False, default="v2_option_a")
+    
+    # OI Boundary Alignment
+    oi_open_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    oi_close_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    oi_open_age: Mapped[float | None] = mapped_column(Float, nullable=True)
+    oi_close_age: Mapped[float | None] = mapped_column(Float, nullable=True)
+    oi_alignment_status: Mapped[str] = mapped_column(String(16), nullable=False, default="MISSING")
+    oi_delta_reliable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    
     exchange_count_avg: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)

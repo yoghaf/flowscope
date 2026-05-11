@@ -26,6 +26,8 @@ ROBUST_EPSILON = 1e-9
 DEFAULT_Z_WINDOW = 20
 DEFAULT_PERCENTILE_WINDOW = 100
 DEFAULT_STRUCTURE_WINDOW = 20
+MIN_MAD_THRESHOLD = 1e-6
+Z_SCORE_CLAMP = 20.0
 
 logger = logging.getLogger(__name__)
 
@@ -67,16 +69,37 @@ class TimeframeBucket:
     taker_buy_sell_ratio_close: float
     long_liquidations_close: float
     long_liquidations_total: float
-    short_liquidations_close: float
-    short_liquidations_total: float
-    exchange_count_sum: int
-    sample_count: int
+    short_liquidations_close: float = 0.0
+    short_liquidations_total: float = 0.0
+    exchange_count_sum: int = 0
+    sample_count: int = 0
+
+    # Data Quality Aggregates
+    coalesced_sample_count: int = 0
+    liquidation_reset_suspected: bool = False
+    
+    # Sources (latest in bucket)
+    price_source: str = "missing"
+    volume_source: str = "missing"
+    oi_source: str = "missing"
+    liq_source: str = "missing"
+    
+    # OI Boundary Alignment
+    oi_open_timestamp: datetime | None = None
+    oi_close_timestamp: datetime | None = None
+    oi_open_age: float | None = None
+    oi_close_age: float | None = None
+    oi_alignment_status: str = "MISSING"
+    oi_delta_reliable: bool = False
+
     score: float = 0.0
     signal_type: str = "Neutral"
     breakdown_open_interest: float = 0.0
     breakdown_volume: float = 0.0
     breakdown_compression: float = 0.0
     breakdown_funding: float = 0.0
+    
+    foundation_version: str = "v2_option_a"
 
     @classmethod
     def from_record(cls, source: Any) -> TimeframeBucket:
@@ -125,6 +148,13 @@ class TimeframeBucket:
             breakdown_volume=getter("breakdown_volume", 0.0),
             breakdown_compression=getter("breakdown_compression", 0.0),
             breakdown_funding=getter("breakdown_funding", 0.0),
+            foundation_version=getter("foundation_version", "v1_reconstructed"),
+            oi_open_timestamp=getter("oi_open_timestamp"),
+            oi_close_timestamp=getter("oi_close_timestamp"),
+            oi_open_age=getter("oi_open_age"),
+            oi_close_age=getter("oi_close_age"),
+            oi_alignment_status=getter("oi_alignment_status", "MISSING"),
+            oi_delta_reliable=bool(getter("oi_delta_reliable", False)),
         )
 
     @classmethod
@@ -153,7 +183,24 @@ class TimeframeBucket:
             point.futures_volume if point.futures_volume > 0 else futures_volume_open
         )
         spot_volume_delta = cls._volume_increment(spot_volume_open, spot_volume_close)
-        futures_volume_delta = cls._volume_increment(futures_volume_open, futures_volume_close)
+        futures_volume_delta = 0.0
+        official = None
+        if timeframe == "15m":
+            official = point.futures_ohlc_15m
+        elif timeframe == "1h":
+            official = point.futures_ohlc_1h
+        elif timeframe == "4h":
+            official = point.futures_ohlc_4h
+        elif timeframe == "24h":
+            official = point.futures_ohlc_24h
+            
+        if official:
+            open_price = official["open"]
+            close_price = official["close"]
+            futures_volume_delta = official["volume"]
+            futures_volume_close = official["volume"]
+        else:
+            futures_volume_delta = cls._volume_increment(futures_volume_open, futures_volume_close)
         long_liquidations_close = max(point.long_liquidations, 0.0)
         short_liquidations_close = max(point.short_liquidations, 0.0)
         long_liquidations_baseline = (
@@ -169,8 +216,8 @@ class TimeframeBucket:
             bucket_end=bucket_start + TIMEFRAME_DELTAS[timeframe],
             last_timestamp=point.timestamp,
             open_price=open_price,
-            high_price=max(open_price, close_price),
-            low_price=min(open_price, close_price),
+            high_price=max(open_price, close_price, official["high"] if official else 0.0),
+            low_price=min(open_price, close_price, official["low"] if official else 999999.0),
             close_price=close_price,
             open_interest_open=open_interest_open,
             open_interest_high=max(open_interest_open, open_interest_close),
@@ -178,10 +225,10 @@ class TimeframeBucket:
             open_interest_close=open_interest_close,
             spot_volume_open=spot_volume_open,
             spot_volume_close=spot_volume_close,
-            spot_volume_delta=spot_volume_delta if previous_bucket is not None else 0.0,
+            spot_volume_delta=spot_volume_delta if (previous_bucket is not None or (official and official["volume"] > 0)) else 0.0,
             futures_volume_open=futures_volume_open,
             futures_volume_close=futures_volume_close,
-            futures_volume_delta=futures_volume_delta if previous_bucket is not None else 0.0,
+            futures_volume_delta=futures_volume_delta if (previous_bucket is not None or (official and official["volume"] > 0)) else 0.0,
             funding_rate_sum=point.funding_rate,
             funding_rate_close=point.funding_rate,
             long_short_ratio_sum=point.long_short_ratio,
@@ -194,6 +241,12 @@ class TimeframeBucket:
             short_liquidations_total=max(short_liquidations_close - short_liquidations_baseline, 0.0),
             exchange_count_sum=max(point.exchange_count, 0),
             sample_count=1,
+            coalesced_sample_count=1 if point.data_was_coalesced else 0,
+            liquidation_reset_suspected=point.liquidation_is_reset_suspected,
+            price_source=point.price_source,
+            volume_source=point.volume_source,
+            oi_source=point.open_interest_source,
+            liq_source=point.liquidation_source,
         )
 
     @property
@@ -235,22 +288,60 @@ class TimeframeBucket:
         self.open_interest_close = point.open_interest
 
         self.spot_volume_delta += self._volume_increment(self.spot_volume_close, point.spot_volume)
-        self.futures_volume_delta += self._volume_increment(self.futures_volume_close, point.futures_volume)
+        
+        # Use official ground truth if available for this timeframe
+        official = None
+        if self.timeframe == "15m":
+            official = point.futures_ohlc_15m
+        elif self.timeframe == "1h":
+            official = point.futures_ohlc_1h
+        elif self.timeframe == "4h":
+            official = point.futures_ohlc_4h
+        elif self.timeframe == "24h":
+            official = point.futures_ohlc_24h
+            
+        if official:
+            self.high_price = max(self.high_price, official["high"])
+            self.low_price = min(self.low_price, official["low"])
+            self.close_price = official["close"]
+            self.futures_volume_delta = official["volume"]
+            self.futures_volume_close = official["volume"]
+        else:
+            self.high_price = max(self.high_price, point.price)
+            self.low_price = min(self.low_price, point.price)
+            self.close_price = point.price
+            # Fallback to reconstruction from 1m snapshots
+            self.futures_volume_delta += self._volume_increment(self.futures_volume_close, point.futures_volume)
+            self.futures_volume_close = point.futures_volume
+
         self.spot_volume_close = point.spot_volume
-        self.futures_volume_close = point.futures_volume
 
         self.funding_rate_sum += point.funding_rate
         self.funding_rate_close = point.funding_rate
+
         self.long_short_ratio_sum += point.long_short_ratio
         self.long_short_ratio_close = point.long_short_ratio
+
         self.taker_buy_sell_ratio_sum += point.taker_buy_sell_ratio
         self.taker_buy_sell_ratio_close = point.taker_buy_sell_ratio
+
         self.long_liquidations_total += max(point.long_liquidations - self.long_liquidations_close, 0.0)
         self.short_liquidations_total += max(point.short_liquidations - self.short_liquidations_close, 0.0)
         self.long_liquidations_close = max(point.long_liquidations, 0.0)
         self.short_liquidations_close = max(point.short_liquidations, 0.0)
         self.exchange_count_sum += max(point.exchange_count, 0)
         self.sample_count += 1
+        
+        # DQ Tracking
+        if point.data_was_coalesced:
+            self.coalesced_sample_count += 1
+        if point.liquidation_is_reset_suspected:
+            self.liquidation_reset_suspected = True
+            
+        self.price_source = point.price_source
+        self.volume_source = point.volume_source
+        self.oi_source = point.open_interest_source
+        self.liq_source = point.liquidation_source
 
     @staticmethod
     def _volume_increment(previous_value: float, current_value: float) -> float:
@@ -345,7 +436,25 @@ class TimeframeBucket:
             "breakdown_volume": self.breakdown_volume,
             "breakdown_compression": self.breakdown_compression,
             "breakdown_funding": self.breakdown_funding,
+            "foundation_version": self.foundation_version,
+            
+            # OI Alignment
+            "oi_open_timestamp": self.oi_open_timestamp,
+            "oi_close_timestamp": self.oi_close_timestamp,
+            "oi_open_age": self.oi_open_age,
+            "oi_close_age": self.oi_close_age,
+            "oi_alignment_status": self.oi_alignment_status,
+            "oi_delta_reliable": self.oi_delta_reliable,
         }
+
+
+
+OI_ALIGNMENT_TOLERANCE = {
+    "15m": 120,
+    "1h": 300,
+    "4h": 600,
+    "24h": 1800,
+}
 
 
 class TimeframeAggregateStore:
@@ -356,7 +465,7 @@ class TimeframeAggregateStore:
             for timeframe in TIMEFRAME_ORDER
         }
 
-    def ingest(self, symbol: str, point: HistoryPoint) -> dict[str, TimeframeBucket]:
+    def ingest(self, symbol: str, point: HistoryPoint, oi_history: dict[str, deque[tuple[datetime, float]]] | None = None) -> dict[str, TimeframeBucket]:
         updated: dict[str, TimeframeBucket] = {}
         for timeframe in TIMEFRAME_ORDER:
             bucket_start = floor_timestamp(point.timestamp, timeframe)
@@ -364,20 +473,83 @@ class TimeframeAggregateStore:
             previous_bucket = history[-1] if history else None
 
             if history and history[-1].bucket_start == bucket_start:
-                history[-1].apply_point(point)
+                bucket = history[-1]
+                bucket.apply_point(point)
+                if oi_history:
+                    self._align_oi_boundary(bucket, oi_history.get(symbol, deque()), update_open=False)
             else:
-                history.append(
-                    TimeframeBucket.from_point(
-                        symbol,
-                        timeframe,
-                        point,
-                        previous_bucket=previous_bucket,
-                    )
+                new_bucket = TimeframeBucket.from_point(
+                    symbol,
+                    timeframe,
+                    point,
+                    previous_bucket=previous_bucket,
                 )
+                if oi_history:
+                    self._align_oi_boundary(new_bucket, oi_history.get(symbol, deque()))
+                history.append(new_bucket)
 
             updated[timeframe] = history[-1]
 
         return updated
+
+    def _align_oi_boundary(self, bucket: TimeframeBucket, history: deque[tuple[datetime, float]], update_open: bool = True) -> None:
+        if not history:
+            bucket.oi_alignment_status = "MISSING"
+            return
+
+        tolerance = OI_ALIGNMENT_TOLERANCE.get(bucket.timeframe, 600)
+        
+        # 1. Find nearest to bucket_start
+        if update_open:
+            open_snap = self._find_nearest_snapshot(history, bucket.bucket_start)
+            if open_snap:
+                ts, val = open_snap
+                bucket.oi_open_timestamp = ts
+                bucket.oi_open_age = abs((ts - bucket.bucket_start).total_seconds())
+                if bucket.oi_open_age <= tolerance:
+                    bucket.open_interest_open = val
+            else:
+                bucket.oi_open_age = None
+
+        # 2. Find nearest to bucket_end
+        close_snap = self._find_nearest_snapshot(history, bucket.bucket_end)
+        if close_snap:
+            ts, val = close_snap
+            bucket.oi_close_timestamp = ts
+            bucket.oi_close_age = abs((ts - bucket.bucket_end).total_seconds())
+            if bucket.oi_close_age <= tolerance:
+                bucket.open_interest_close = val
+        else:
+            bucket.oi_close_age = None
+
+        # 3. Determine status
+        open_ok = bucket.oi_open_age is not None and bucket.oi_open_age <= tolerance
+        close_ok = bucket.oi_close_age is not None and bucket.oi_close_age <= tolerance
+        
+        if open_ok and close_ok:
+            bucket.oi_alignment_status = "ALIGNED"
+            bucket.oi_delta_reliable = True
+        elif open_ok or close_ok:
+            bucket.oi_alignment_status = "PARTIAL"
+            bucket.oi_delta_reliable = False
+        else:
+            bucket.oi_alignment_status = "MISALIGNED"
+            bucket.oi_delta_reliable = False
+
+    @staticmethod
+    def _find_nearest_snapshot(history: deque[tuple[datetime, float]], target: datetime) -> tuple[datetime, float] | None:
+        if not history:
+            return None
+        best = None
+        min_diff = float('inf')
+        for ts, val in history:
+            diff = abs((ts - target).total_seconds())
+            if diff < min_diff:
+                min_diff = diff
+                best = (ts, val)
+            elif diff > min_diff:
+                break
+        return best
 
     def latest_bucket(
         self,
@@ -525,20 +697,6 @@ class TimeframeAggregateStore:
                 closed_only=closed_only,
                 now=current_time,
             )
-            volume_z = self._z_score(
-                symbol,
-                timeframe,
-                lambda item: item.volume_delta,
-                closed_only=closed_only,
-                now=current_time,
-            )
-            oi_delta_z = self._z_score(
-                symbol,
-                timeframe,
-                lambda item: item.open_interest_close - item.open_interest_open,
-                closed_only=closed_only,
-                now=current_time,
-            )
             liq_delta = self._bucket_delta(
                 symbol,
                 timeframe,
@@ -546,12 +704,15 @@ class TimeframeAggregateStore:
                 closed_only=closed_only,
                 now=current_time,
             )
-            liq_z_score = self._z_score(
-                symbol,
-                timeframe,
-                lambda item: item.long_liquidations_total - item.short_liquidations_total,
-                closed_only=closed_only,
-                now=current_time,
+            # Calculate volume and OI Z-scores with diagnostics
+            volume_z, volume_reliable, volume_status = self._z_score_diagnostic(
+                symbol, timeframe, lambda item: item.volume_delta, closed_only=closed_only, now=current_time
+            )
+            oi_delta_z, oi_reliable, oi_status = self._z_score_diagnostic(
+                symbol, timeframe, lambda item: item.open_interest_close - item.open_interest_open, closed_only=closed_only, now=current_time
+            )
+            liq_z_score, liq_reliable, liq_status = self._z_score_diagnostic(
+                symbol, timeframe, lambda item: item.long_liquidations_total - item.short_liquidations_total, closed_only=closed_only, now=current_time
             )
             funding_impulse = self._ema_impulse(
                 history,
@@ -609,17 +770,35 @@ class TimeframeAggregateStore:
             liq_pressure = self._liquidation_pressure(bucket)
             atr = self._atr_percent(symbol, timeframe, closed_only=closed_only, now=current_time)
 
+            # Price Change Disambiguation
+            body_change = price_change
+            c2c_change = 0.0
+            if len(history) >= 2:
+                prev_c = history[-2].close_price
+                curr_c = history[-1].close_price
+                if prev_c > 0:
+                    c2c_change = (curr_c - prev_c) / prev_c
+            
+            # Rolling change: last N bars (proxy for timeframe duration)
+            rolling_change = c2c_change # Simplification for now, using 1-bar shift
+            
+            # Market Pressure Diagnostic
+            pressure_diag = self._pressure_diagnostic(symbol, timeframe, closed_only=closed_only, now=current_time)
+
             values.update(
                 {
                     f"data_status_{timeframe}": data_status,
                     f"history_length_{timeframe}": history_length,
-                    f"price_change_{timeframe}": price_change,
+                    f"price_change_{timeframe}": body_change, # Alias
+                    f"body_change_{timeframe}": body_change,
+                    f"close_to_close_change_{timeframe}": c2c_change,
+                    f"rolling_change_{timeframe}": rolling_change,
                     f"oi_change_{timeframe}": oi_change,
                     f"volume_change_{timeframe}": volume_change,
                     f"funding_level_{timeframe}": funding_level,
                     f"funding_extreme_{timeframe}": abs(funding_level) >= float(profile["funding_extreme"]),
-                    f"oi_delta_{timeframe}": oi_delta,
                     f"oi_delta_z_{timeframe}": oi_delta_z,
+                    f"oi_delta_z_reliable_{timeframe}": oi_reliable,
                     f"oi_percentile_{timeframe}": oi_percentile,
                     f"funding_trend_{timeframe}": funding_impulse,
                     f"long_short_ratio_level_{timeframe}": ls_level,
@@ -628,18 +807,101 @@ class TimeframeAggregateStore:
                     f"taker_buy_sell_ratio_delta_{timeframe}": taker_impulse,
                     f"liq_delta_{timeframe}": liq_delta,
                     f"liq_z_score_{timeframe}": liq_z_score,
+                    f"liq_z_score_reliable_{timeframe}": liq_reliable,
                     f"liq_pressure_{timeframe}": liq_pressure,
                     f"atr_{timeframe}": atr,
                     f"volume_z_{timeframe}": volume_z,
+                    f"volume_z_reliable_{timeframe}": volume_reliable,
+                    f"zscore_baseline_status_{timeframe}": volume_status if volume_status != "NORMAL" else oi_status,
                     f"compression_score_{timeframe}": compression_score,
                     f"wick_ratio_{timeframe}": self._wick_ratio(symbol, timeframe, closed_only=closed_only, now=current_time),
                     f"high_wick_candle_{timeframe}": self._high_wick_candle(symbol, timeframe, closed_only=closed_only, now=current_time),
-                    f"market_pressure_{timeframe}": self._pressure_index(symbol, timeframe, closed_only=closed_only, now=current_time),
+                    f"market_pressure_{timeframe}": pressure_diag["value"],
+                    f"market_pressure_status_{timeframe}": pressure_diag["status"],
+                    f"market_pressure_component_count_{timeframe}": pressure_diag["count"],
+                    f"market_pressure_missing_components_{timeframe}": pressure_diag["missing"],
+                    f"market_pressure_stale_components_{timeframe}": pressure_diag["stale"],
+                    f"market_pressure_valid_{timeframe}": pressure_diag["valid"],
                     f"recent_high_{timeframe}": structure["recent_high"],
                     f"recent_low_{timeframe}": structure["recent_low"],
                     f"range_mid_{timeframe}": structure["range_mid"],
                 }
             )
+            
+            # Map OI Alignment from Bucket
+            if bucket:
+                # Morphology
+                body_ratio = self._body_ratio(bucket)
+                upper_wick = self._upper_wick_ratio(bucket)
+                lower_wick = self._lower_wick_ratio(bucket)
+                close_pos = self._close_position_in_range(bucket)
+                
+                # effort vs result (Patch 1)
+                er_diag = self._calculate_effort_result_diagnostics(
+                    volume_z=volume_z,
+                    body_ratio=body_ratio,
+                    upper_wick=upper_wick,
+                    lower_wick=lower_wick,
+                    close_pos=close_pos,
+                    rolling_change=rolling_change,
+                    price_change=body_change
+                )
+                
+                # OI Semantic (Patch 2)
+                oi_diag = self._calculate_oi_semantic_diagnostics(
+                    oi_delta=oi_delta,
+                    price_change=body_change,
+                    rolling_change=rolling_change,
+                    taker_delta=taker_impulse,
+                    volume_z=volume_z,
+                    compression=compression_score,
+                    reliable=bucket.oi_delta_reliable
+                )
+                
+                # Taker Divergence (Patch 3)
+                taker_diag = self._calculate_taker_price_diagnostics(
+                    taker_delta=taker_impulse,
+                    price_change=body_change,
+                    body_ratio=body_ratio,
+                    upper_wick=upper_wick,
+                    lower_wick=lower_wick
+                )
+                
+                # Crowding (Patch 4)
+                crowd_diag = self._calculate_crowding_diagnostics(
+                    funding_level=funding_level,
+                    ls_delta=ls_impulse,
+                    oi_percentile=oi_percentile,
+                    price_change_4h=body_change
+                )
+                
+                # Liquidation (Patch 5)
+                liq_diag = self._calculate_liquidation_diagnostics(
+                    long_liq=bucket.long_liquidations_total,
+                    short_liq=bucket.short_liquidations_total,
+                    volume=bucket.futures_volume_delta,
+                    price_change=body_change,
+                    oi_delta=oi_delta
+                )
+                
+                for diag in [er_diag, oi_diag, taker_diag, crowd_diag, liq_diag]:
+                    for k, v in diag.items():
+                        values[f"{k}_{timeframe}"] = v
+
+                values.update({
+                    f"oi_open_timestamp_{timeframe}": bucket.oi_open_timestamp,
+                    f"oi_close_timestamp_{timeframe}": bucket.oi_close_timestamp,
+                    f"oi_open_age_seconds_{timeframe}": bucket.oi_open_age,
+                    f"oi_close_age_seconds_{timeframe}": bucket.oi_close_age,
+                    f"oi_alignment_status_{timeframe}": bucket.oi_alignment_status,
+                    f"oi_delta_reliable_{timeframe}": bucket.oi_delta_reliable,
+                    f"foundation_version_{timeframe}": bucket.foundation_version,
+                    f"volume_metric_status_{timeframe}": (
+                        "VALID" if bucket.foundation_version == "v2_option_a" else "LEGACY_UNTRUSTED"
+                    ),
+                    f"volume_metric_reliable_{timeframe}": bucket.foundation_version == "v2_option_a",
+                })
+
             compression_values.append(compression_score)
             logger.debug(
                 "flow_metrics_trace symbol=%s timeframe=%s history_length=%s oi_delta=%s volume_delta=%s oi_delta_z=%s volume_z=%s",
@@ -746,10 +1008,23 @@ class TimeframeAggregateStore:
         window: int = 20,
         closed_only: bool = False,
         now: datetime | None = None,
-    ) -> float | None:
+    ) -> float:
+        z, _, _ = self._z_score_diagnostic(symbol, timeframe, extractor, window, closed_only, now)
+        return z
+
+    def _z_score_diagnostic(
+        self,
+        symbol: str,
+        timeframe: str,
+        extractor: Callable[[TimeframeBucket], float],
+        window: int = 20,
+        closed_only: bool = False,
+        now: datetime | None = None,
+    ) -> tuple[float, bool, str]:
         history = self.history_for(symbol, timeframe, limit=window + 1, closed_only=closed_only, now=now)
         if len(history) < 6:
-            return None
+            return 0.0, False, "INSUFFICIENT_HISTORY"
+
         current = extractor(history[-1])
         samples = [extractor(item) for item in history[:-1]]
         return self._robust_z_score(current, samples)
@@ -781,50 +1056,40 @@ class TimeframeAggregateStore:
             return 0.0
         return atr / current_price
 
-    def _pressure_index(
+    def _pressure_diagnostic(
         self,
         symbol: str,
         timeframe: str,
         closed_only: bool = False,
         now: datetime | None = None,
-    ) -> float:
-        price_change = self._current_bucket_change(
-            symbol,
-            timeframe,
-            lambda item: item.close_price,
-            lambda item: item.open_price,
-            closed_only=closed_only,
-            now=now,
-        )
-        oi_change = self._current_bucket_change(
-            symbol,
-            timeframe,
-            lambda item: item.open_interest_close,
-            lambda item: item.open_interest_open,
-            closed_only=closed_only,
-            now=now,
-        )
-        funding_trend = self._trend_delta(
-            symbol,
-            timeframe,
-            lambda item: item.funding_rate_close,
-            closed_only=closed_only,
-            now=now,
-        ) or 0.0
-        ls_delta = self._trend_delta(
-            symbol,
-            timeframe,
-            lambda item: item.long_short_ratio_close,
-            closed_only=closed_only,
-            now=now,
-        ) or 0.0
-        liq_pressure = self._bucket_delta(
-            symbol,
-            timeframe,
-            lambda item: self._liquidation_pressure(item),
-            closed_only=closed_only,
-            now=now,
-        )
+    ) -> dict[str, Any]:
+        bucket = self.latest_bucket(symbol, timeframe, closed_only=closed_only, now=now)
+        
+        missing = []
+        stale = []
+        
+        # Helper to check freshness (300s threshold for L1 components)
+        def check(val, name, updated_at=None):
+            if val is None or val == 0 and name != "price":
+                missing.append(name)
+                return 0.0
+            if updated_at:
+                age = (now - updated_at).total_seconds() if now else 0
+                if age > 300:
+                    stale.append(name)
+            return val
+
+        price_change = self._current_bucket_change(symbol, timeframe, lambda i: i.close_price, lambda i: i.open_price, closed_only, now)
+        oi_change = self._current_bucket_change(symbol, timeframe, lambda i: i.open_interest_close, lambda i: i.open_interest_open, closed_only, now)
+        
+        funding_trend = self._trend_delta(symbol, timeframe, lambda i: i.funding_rate_close, closed_only=closed_only, now=now) or 0.0
+        ls_delta = self._trend_delta(symbol, timeframe, lambda i: i.long_short_ratio_close, closed_only=closed_only, now=now) or 0.0
+        liq_pressure = self._bucket_delta(symbol, timeframe, lambda i: self._liquidation_pressure(i), closed_only, now)
+
+        # Basic presence checks
+        if not bucket: missing.append("all")
+        if abs(oi_change) < 1e-9: # Likely no update
+             pass # OI can be flat
 
         price_score = math.tanh(price_change * 12)
         oi_score = math.tanh(oi_change * 12)
@@ -839,7 +1104,23 @@ class TimeframeAggregateStore:
             + (0.15 * ls_score)
             + (0.10 * liq_score)
         )
-        return math.tanh(raw_pressure * 3)
+        
+        score = math.tanh(raw_pressure * 3)
+        count = 5 - len(missing)
+        
+        status = "VALID"
+        if "all" in missing: status = "MISSING"
+        elif len(missing) >= 2: status = "PARTIAL"
+        elif stale: status = "STALE"
+        
+        return {
+            "value": score if status != "MISSING" else 0.0,
+            "status": status,
+            "missing": missing,
+            "stale": stale,
+            "count": count,
+            "valid": status == "VALID"
+        }
 
     def _compression_score(
         self,
@@ -879,15 +1160,30 @@ class TimeframeAggregateStore:
             return ordered[mid]
         return (ordered[mid - 1] + ordered[mid]) / 2
 
-    def _robust_z_score(self, current: float, samples: list[float]) -> float:
+    def _robust_z_score(self, current: float, samples: list[float]) -> tuple[float, bool, str]:
         cleaned = [value for value in samples if math.isfinite(value)]
         if len(cleaned) < 6:
-            return 0.0
+            return 0.0, False, "INSUFFICIENT_HISTORY"
+            
         median = self._median(cleaned)
         deviations = [abs(value - median) for value in cleaned]
         mad = self._median(deviations)
-        scale = (1.4826 * mad) + ROBUST_EPSILON
-        return (current - median) / scale
+        
+        # Defensive handling of flat baseline
+        if mad < MIN_MAD_THRESHOLD:
+            if abs(current - median) < MIN_MAD_THRESHOLD:
+                return 0.0, True, "FLAT_BASELINE"
+            else:
+                # Capped explosion
+                z = Z_SCORE_CLAMP if current > median else -Z_SCORE_CLAMP
+                return z, False, "FLAT_BASELINE"
+        
+        scale = (1.4826 * mad) + 1e-9 # ROBUST_EPSILON
+        z = (current - median) / scale
+        
+        # Clamp to sane range
+        clamped_z = max(-Z_SCORE_CLAMP, min(Z_SCORE_CLAMP, z))
+        return clamped_z, True, "NORMAL"
 
     @staticmethod
     def _ema(values: list[float], window: int) -> float:
@@ -1021,3 +1317,239 @@ class TimeframeAggregateStore:
             bucket.open_price,
         )
         return self.flow_engine.is_high_wick_candle(wick_ratio, price_change, timeframe)
+    def _body_ratio(self, bucket: TimeframeBucket) -> float:
+        total_range = bucket.high_price - bucket.low_price
+        if total_range <= 0:
+            return 0.0
+        return abs(bucket.close_price - bucket.open_price) / total_range
+
+    def _upper_wick_ratio(self, bucket: TimeframeBucket) -> float:
+        total_range = bucket.high_price - bucket.low_price
+        if total_range <= 0:
+            return 0.0
+        high_body = max(bucket.open_price, bucket.close_price)
+        return (bucket.high_price - high_body) / total_range
+
+    def _lower_wick_ratio(self, bucket: TimeframeBucket) -> float:
+        total_range = bucket.high_price - bucket.low_price
+        if total_range <= 0:
+            return 0.0
+        low_body = min(bucket.open_price, bucket.close_price)
+        return (low_body - bucket.low_price) / total_range
+
+    def _close_position_in_range(self, bucket: TimeframeBucket) -> float:
+        total_range = bucket.high_price - bucket.low_price
+        if total_range <= 0:
+            return 0.5
+        return (bucket.close_price - bucket.low_price) / total_range
+
+    def _calculate_effort_result_diagnostics(
+        self,
+        volume_z: float,
+        body_ratio: float,
+        upper_wick: float,
+        lower_wick: float,
+        close_pos: float,
+        rolling_change: float,
+        price_change: float,
+    ) -> dict[str, object]:
+        volume_z = volume_z or 0.0
+        effort = max(volume_z, 0.0)
+        result = abs(price_change)
+        
+        ratio = effort / result if result > 1e-6 else effort * 100.0
+        
+        state = "Normal"
+        absorption = False
+        efficient = False
+        climax = False
+        
+        # 1. Absorption
+        if volume_z >= 2.0 and body_ratio <= 0.25 and (upper_wick >= 0.4 or lower_wick >= 0.4):
+            state = "Absorption"
+            absorption = True
+            
+        # 2. Efficient Move
+        elif volume_z >= 1.0 and body_ratio >= 0.5:
+            # close position supports direction
+            if (price_change > 0 and close_pos >= 0.7) or (price_change < 0 and close_pos <= 0.3):
+                state = "Efficient"
+                efficient = True
+                
+        # 3. Climax
+        if volume_z >= 2.5 and abs(rolling_change) >= 0.05: # Using 5% as extended
+            if (rolling_change > 0 and (upper_wick >= 0.5 or close_pos <= 0.4)) or \
+               (rolling_change < 0 and (lower_wick >= 0.5 or close_pos >= 0.6)):
+                state = "Climax"
+                climax = True
+                
+        return {
+            "effort_vs_result_ratio": round(ratio, 4),
+            "effort_result_state": state,
+            "absorption_candidate": absorption,
+            "efficient_move_candidate": efficient,
+            "climax_candidate": climax
+        }
+
+    def _calculate_oi_semantic_diagnostics(
+        self,
+        oi_delta: float,
+        price_change: float,
+        rolling_change: float,
+        taker_delta: float,
+        volume_z: float,
+        compression: float,
+        reliable: bool,
+    ) -> dict[str, object]:
+        oi_delta = oi_delta or 0.0
+        price_change = price_change or 0.0
+        rolling_change = rolling_change or 0.0
+        taker_delta = taker_delta or 0.0
+        volume_z = volume_z or 0.0
+        compression = compression or 0.0
+        
+        if not reliable:
+            return {
+                "oi_build_type": "unknown",
+                "oi_semantic_state": "unreliable",
+                "oi_semantic_reliable": False
+            }
+            
+        build_type = "ambiguous"
+        state = "Neutral"
+        
+        # Price follow taker check
+        price_follows_taker = (price_change * taker_delta) > 0
+        directional_bullish = price_change > 0 and rolling_change > 0
+        directional_bearish = price_change < 0 and rolling_change < 0
+        
+        if oi_delta > 0:
+            if directional_bullish and taker_delta > 0.02 and price_follows_taker:
+                build_type = "aggressive_long_build"
+                state = "Strong Long Build"
+            elif directional_bearish and taker_delta < -0.02 and price_follows_taker:
+                build_type = "aggressive_short_build"
+                state = "Strong Short Build"
+            elif abs(price_change) < 0.002 and (volume_z >= 1.5 or compression >= 0.3):
+                build_type = "passive_build"
+                state = "Accumulation/Absorption"
+        elif oi_delta < 0:
+            if price_change > 0.005:
+                build_type = "short_covering"
+                state = "Short Squeeze"
+            elif price_change < -0.005:
+                build_type = "long_unwind"
+                state = "Long Liquidation/Unwind"
+                
+        return {
+            "oi_build_type": build_type,
+            "oi_semantic_state": state,
+            "oi_semantic_reliable": True
+        }
+
+    def _calculate_taker_price_diagnostics(
+        self,
+        taker_delta: float,
+        price_change: float,
+        body_ratio: float,
+        upper_wick: float,
+        lower_wick: float,
+    ) -> dict[str, object]:
+        taker_delta = taker_delta or 0.0
+        price_change = price_change or 0.0
+        body_ratio = body_ratio or 0.0
+        upper_wick = upper_wick or 0.0
+        lower_wick = lower_wick or 0.0
+        
+        threshold = 0.02
+        alignment = False
+        divergence = False
+        buyer_abs = False
+        seller_abs = False
+        
+        if (taker_delta > threshold and price_change > 0) or (taker_delta < -threshold and price_change < 0):
+            alignment = True
+        
+        if (taker_delta > threshold and price_change <= 0) or (taker_delta < -threshold and price_change >= 0):
+            divergence = True
+            
+        if taker_delta > threshold and (price_change <= 0.001 or body_ratio <= 0.3 or upper_wick >= 0.4):
+            buyer_abs = True
+            
+        if taker_delta < -threshold and (price_change >= -0.001 or body_ratio <= 0.3 or lower_wick >= 0.4):
+            seller_abs = True
+            
+        return {
+            "taker_price_alignment": alignment,
+            "taker_price_divergence": divergence,
+            "buyer_absorption_candidate": buyer_abs,
+            "seller_absorption_candidate": seller_abs
+        }
+
+    def _calculate_crowding_diagnostics(
+        self,
+        funding_level: float,
+        ls_delta: float,
+        oi_percentile: float,
+        price_change_4h: float,
+    ) -> dict[str, object]:
+        funding_level = funding_level or 0.0
+        ls_delta = ls_delta or 0.0
+        oi_percentile = oi_percentile or 0.0
+        price_change_4h = price_change_4h or 0.0
+        
+        # Crowding score: 0 to 1
+        score = (abs(funding_level) * 1000.0) + (abs(ls_delta) * 5.0) + oi_percentile
+        score = min(score, 1.0)
+        
+        status = "neutral"
+        side = "none"
+        
+        if funding_level > 0.0003 or ls_delta > 0.05:
+            side = "long"
+            status = "crowded_long"
+            if funding_level > 0.0006 or oi_percentile > 0.9:
+                status = "extreme_crowded_long"
+        elif funding_level < -0.0003 or ls_delta < -0.05:
+            side = "short"
+            status = "crowded_short"
+            if funding_level < -0.0006 or oi_percentile > 0.9:
+                status = "extreme_crowded_short"
+                
+        return {
+            "crowding_score": round(score, 4),
+            "crowding_status": status,
+            "crowding_side": side
+        }
+
+    def _calculate_liquidation_diagnostics(
+        self,
+        long_liq: float,
+        short_liq: float,
+        volume: float,
+        price_change: float,
+        oi_delta: float,
+    ) -> dict[str, object]:
+        long_liq = long_liq or 0.0
+        short_liq = short_liq or 0.0
+        volume = volume or 0.0
+        price_change = price_change or 0.0
+        oi_delta = oi_delta or 0.0
+        
+        total_liq = long_liq + short_liq
+        ratio = total_liq / volume if volume > 0 else 0.0
+        
+        context = "liquidation_noise"
+        if ratio >= 0.1:
+            if price_change * (short_liq - long_liq) > 0:
+                context = "squeeze_continuation"
+            else:
+                context = "liquidation_flush"
+                
+        if ratio >= 0.2 and abs(price_change) < 0.005:
+            context = "reversal_candidate"
+            
+        return {
+            "liq_contribution_ratio": round(ratio, 4),
+            "liquidation_context": context
+        }

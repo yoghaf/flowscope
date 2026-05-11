@@ -1,0 +1,21 @@
+Category,Value,Count
+effort_result_state,,896
+effort_result_state,Normal,3008
+effort_result_state,Efficient,518
+effort_result_state,Absorption,226
+effort_result_state,Climax,1
+oi_build_type,,896
+oi_build_type,unknown,3663
+oi_build_type,ambiguous,90
+taker_price_divergence,False,3084
+taker_price_divergence,True,1565
+crowding_status,,896
+crowding_status,neutral,1208
+crowding_status,extreme_crowded_short,443
+crowding_status,crowded_short,576
+crowding_status,crowded_long,1311
+crowding_status,extreme_crowded_long,215
+liquidation_context,,896
+liquidation_context,liquidation_noise,3753
+contradictions,Continuation - Extreme Crowding,88
+contradictions,Trap - No Divergence,6

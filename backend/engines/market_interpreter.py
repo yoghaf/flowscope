@@ -43,6 +43,8 @@ class MarketInterpretationAssessment:
     risk_notes: list[str]
     warnings: list[str]
     self_critique: str
+    regime_price_basis: str = "body_change"
+    regime_is_single_candle_driven: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -52,6 +54,8 @@ class MarketInterpreterEngine:
     @staticmethod
     def _metric(metrics: FlowMetrics, field: str, timeframe: str, default: float = 0.0) -> float:
         value = getattr(metrics, f"{field}_{timeframe}", default)
+        if value is None:
+            value = getattr(metrics, field, default)
         return float(value) if value is not None else default
 
     @staticmethod
@@ -385,7 +389,20 @@ class MarketInterpreterEngine:
             base_strength += 0.15
         base_strength += 0.2 * momentum_strength
         structure_strength = MarketInterpreterEngine._clamp(base_strength)
-        return trend, control, label, structure_shift, round(structure_strength, 4)
+        
+        # Diagnostic: Is the current move driven solely by the latest candle?
+        # If HH/LL is caused by bucket and not by the rest of the recent_window
+        is_single_candle = False
+        if label == "HH/HL" and bucket.high_price >= current_high:
+            other_highs = [p.high_price for p in recent_window if p != bucket]
+            if not other_highs or bucket.high_price > max(other_highs) * (1.0 + STRUCTURE_TOLERANCE):
+                is_single_candle = True
+        elif label == "LH/LL" and bucket.low_price <= current_low:
+            other_lows = [p.low_price for p in recent_window if p != bucket]
+            if not other_lows or bucket.low_price < min(other_lows) * (1.0 - STRUCTURE_TOLERANCE):
+                is_single_candle = True
+
+        return trend, control, label, structure_shift, round(structure_strength, 4), "body_change", is_single_candle
 
     @staticmethod
     def _oi_intent(oi_change: float) -> OiIntent:
@@ -670,7 +687,7 @@ class MarketInterpreterEngine:
         squeeze_memory_active: bool = False,
     ) -> MarketInterpretationAssessment:
         profile = TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])
-        trend, control, structure_label, structure_shift, structure_strength = self._market_control(
+        trend, control, structure_label, structure_shift, structure_strength, price_basis, is_single_candle = self._market_control(
             bucket=bucket,
             history=history,
             metrics=metrics,
@@ -879,6 +896,8 @@ class MarketInterpreterEngine:
             risk_notes=risk_notes,
             warnings=warnings,
             self_critique=self_critique,
+            regime_price_basis=price_basis,
+            regime_is_single_candle_driven=is_single_candle,
         )
 
     def build_status_interpretation(
@@ -939,4 +958,6 @@ class MarketInterpreterEngine:
             risk_notes=[f"Status reason: {reason.replace('_', ' ')}."],
             warnings=["Missing context"] if signal_status == "NO_DATA" else [],
             self_critique="This reading is intentionally incomplete because the required context is not available yet.",
+            regime_price_basis="body_change",
+            regime_is_single_candle_driven=False,
         )

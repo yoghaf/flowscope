@@ -579,8 +579,6 @@ async def load_bucket_history(
                     .where(MarketDataBucket.symbol == symbol, MarketDataBucket.timeframe == timeframe)
                     .order_by(MarketDataBucket.bucket_start.desc())
                 )
-                if cutoff is not None:
-                    statement = statement.where(MarketDataBucket.bucket_start >= cutoff)
                 if limit_per_symbol > 0:
                     statement = statement.limit(limit_per_symbol)
                     
@@ -613,6 +611,7 @@ async def replay_symbol(
     bias_override: ReplayBiasOverrideConfig | None = None,
     ready_promotion: ReplayReadyPromotionConfig | None = None,
     setup_filter: ReplaySetupFilterConfig | None = None,
+    on_step: Callable[[str, datetime, dict[str, AssetState]], Coroutine[Any, Any, None]] | None = None,
 ) -> tuple[list[TradeSignal], ReplayDiagnostics]:
     diagnostics = ReplayDiagnostics(
         stage_counts=Counter(),
@@ -684,6 +683,15 @@ async def replay_symbol(
                 indices[timeframe] += 1
 
         await service._update_state(symbol, persist_alerts=False)
+        
+        if on_step:
+            symbol_states = {
+                tf: service.states_by_timeframe[tf][symbol]
+                for tf in DEFAULT_TIMEFRAMES
+                if symbol in service.states_by_timeframe.get(tf, {})
+            }
+            await on_step(symbol, anchor_timestamp, symbol_states)
+
         await _evaluate_incremental_trades(
             replay_db=replay_db,
             service=service,
@@ -752,6 +760,19 @@ async def replay_symbol(
                             "signal_status": current_state.signal_status,
                             "entry_type": entry_type,
                             "reasons": list(reasons),
+                            # Semantic Diagnostics
+                            "effort_result_state": current_state.effort_result_state,
+                            "absorption_candidate": current_state.absorption_candidate,
+                            "climax_candidate": current_state.climax_candidate,
+                            "efficient_move_candidate": current_state.efficient_move_candidate,
+                            "oi_build_type": current_state.oi_build_type,
+                            "oi_semantic_state": current_state.oi_semantic_state,
+                            "taker_price_divergence": current_state.taker_price_divergence,
+                            "crowding_status": current_state.crowding_status,
+                            "liquidation_context": current_state.liquidation_context,
+                            "volume_z": getattr(current_state.flow_metrics, f"volume_z_{timeframe}", 0.0),
+                            "body_change": getattr(current_state.flow_metrics, f"body_change_{timeframe}", 0.0),
+                            "rolling_change": getattr(current_state.flow_metrics, f"rolling_change_{timeframe}", 0.0),
                         }
                     )
                 diagnostics.strategy_bias_stage_counts[strategy_bias_key][stage] += 1

@@ -30,6 +30,39 @@ class ExchangeSnapshot:
     taker_buy_sell_ratio: float = 1.0
     long_liquidations: float = 0.0
     short_liquidations: float = 0.0
+    
+    # Timeframe-specific volumes (Official Kline Quote Volume)
+    futures_volume_15m: float = 0.0
+    futures_volume_1h: float = 0.0
+    futures_volume_4h: float = 0.0
+    futures_volume_24h: float = 0.0
+
+    # Timeframe-specific OHLCV (Official Kline Ground Truth)
+    futures_ohlc_15m: dict[str, float] | None = None
+    futures_ohlc_1h: dict[str, float] | None = None
+    futures_ohlc_4h: dict[str, float] | None = None
+    futures_ohlc_24h: dict[str, float] | None = None
+
+    # Data Quality Metadata
+    price_updated_at: datetime | None = None
+    spot_volume_updated_at: datetime | None = None
+    futures_volume_updated_at: datetime | None = None
+    open_interest_updated_at: datetime | None = None
+    funding_rate_updated_at: datetime | None = None
+    long_short_ratio_updated_at: datetime | None = None
+    taker_buy_sell_ratio_updated_at: datetime | None = None
+    liquidation_updated_at: datetime | None = None
+
+    price_source: str = "missing"
+    volume_source: str = "missing"
+    open_interest_source: str = "missing"
+    funding_source: str = "missing"
+    long_short_ratio_source: str = "missing"
+    taker_ratio_source: str = "missing"
+    liquidation_source: str = "missing"
+
+    data_was_coalesced: bool = False
+    liquidation_is_reset_suspected: bool = False
 
 
 class BaseCollector:

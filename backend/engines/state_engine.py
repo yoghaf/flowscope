@@ -27,8 +27,19 @@ class StateEngine:
     MIN_VALID_CONFIDENCE = 0.6
 
     @staticmethod
-    def _metric(metrics: FlowMetrics, field: str, timeframe: str) -> float:
-        return getattr(metrics, f"{field}_{timeframe}", 0.0)
+    def _metric(metrics: FlowMetrics, field: str, timeframe: str, default: float = 0.0) -> float:
+        value = getattr(metrics, f"{field}_{timeframe}", default)
+        if value is None:
+            # Try fallback to non-timeframe field if applicable
+            value = getattr(metrics, field, default)
+        
+        if value is None:
+            return default
+            
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
 
     @staticmethod
     def _ratio_score(value: float, threshold: float) -> float:

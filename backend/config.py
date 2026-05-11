@@ -158,6 +158,7 @@ class Settings(BaseSettings):
     entry_filter_min_wick_ratio_24h: float = 0.03
     entry_filter_min_volume_change_4h: float = -0.70
     entry_filter_allow_shorts: bool = True
+    allow_wait_to_ready: bool = False
     entry_filter_max_liq_pressure_1h: float = 0.23
     breakout_close_confirmation_buffer: float = 0.001
     breakout_max_late_entry_distance: float = 0.004
@@ -285,6 +286,19 @@ class Settings(BaseSettings):
     backfill_enabled: bool = True
     backfill_provider: Literal["binance", "none"] = "binance"
     backfill_lookback_days: int = 7
+
+    # Data Quality SLAs (seconds)
+    dq_sla_price: float = 15.0  # Mark price comes from WS, should be very fresh
+    dq_sla_volume: float = 30.0
+    dq_sla_oi: float = 600.0    # OI from rotary, usually 3-8m cycle
+    dq_sla_funding: float = 30.0
+    dq_sla_ratio: float = 600.0
+    dq_sla_liquidation: float = 60.0
+
+    # 15m entry bucket confirmed candle policy (F)
+    # If True: only enter on confirmed (closed) 15m candle.
+    # If False: allow intrabar entry.
+    entry_signal_candle_confirmed_only: bool = False
 
     # Staged collector settings
     oi_batch_size: int = 40          # OI symbols per rotary cycle (weight 1 each)

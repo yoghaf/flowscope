@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections import defaultdict
-from datetime import datetime, timezone
+from collections import defaultdict, deque
+from datetime import datetime, timezone, timedelta
 UTC = timezone.utc
 from typing import Any
 
@@ -77,9 +77,32 @@ class BinanceCollector(BaseCollector):
         self._oi_cache: dict[str, float] = {}
         self._ls_ratio_cache: dict[str, float] = {}
         self._taker_ratio_cache: dict[str, float] = {}
-        self._liquidation_cache: dict[str, tuple[float, float]] = {}
+        from collections import deque
+        self._oi_history: dict[str, deque[tuple[datetime, float]]] = defaultdict(lambda: deque(maxlen=1000))
+        self._liquidation_events: dict[str, deque[tuple[datetime, float, float]]] = defaultdict(deque)
         self._futures_kline_volume_cache: dict[str, float] = {}
         self._spot_kline_volume_cache: dict[str, float] = {}
+        
+        # Official timeframe klines (OHLCV)
+        self._futures_ohlc_15m: dict[str, dict[str, float]] = {}
+        self._futures_ohlc_1h: dict[str, dict[str, float]] = {}
+        self._futures_ohlc_4h: dict[str, dict[str, float]] = {}
+        self._futures_ohlc_24h: dict[str, dict[str, float]] = {}
+        
+        self._last_snapshot_time: dict[str, datetime] = {}
+
+        # ── freshness tracking ─────────────────────────────────────────
+        self._price_updated_at: dict[str, datetime] = {}
+        self._funding_updated_at: dict[str, datetime] = {}
+        self._oi_updated_at: dict[str, datetime] = {}
+        self._ls_ratio_updated_at: dict[str, datetime] = {}
+        self._taker_ratio_updated_at: dict[str, datetime] = {}
+        self._volume_updated_at: dict[str, datetime] = {}
+        self._liquidation_updated_at: dict[str, datetime] = {}
+
+        # ── source tracking ───────────────────────────────────────────
+        self._price_source: dict[str, str] = {}
+        self._volume_source: dict[str, str] = {}
 
         # ── rotary state ──────────────────────────────────────────────
         self._oi_batch_size = getattr(settings, "oi_batch_size", 40)
@@ -162,6 +185,7 @@ class BinanceCollector(BaseCollector):
                             if isinstance(data, list):
                                 for item in data:
                                     symbol = item.get("s", "")
+                                    now = self.utcnow()
                                     self._ws_prices[symbol] = self.parse_float(
                                         item.get("p")
                                     )
@@ -171,6 +195,9 @@ class BinanceCollector(BaseCollector):
                                     self._ws_funding[symbol] = self.parse_float(
                                         item.get("r")
                                     )
+                                    self._price_updated_at[symbol] = now
+                                    self._funding_updated_at[symbol] = now
+                                    self._price_source[symbol] = "ws_mark_price"
                         except (json.JSONDecodeError, KeyError) as exc:
                             logger.debug("WS parse error: %s", exc)
             except websockets.exceptions.ConnectionClosed as exc:
@@ -211,12 +238,18 @@ class BinanceCollector(BaseCollector):
                             liquidation_value = max(filled_qty * avg_price, 0.0)
                             if not symbol or liquidation_value <= 0.0:
                                 continue
-                            long_total, short_total = self._liquidation_cache.get(symbol, (0.0, 0.0))
-                            if side == "SELL":
-                                long_total += liquidation_value
-                            elif side == "BUY":
-                                short_total += liquidation_value
-                            self._liquidation_cache[symbol] = (long_total, short_total)
+                             
+                            now = self.utcnow()
+                            long_val = liquidation_value if side == "SELL" else 0.0
+                            short_val = liquidation_value if side == "BUY" else 0.0
+                             
+                            self._liquidation_events[symbol].append((now, long_val, short_val))
+                            self._liquidation_updated_at[symbol] = now
+                             
+                            # drop events older than 24h
+                            cutoff = now.timestamp() - 86400
+                            while self._liquidation_events[symbol] and self._liquidation_events[symbol][0][0].timestamp() < cutoff:
+                                self._liquidation_events[symbol].popleft()
                         except (json.JSONDecodeError, KeyError, TypeError) as exc:
                             logger.debug("WS forceOrder parse error: %s", exc)
             except websockets.exceptions.ConnectionClosed as exc:
@@ -280,8 +313,8 @@ class BinanceCollector(BaseCollector):
                 batch = self._next_batch(
                     self._symbols, self._volume_batch_size, "_volume_offset"
                 )
-                await self._fetch_live_volume_batch(batch)
-                logger.debug("Live volume batch done: %d symbols", len(batch))
+                await self._fetch_live_kline_batch(batch)
+                logger.debug("Live kline batch done: %d symbols", len(batch))
             except Exception as exc:
                 logger.error("Live volume rotary error: %s", exc)
             await asyncio.sleep(max(self._volume_refresh_seconds, 1))
@@ -336,9 +369,12 @@ class BinanceCollector(BaseCollector):
                     )
                     response.raise_for_status()
                     data = response.json()
+                    now = self.utcnow()
                     self._oi_cache[symbol] = self.parse_float(
                         data.get("openInterest")
                     )
+                    self._oi_updated_at[symbol] = now
+                    self._oi_history[symbol].append((now, self._oi_cache[symbol]))
                 except Exception as exc:
                     logger.debug("OI fetch failed %s: %s", symbol, exc)
 
@@ -365,7 +401,9 @@ class BinanceCollector(BaseCollector):
                             entries[0].get("shortAccount"), 0.5
                         )
                         if short_account > 0:
+                            now = self.utcnow()
                             self._ls_ratio_cache[symbol] = long_account / short_account
+                            self._ls_ratio_updated_at[symbol] = now
                 except Exception as exc:
                     logger.debug("Ratio fetch failed %s: %s", symbol, exc)
 
@@ -385,52 +423,66 @@ class BinanceCollector(BaseCollector):
                     response.raise_for_status()
                     entries = response.json()
                     if entries:
+                        now = self.utcnow()
                         self._taker_ratio_cache[symbol] = self.parse_float(
                             entries[0].get("buySellRatio"), 1.0
                         )
+                        self._taker_ratio_updated_at[symbol] = now
                 except Exception as exc:
                     logger.debug("Taker fetch failed %s: %s", symbol, exc)
 
         await asyncio.gather(*(fetch_one(s) for s in symbols))
 
-    async def _fetch_live_volume_batch(self, symbols: list[str]) -> None:
-        """Fetch current 1m quote volume; 24h ticker volume is not candle volume."""
+    async def _fetch_live_kline_batch(self, symbols: list[str]) -> None:
+        """Fetch current OHLCV for major timeframes to ensure foundation integrity."""
         semaphore = asyncio.Semaphore(self.settings.exchange_request_concurrency)
 
         async def fetch_one(symbol: str) -> None:
             async with semaphore:
-                futures_volume = 0.0
-                spot_volume = 0.0
                 try:
-                    response = await self.client.get(
-                        f"{self.rest_url}{_FAPI_KLINES}",
-                        params={"symbol": symbol, "interval": "1m", "limit": 1},
-                    )
-                    response.raise_for_status()
-                    entries = response.json()
-                    if entries:
-                        item = entries[-1]
-                        futures_volume = self.parse_float(item[7] if len(item) > 7 else item[5])
-                except Exception as exc:
-                    logger.debug("Futures live volume fetch failed %s: %s", symbol, exc)
+                    # Helper to parse kline into dict
+                    def parse_k(e):
+                        if not e: return None
+                        item = e[-1]
+                        return {
+                            "open": self.parse_float(item[1]),
+                            "high": self.parse_float(item[2]),
+                            "low": self.parse_float(item[3]),
+                            "close": self.parse_float(item[4]),
+                            "volume": self.parse_float(item[7]) # Quote volume
+                        }
 
-                try:
-                    response = await self.client.get(
-                        f"{self.spot_rest_url}{_SPOT_KLINES}",
-                        params={"symbol": symbol, "interval": "1m", "limit": 1},
-                    )
-                    response.raise_for_status()
-                    entries = response.json()
-                    if entries:
-                        item = entries[-1]
-                        spot_volume = self.parse_float(item[7] if len(item) > 7 else item[5])
-                except Exception as exc:
-                    logger.debug("Spot live volume fetch failed %s: %s", symbol, exc)
+                    # 1m (Legacy fallback support)
+                    r1m = await self.client.get(f"{self.rest_url}{_FAPI_KLINES}", params={"symbol": symbol, "interval": "1m", "limit": 1})
+                    r1m.raise_for_status()
+                    d1m = parse_k(r1m.json())
+                    if d1m: self._futures_kline_volume_cache[symbol] = d1m["volume"]
 
-                if futures_volume > 0.0:
-                    self._futures_kline_volume_cache[symbol] = futures_volume
-                if spot_volume > 0.0:
-                    self._spot_kline_volume_cache[symbol] = spot_volume
+                    # 15m
+                    r15m = await self.client.get(f"{self.rest_url}{_FAPI_KLINES}", params={"symbol": symbol, "interval": "15m", "limit": 1})
+                    r15m.raise_for_status()
+                    self._futures_ohlc_15m[symbol] = parse_k(r15m.json())
+
+                    # 1h
+                    r1h = await self.client.get(f"{self.rest_url}{_FAPI_KLINES}", params={"symbol": symbol, "interval": "1h", "limit": 1})
+                    r1h.raise_for_status()
+                    self._futures_ohlc_1h[symbol] = parse_k(r1h.json())
+
+                    # 4h
+                    r4h = await self.client.get(f"{self.rest_url}{_FAPI_KLINES}", params={"symbol": symbol, "interval": "4h", "limit": 1})
+                    r4h.raise_for_status()
+                    self._futures_ohlc_4h[symbol] = parse_k(r4h.json())
+
+                    # 24h
+                    r1d = await self.client.get(f"{self.rest_url}{_FAPI_KLINES}", params={"symbol": symbol, "interval": "1d", "limit": 1})
+                    r1d.raise_for_status()
+                    self._futures_ohlc_24h[symbol] = parse_k(r1d.json())
+
+                    self._volume_updated_at[symbol] = self.utcnow()
+                    self._volume_source[symbol] = "official_klines"
+
+                except Exception as exc:
+                    logger.debug("Official kline fetch failed %s: %s", symbol, exc)
 
         await asyncio.gather(*(fetch_one(s) for s in symbols))
 
@@ -449,33 +501,58 @@ class BinanceCollector(BaseCollector):
         timestamp = self.utcnow()
         snapshots: dict[str, ExchangeSnapshot] = {}
 
+        # Track last snapshot time to compute liquidation delta correctly
+        if not hasattr(self, "_last_snapshot_time"):
+            self._last_snapshot_time: dict[str, datetime] = {}
+
         for symbol in symbols:
             # Price: prefer WS, fall back to bulk ticker
             price = self._ws_prices.get(symbol, 0.0)
+            price_source = self._price_source.get(symbol, "missing")
+            
             if price <= 0:
                 ticker = self._bulk_ticker.get(symbol, {})
                 price = self.parse_float(ticker.get("lastPrice"))
+                if price > 0:
+                    price_source = "futures_ticker"
+                    self._price_updated_at[symbol] = timestamp # Approximate since ticker is bulk
 
             if price <= 0:
                 continue  # skip symbols with no price data at all
 
-            # Quote volume from recent klines. The 24h ticker quoteVolume is a
-            # rolling gauge, so using it as a monotonic counter corrupts volume_z.
+            # Quote volume from recent klines.
             futures_volume = self._futures_kline_volume_cache.get(symbol, 0.0)
             spot_volume = self._spot_kline_volume_cache.get(symbol, 0.0)
+            volume_source = self._volume_source.get(symbol, "missing")
 
             # Funding from WS
             funding_rate = self._ws_funding.get(symbol, 0.0)
+            funding_source = "ws_mark_price" if symbol in self._ws_funding else "missing"
 
             # OI from rotary cache
             open_interest = self._oi_cache.get(symbol, 0.0)
+            oi_source = "open_interest_endpoint" if symbol in self._oi_cache else "missing"
 
             # Ratios from rotary cache
             long_short_ratio = self._ls_ratio_cache.get(symbol, 1.0)
+            ls_source = "global_ls_ratio" if symbol in self._ls_ratio_cache else "default_neutral"
+            
             taker_ratio = self._taker_ratio_cache.get(symbol, 1.0)
+            taker_source = "taker_ls_ratio" if symbol in self._taker_ratio_cache else "default_neutral"
 
-            # Liquidations from cache (if available)
-            liq = self._liquidation_cache.get(symbol, (0.0, 0.0))
+            # Liquidations from events deque
+            last_time = self._last_snapshot_time.get(symbol, timestamp - timedelta(seconds=60))
+            events = self._liquidation_events.get(symbol, deque())
+            
+            long_liq_delta = 0.0
+            short_liq_delta = 0.0
+            for ev_ts, l_val, s_val in events:
+                if last_time < ev_ts <= timestamp:
+                    long_liq_delta += l_val
+                    short_liq_delta += s_val
+            
+            liq_source = "force_order_ws" if symbol in self._liquidation_updated_at else "missing"
+            self._last_snapshot_time[symbol] = timestamp
 
             snapshots[symbol] = ExchangeSnapshot(
                 exchange=self.exchange_name,
@@ -487,9 +564,32 @@ class BinanceCollector(BaseCollector):
                 open_interest=open_interest,
                 funding_rate=funding_rate,
                 long_short_ratio=long_short_ratio,
-                taker_buy_sell_ratio=taker_ratio,
-                long_liquidations=liq[0],
-                short_liquidations=liq[1],
+                long_liquidations=long_liq_delta,
+                short_liquidations=short_liq_delta,
+                
+                # Official timeframe ground truth (Option A)
+                futures_ohlc_15m=self._futures_ohlc_15m.get(symbol),
+                futures_ohlc_1h=self._futures_ohlc_1h.get(symbol),
+                futures_ohlc_4h=self._futures_ohlc_4h.get(symbol),
+                futures_ohlc_24h=self._futures_ohlc_24h.get(symbol),
+                
+                # DQ Metadata
+                price_updated_at=self._price_updated_at.get(symbol),
+                spot_volume_updated_at=self._volume_updated_at.get(symbol),
+                futures_volume_updated_at=self._volume_updated_at.get(symbol),
+                open_interest_updated_at=self._oi_updated_at.get(symbol),
+                funding_rate_updated_at=self._funding_updated_at.get(symbol),
+                long_short_ratio_updated_at=self._ls_ratio_updated_at.get(symbol),
+                taker_buy_sell_ratio_updated_at=self._taker_ratio_updated_at.get(symbol),
+                liquidation_updated_at=self._liquidation_updated_at.get(symbol),
+                
+                price_source=price_source,
+                volume_source=volume_source,
+                open_interest_source=oi_source,
+                funding_source=funding_source,
+                long_short_ratio_source=ls_source,
+                taker_ratio_source=taker_source,
+                liquidation_source=liq_source
             )
 
         logger.info(

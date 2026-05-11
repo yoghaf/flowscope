@@ -1,0 +1,11 @@
+## BEHAVIOR PROOF LOG SUMMARY
+Total events analyzed: 80
+Continuation-Long vs Continuation-Short: 0 vs 0
+Strong Longs vs Strong Shorts: 0 vs 0
+Watchlist-Long vs Watchlist-Short: 0 vs 0
+Trap-Long vs Trap-Short: 0 vs 0
+Absorption-High / Absorption-Mid count: 0 / 0
+LONG muncul saat funding ekstrem: 0
+LONG muncul saat volume_z tinggi tapi price_change kecil: 0
+expectancy LONG vs SHORT (pnl_r mean):
+LONG: -0.4295, SHORT: -0.3884
