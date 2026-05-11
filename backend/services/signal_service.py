@@ -314,10 +314,11 @@ class SignalService:
         self.user_preferences[DEFAULT_USER_ID] = self._default_preferences(DEFAULT_USER_ID)
         self.user_initialized.add(DEFAULT_USER_ID)
 
-    def freshness_age(self, now: datetime, updated_at: datetime | None) -> float | None:
-        if updated_at is None:
+    def freshness_age(self, now: datetime, updated_at: datetime | None, fallback: datetime | None = None) -> float | None:
+        ts = updated_at or fallback
+        if ts is None:
             return None
-        return max(0.0, (now - updated_at).total_seconds())
+        return max(0.0, (now - ts).total_seconds())
 
     def is_fresh(self, age_seconds: float | None, max_age: int) -> bool:
         return age_seconds is not None and age_seconds <= max_age
@@ -1007,20 +1008,29 @@ class SignalService:
         vol_upd = point.futures_volume_updated_at if point.futures_volume > VALUE_EPSILON else previous.futures_volume_updated_at
         vol_src = point.volume_source if point.futures_volume > VALUE_EPSILON else "carry_forward"
 
+        # Funding: Use fresh update if source is valid, regardless of value (rate can be 0.0)
+        f_upd = point.funding_rate_updated_at if point.funding_source not in ("missing", "carry_forward") else previous.funding_rate_updated_at
+        f_src = point.funding_source if point.funding_source not in ("missing", "carry_forward") else "carry_forward"
+        
+        # Liquidation: If source is valid (e.g. force_order_ws), it's a fresh update even if 0.0 delta
+        # Age here refers to "last known state check".
+        l_upd = point.liquidation_updated_at if point.liquidation_source not in ("missing", "carry_forward") else previous.liquidation_updated_at
+        l_src = point.liquidation_source if point.liquidation_source not in ("missing", "carry_forward") else "carry_forward"
+
         return HistoryPoint(
             timestamp=point.timestamp,
             price=price,
             volume=spot_volume + futures_volume,
             open_interest=open_interest,
-            funding_rate=point.funding_rate if abs(point.funding_rate) > VALUE_EPSILON else previous.funding_rate,
+            funding_rate=point.funding_rate if f_src != "carry_forward" else previous.funding_rate,
             long_short_ratio=(
                 point.long_short_ratio
-                if point.long_short_ratio > VALUE_EPSILON
+                if point.long_short_ratio_source not in ("missing", "carry_forward")
                 else previous.long_short_ratio
             ),
             taker_buy_sell_ratio=(
                 point.taker_buy_sell_ratio
-                if point.taker_buy_sell_ratio > VALUE_EPSILON
+                if point.taker_ratio_source not in ("missing", "carry_forward")
                 else previous.taker_buy_sell_ratio
             ),
             spot_volume=spot_volume,
@@ -1040,18 +1050,18 @@ class SignalService:
             spot_volume_updated_at=point.spot_volume_updated_at if point.spot_volume > VALUE_EPSILON else previous.spot_volume_updated_at,
             futures_volume_updated_at=vol_upd,
             open_interest_updated_at=oi_upd,
-            funding_rate_updated_at=point.funding_rate_updated_at if abs(point.funding_rate) > VALUE_EPSILON else previous.funding_rate_updated_at,
-            long_short_ratio_updated_at=point.long_short_ratio_updated_at if point.long_short_ratio > VALUE_EPSILON else previous.long_short_ratio_updated_at,
-            taker_buy_sell_ratio_updated_at=point.taker_buy_sell_ratio_updated_at if point.taker_buy_sell_ratio > VALUE_EPSILON else previous.taker_buy_sell_ratio_updated_at,
-            liquidation_updated_at=point.liquidation_updated_at if (point.long_liquidations + point.short_liquidations) > 0 else previous.liquidation_updated_at,
+            funding_rate_updated_at=f_upd,
+            long_short_ratio_updated_at=point.long_short_ratio_updated_at if point.long_short_ratio_source not in ("missing", "carry_forward") else previous.long_short_ratio_updated_at,
+            taker_buy_sell_ratio_updated_at=point.taker_buy_sell_ratio_updated_at if point.taker_ratio_source not in ("missing", "carry_forward") else previous.taker_buy_sell_ratio_updated_at,
+            liquidation_updated_at=l_upd,
             
             price_source=p_src,
             volume_source=vol_src,
             open_interest_source=oi_src,
-            funding_source=point.funding_source if abs(point.funding_rate) > VALUE_EPSILON else "carry_forward",
-            long_short_ratio_source=point.long_short_ratio_source if point.long_short_ratio > VALUE_EPSILON else "carry_forward",
-            taker_ratio_source=point.taker_ratio_source if point.taker_buy_sell_ratio > VALUE_EPSILON else "carry_forward",
-            liquidation_source=point.liquidation_source if (point.long_liquidations + point.short_liquidations) > 0 else "carry_forward",
+            funding_source=f_src,
+            long_short_ratio_source=point.long_short_ratio_source if point.long_short_ratio_source not in ("missing", "carry_forward") else "carry_forward",
+            taker_ratio_source=point.taker_ratio_source if point.taker_ratio_source not in ("missing", "carry_forward") else "carry_forward",
+            liquidation_source=l_src,
             
             data_was_coalesced=(point.price <= VALUE_EPSILON),
             liquidation_is_reset_suspected=point.liquidation_is_reset_suspected,
@@ -1140,21 +1150,42 @@ class SignalService:
             
             if latest_point:
                 # Populate detailed metadata for trade auditing (April vs May analysis)
-                setattr(flow_metrics, f"price_age_seconds_{tf}", self.freshness_age(now, latest_point.price_updated_at))
-                setattr(flow_metrics, f"futures_volume_age_seconds_{tf}", self.freshness_age(now, latest_point.futures_volume_updated_at))
-                setattr(flow_metrics, f"open_interest_age_seconds_{tf}", self.freshness_age(now, latest_point.open_interest_updated_at))
-                setattr(flow_metrics, f"funding_age_seconds_{tf}", self.freshness_age(now, latest_point.funding_rate_updated_at))
-                setattr(flow_metrics, f"long_short_ratio_age_seconds_{tf}", self.freshness_age(now, latest_point.long_short_ratio_updated_at))
-                setattr(flow_metrics, f"taker_ratio_age_seconds_{tf}", self.freshness_age(now, latest_point.taker_buy_sell_ratio_updated_at))
-                setattr(flow_metrics, f"liquidation_age_seconds_{tf}", self.freshness_age(now, latest_point.liquidation_updated_at))
+                # DO NOT use point timestamp as fallback for carry_forward (Priority 1)
+                def get_age(upd, src):
+                    if src in ("carry_forward", "missing", "missing_at_startup"):
+                        return self.freshness_age(now, upd) # No fallback
+                    return self.freshness_age(now, upd, latest_point.timestamp)
+
+                p_age = get_age(latest_point.price_updated_at, latest_point.price_source)
+                fv_age = get_age(latest_point.futures_volume_updated_at, latest_point.volume_source)
+                oi_age = get_age(latest_point.open_interest_updated_at, latest_point.open_interest_source)
+                f_age = get_age(latest_point.funding_rate_updated_at, latest_point.funding_source)
+                ls_age = get_age(latest_point.long_short_ratio_updated_at, latest_point.long_short_ratio_source)
+                t_age = get_age(latest_point.taker_buy_sell_ratio_updated_at, latest_point.taker_ratio_source)
+                l_age = get_age(latest_point.liquidation_updated_at, latest_point.liquidation_source)
+
+                setattr(flow_metrics, f"price_age_seconds_{tf}", p_age)
+                setattr(flow_metrics, f"futures_volume_age_seconds_{tf}", fv_age)
+                setattr(flow_metrics, f"open_interest_age_seconds_{tf}", oi_age)
+                setattr(flow_metrics, f"funding_age_seconds_{tf}", f_age)
+                setattr(flow_metrics, f"long_short_ratio_age_seconds_{tf}", ls_age)
+                setattr(flow_metrics, f"taker_ratio_age_seconds_{tf}", t_age)
+                setattr(flow_metrics, f"liquidation_age_seconds_{tf}", l_age)
                 
-                setattr(flow_metrics, f"price_source_{tf}", latest_point.price_source)
-                setattr(flow_metrics, f"volume_source_{tf}", latest_point.volume_source)
-                setattr(flow_metrics, f"open_interest_source_{tf}", latest_point.open_interest_source)
-                setattr(flow_metrics, f"funding_source_{tf}", latest_point.funding_source)
-                setattr(flow_metrics, f"long_short_ratio_source_{tf}", latest_point.long_short_ratio_source)
-                setattr(flow_metrics, f"taker_ratio_source_{tf}", latest_point.taker_ratio_source)
-                setattr(flow_metrics, f"liquidation_source_{tf}", latest_point.liquidation_source)
+                def get_src(upd, src):
+                    if src == "carry_forward" and upd is None:
+                        return "MISSING_TIMESTAMP"
+                    if src == "missing":
+                        return "missing_at_startup"
+                    return src
+
+                setattr(flow_metrics, f"price_source_{tf}", get_src(latest_point.price_updated_at, latest_point.price_source))
+                setattr(flow_metrics, f"volume_source_{tf}", get_src(latest_point.futures_volume_updated_at, latest_point.volume_source))
+                setattr(flow_metrics, f"open_interest_source_{tf}", get_src(latest_point.open_interest_updated_at, latest_point.open_interest_source))
+                setattr(flow_metrics, f"funding_source_{tf}", get_src(latest_point.funding_rate_updated_at, latest_point.funding_source))
+                setattr(flow_metrics, f"long_short_ratio_source_{tf}", get_src(latest_point.long_short_ratio_updated_at, latest_point.long_short_ratio_source))
+                setattr(flow_metrics, f"taker_ratio_source_{tf}", get_src(latest_point.taker_buy_sell_ratio_updated_at, latest_point.taker_ratio_source))
+                setattr(flow_metrics, f"liquidation_source_{tf}", get_src(latest_point.liquidation_updated_at, latest_point.liquidation_source))
                 
                 setattr(flow_metrics, f"taker_ratio_is_default_{tf}", (latest_point.taker_ratio_source == "default_neutral"))
                 setattr(flow_metrics, f"long_short_ratio_is_default_{tf}", (latest_point.long_short_ratio_source == "default_neutral"))
@@ -1599,6 +1630,17 @@ class SignalService:
                 flow_metrics=flow_metrics,
                 setup_type=action.setup_type
             )
+
+            # Sync Bucket Diagnostics (Audit Persistence)
+            bucket.bucket_is_closed = (now >= bucket.bucket_end)
+            duration = (bucket.bucket_end - bucket.bucket_start).total_seconds()
+            if duration > 0:
+                elapsed = (now - bucket.bucket_start).total_seconds()
+                bucket.bucket_completion_pct = min(1.0, max(0.0, elapsed / duration))
+            
+            bucket.volume_z_reliable = getattr(flow_metrics, f"volume_z_reliable_{timeframe}", True)
+            bucket.oi_delta_z_reliable = getattr(flow_metrics, f"oi_delta_z_reliable_{timeframe}", True)
+            bucket.zscore_baseline_status = getattr(flow_metrics, f"zscore_baseline_status_{timeframe}", "NORMAL")
 
             hard_entry_filter_reasons: list[str] = []
             
@@ -2333,6 +2375,20 @@ class SignalService:
             data_was_coalesced=asset.data_was_coalesced,
             bucket_is_closed=asset.bucket_is_closed,
             bucket_completion_pct=asset.bucket_completion_pct,
+
+            # Structural Diagnostics
+            final_structural_permission=asset.final_structural_permission,
+            structural_block_reason=asset.structural_block_reason,
+            structural_warning_reason=asset.structural_warning_reason,
+            structural_confidence_multiplier=asset.structural_confidence_multiplier,
+
+            # Phase 5 Observability
+            scenario_label=asset.scenario_label,
+            scenario_disposition=asset.scenario_disposition,
+            scenario_reasons=list(asset.scenario_reasons),
+            expansion_subtype=asset.expansion_subtype,
+            compression_type=asset.compression_type,
+            regime_warning=asset.regime_warning,
 
             scenario=ContextScenarioSnapshot(
                 label=asset.scenario_label,

@@ -100,6 +100,13 @@ class TimeframeBucket:
     breakdown_funding: float = 0.0
     
     foundation_version: str = "v2_option_a"
+    
+    # Data Quality & Reliability (Shadow Audit)
+    bucket_is_closed: bool = False
+    bucket_completion_pct: float = 0.0
+    volume_z_reliable: bool = True
+    oi_delta_z_reliable: bool = True
+    zscore_baseline_status: str = "NORMAL"
 
     @classmethod
     def from_record(cls, source: Any) -> TimeframeBucket:
@@ -445,6 +452,13 @@ class TimeframeBucket:
             "oi_close_age": self.oi_close_age,
             "oi_alignment_status": self.oi_alignment_status,
             "oi_delta_reliable": self.oi_delta_reliable,
+
+            # Data Quality & Reliability
+            "bucket_is_closed": self.bucket_is_closed,
+            "bucket_completion_pct": self.bucket_completion_pct,
+            "volume_z_reliable": self.volume_z_reliable,
+            "oi_delta_z_reliable": self.oi_delta_z_reliable,
+            "zscore_baseline_status": self.zscore_baseline_status,
         }
 
 

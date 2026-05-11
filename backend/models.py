@@ -97,6 +97,13 @@ class MarketDataBucket(Base):
     oi_alignment_status: Mapped[str] = mapped_column(String(16), nullable=False, default="MISSING")
     oi_delta_reliable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     
+    # Data Quality & Reliability (Shadow Audit)
+    bucket_is_closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    bucket_completion_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    volume_z_reliable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    oi_delta_z_reliable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    zscore_baseline_status: Mapped[str] = mapped_column(String(20), nullable=False, default="NORMAL")
+
     exchange_count_avg: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)

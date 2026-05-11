@@ -864,6 +864,20 @@ class AssetSnapshot(BaseModel):
     market_interpretation: MarketInterpretationSnapshot | None = None
     execution: ExecutionSnapshot | None = None
     debug_trace: DebugTrace | None = None
+    
+    # Structural Diagnostics
+    final_structural_permission: str = "NOT_APPLICABLE"
+    structural_block_reason: str | None = None
+    structural_warning_reason: str | None = None
+    structural_confidence_multiplier: float = 1.0
+    
+    # Scenario and Regime Diagnostics (Phase 5 Observability)
+    scenario_label: str | None = None
+    scenario_disposition: str | None = None
+    scenario_reasons: list[str] = Field(default_factory=list)
+    expansion_subtype: str | None = None
+    compression_type: str | None = None
+    regime_warning: str | None = None
 
 
 class DashboardMetrics(BaseModel):

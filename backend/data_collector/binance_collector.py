@@ -103,6 +103,11 @@ class BinanceCollector(BaseCollector):
         # ── source tracking ───────────────────────────────────────────
         self._price_source: dict[str, str] = {}
         self._volume_source: dict[str, str] = {}
+        self._funding_source: dict[str, str] = {}
+        self._oi_source: dict[str, str] = {}
+        self._ls_ratio_source: dict[str, str] = {}
+        self._taker_ratio_source: dict[str, str] = {}
+        self._liquidation_source: dict[str, str] = {}
 
         # ── rotary state ──────────────────────────────────────────────
         self._oi_batch_size = getattr(settings, "oi_batch_size", 40)
@@ -198,6 +203,7 @@ class BinanceCollector(BaseCollector):
                                     self._price_updated_at[symbol] = now
                                     self._funding_updated_at[symbol] = now
                                     self._price_source[symbol] = "ws_mark_price"
+                                    self._funding_source[symbol] = "ws_mark_price"
                         except (json.JSONDecodeError, KeyError) as exc:
                             logger.debug("WS parse error: %s", exc)
             except websockets.exceptions.ConnectionClosed as exc:
@@ -374,6 +380,7 @@ class BinanceCollector(BaseCollector):
                         data.get("openInterest")
                     )
                     self._oi_updated_at[symbol] = now
+                    self._oi_source[symbol] = "open_interest_endpoint"
                     self._oi_history[symbol].append((now, self._oi_cache[symbol]))
                 except Exception as exc:
                     logger.debug("OI fetch failed %s: %s", symbol, exc)
@@ -404,6 +411,7 @@ class BinanceCollector(BaseCollector):
                             now = self.utcnow()
                             self._ls_ratio_cache[symbol] = long_account / short_account
                             self._ls_ratio_updated_at[symbol] = now
+                            self._ls_ratio_source[symbol] = "global_ls_ratio"
                 except Exception as exc:
                     logger.debug("Ratio fetch failed %s: %s", symbol, exc)
 
@@ -428,6 +436,7 @@ class BinanceCollector(BaseCollector):
                             entries[0].get("buySellRatio"), 1.0
                         )
                         self._taker_ratio_updated_at[symbol] = now
+                        self._taker_ratio_source[symbol] = "taker_ls_ratio"
                 except Exception as exc:
                     logger.debug("Taker fetch failed %s: %s", symbol, exc)
 
@@ -538,7 +547,10 @@ class BinanceCollector(BaseCollector):
             ls_source = "global_ls_ratio" if symbol in self._ls_ratio_cache else "default_neutral"
             
             taker_ratio = self._taker_ratio_cache.get(symbol, 1.0)
-            taker_source = "taker_ls_ratio" if symbol in self._taker_ratio_cache else "default_neutral"
+            taker_source = self._taker_ratio_source.get(symbol, "missing")
+            
+            ls_source = self._ls_ratio_source.get(symbol, "missing")
+            oi_source = self._oi_source.get(symbol, "missing")
 
             # Liquidations from events deque
             last_time = self._last_snapshot_time.get(symbol, timestamp - timedelta(seconds=60))
@@ -551,7 +563,13 @@ class BinanceCollector(BaseCollector):
                     long_liq_delta += l_val
                     short_liq_delta += s_val
             
-            liq_source = "force_order_ws" if symbol in self._liquidation_updated_at else "missing"
+            if (long_liq_delta + short_liq_delta) > 0:
+                liq_source = "force_order_ws"
+            elif self._ws_connected:
+                liq_source = "force_order_ws_zero"
+                self._liquidation_updated_at[symbol] = timestamp
+            else:
+                liq_source = "missing"
             self._last_snapshot_time[symbol] = timestamp
 
             snapshots[symbol] = ExchangeSnapshot(
@@ -586,7 +604,7 @@ class BinanceCollector(BaseCollector):
                 price_source=price_source,
                 volume_source=volume_source,
                 open_interest_source=oi_source,
-                funding_source=funding_source,
+                funding_source=self._funding_source.get(symbol, "missing"),
                 long_short_ratio_source=ls_source,
                 taker_ratio_source=taker_source,
                 liquidation_source=liq_source
