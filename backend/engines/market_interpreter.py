@@ -67,6 +67,12 @@ class MarketInterpreterEngine:
         return 1.0 / (1.0 + math.exp(-value))
 
     @staticmethod
+    def _ratio_score(value: float, threshold: float) -> float:
+        if threshold <= EPSILON:
+            return 0.0
+        return max(0.0, min(value / threshold, 1.0))
+
+    @staticmethod
     def _tanh_ratio(value: float, scale: float) -> float:
         if abs(scale) <= EPSILON:
             return 0.0
@@ -434,15 +440,29 @@ class MarketInterpreterEngine:
         taker_available: bool,
     ) -> float:
         direction = self._direction_from_trend("Bullish" if control == "Buyer Dominant" else "Bearish" if control == "Seller Dominant" else "Neutral", control)
+        
+        # Reliability checks
+        foundation = getattr(metrics, f"foundation_version_{timeframe}", "v1_reconstructed")
+        is_legacy = foundation != "v2_option_a"
+        oi_reliable = getattr(metrics, f"oi_delta_reliable_{timeframe}", True)
+        pressure_status = getattr(metrics, f"market_pressure_status_{timeframe}", "VALID")
+        pressure_valid = pressure_status == "VALID"
+
         volume_z = self._metric(metrics, "volume_z", timeframe)
         price_change = self._metric(metrics, "price_change", timeframe)
-        market_pressure = self._metric(metrics, "market_pressure", timeframe)
+        
+        # Patch 3: Market Pressure Status Guard
+        market_pressure = self._metric(metrics, "market_pressure", timeframe) if pressure_valid else 0.0
+        
         taker_delta = self._metric(metrics, "taker_buy_sell_ratio_delta", timeframe)
         funding_trend = self._metric(metrics, "funding_trend", timeframe)
         ls_delta = self._metric(metrics, "long_short_ratio_delta", timeframe)
         liq_pressure = self._metric(metrics, "liq_pressure", timeframe)
         price_scale = max(float(profile["price_flat"]), 0.001)
-        volume_support = self._clamp(math.tanh(max(volume_z, 0.0)))
+        
+        # Patch 1: Legacy Volume Impact
+        vol_impact = volume_z if not is_legacy else volume_z * 0.8
+        volume_support = self._clamp(math.tanh(max(vol_impact, 0.0)))
 
         if direction == 0:
             neutral_flow = 0.18 + (0.22 * volume_support)
@@ -464,10 +484,17 @@ class MarketInterpreterEngine:
 
         alignment = sum(components) / max(len(components), 1)
         alignment = (0.7 * alignment) + (0.3 * volume_support)
-        if oi_intent == "Position Building":
-            alignment += 0.12
-        elif oi_intent == "Position Closing":
-            alignment -= 0.18
+        
+        # Patch 2: OI Reliability Guard
+        if oi_reliable:
+            if oi_intent == "Position Building":
+                alignment += 0.12
+            elif oi_intent == "Position Closing":
+                alignment -= 0.18
+        
+        if is_legacy:
+            alignment *= 0.90 # Penalty for legacy data
+
         return round(self._clamp(alignment), 4)
 
     def _trend_alignment(
@@ -599,8 +626,15 @@ class MarketInterpreterEngine:
         price_flat = float(TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])["price_flat"])
 
         # --- Extract classification variables ---
+        foundation = getattr(metrics, f"foundation_version_{timeframe}", "v1_reconstructed")
+        is_legacy = foundation != "v2_option_a"
+        oi_reliable = getattr(metrics, f"oi_delta_reliable_{timeframe}", True)
+
         vol_z = self._metric(metrics, "volume_z", timeframe)
-        oi_delta_z = self._metric(metrics, "oi_delta_z", timeframe)
+        
+        # Patch 2: OI Reliability Guard
+        oi_delta_z = self._metric(metrics, "oi_delta_z", timeframe) if oi_reliable else 0.0
+        
         oi_pct = self._metric(metrics, "oi_percentile", timeframe)
         taker_delta = self._metric(metrics, "taker_buy_sell_ratio_delta", timeframe)
         ls_level = self._metric(metrics, "long_short_ratio_level", timeframe)
@@ -610,7 +644,61 @@ class MarketInterpreterEngine:
         wick_ratio = self._metric(metrics, "wick_ratio", timeframe)
 
         price_dir = 1 if price_change_raw > 0 else -1
-        is_sharp_move = price_change >= 0.012 and abs(vol_z) >= 1.0
+        
+        # Patch 4: Squeeze vs Dead Range Diagnostics
+        comp_type = "no_compression"
+        comp_participation = 0.0
+        comp_warning = None
+        
+        if compression >= 0.7:
+            # Check participation
+            vol_participation = self._ratio_score(abs(vol_z), 0.8)
+            oi_participation = 0.6 if (oi_reliable and oi_delta_z >= 0.5) else 0.0
+            comp_participation = (0.5 * vol_participation) + (0.5 * oi_participation)
+            
+            if not oi_reliable:
+                comp_type = "unknown_compression"
+                comp_warning = "OI_RELIABILITY_MISSING"
+            elif comp_participation >= 0.6:
+                comp_type = "coiled_squeeze"
+            elif vol_z <= -1.0:
+                comp_type = "dead_range"
+                comp_warning = "LOW_PARTICIPATION"
+            else:
+                comp_type = "unknown_compression"
+
+        setattr(metrics, f"compression_type_{timeframe}", comp_type)
+        setattr(metrics, f"compression_participation_score_{timeframe}", round(comp_participation, 4))
+        setattr(metrics, f"compression_warning_{timeframe}", comp_warning)
+
+        # Patch 1: Legacy Volume Impact
+        vol_impact = abs(vol_z) if not is_legacy else abs(vol_z) * 0.7
+        is_sharp_move = price_change >= 0.012 and vol_impact >= 1.0
+
+        # Patch 3: Trap/Absorption Diagnostics
+        effort_vs_result = getattr(metrics, f"effort_vs_result_ratio_{timeframe}", 0.0)
+        effort_state = getattr(metrics, f"effort_result_state_{timeframe}", "unknown")
+        taker_divergence = getattr(metrics, f"taker_price_divergence_{timeframe}", False)
+        
+        trap_abs_risk = 0.0
+        trap_taker_risk = 0.5 if taker_divergence else 0.0
+        trap_liq_risk = self._ratio_score(abs(liq_pressure), 0.15)
+        trap_reason = None
+        
+        if effort_state == "Absorption":
+            trap_abs_risk = 0.8
+            trap_reason = "ABSORPTION_SIGNATURE"
+        elif taker_divergence:
+            trap_abs_risk = 0.6
+            trap_reason = "TAKER_DIVERGENCE"
+            
+        if trap_liq_risk >= 0.7:
+            trap_reason = (trap_reason + "+LIQ_DRIVEN") if trap_reason else "LIQUIDATION_DRIVEN"
+
+        setattr(metrics, f"trap_absorption_risk_{timeframe}", trap_abs_risk)
+        setattr(metrics, f"trap_taker_divergence_risk_{timeframe}", trap_taker_risk)
+        setattr(metrics, f"trap_liquidation_risk_{timeframe}", round(trap_liq_risk, 4))
+        setattr(metrics, f"trap_quality_reason_{timeframe}", trap_reason)
 
         # --- SETUP 1: SQUEEZE TRIGGER ---
         # Only fires when memory cache was armed by signal_service and breakout occurs.
@@ -635,7 +723,8 @@ class MarketInterpreterEngine:
         # Sharp move where the DRIVER is genuine taker flow + fresh OI commitment.
         is_oi_fresh = abs(oi_delta_z) >= 0.6 and oi_intent == "Position Building"
         if is_sharp_move and is_taker_real and is_oi_fresh:
-            return "Trend continuation"
+            # Patch 1: Legacy Continuation Naming
+            return "Trend continuation" if not is_legacy else "Inferred continuation"
 
         # --- FALLBACK STATES ---
         if control == "Seller Dominant" and oi_intent == "Position Closing":
@@ -645,7 +734,8 @@ class MarketInterpreterEngine:
         if control == "Neutral" or compression >= 0.5 or conflict_score >= 0.35:
             return "Compression"
         if control in {"Buyer Dominant", "Seller Dominant"} and oi_intent == "Position Building" and flow_alignment >= 0.55:
-            return "Trend continuation"
+            # Patch 1: Legacy Continuation Naming
+            return "Trend continuation" if not is_legacy else "Inferred continuation"
         if positioning.intent in {"Absorption", "Pre-Squeeze"} and price_change <= price_flat:
             return "Compression"
         return "Unclear"
@@ -661,14 +751,26 @@ class MarketInterpreterEngine:
         direction = self._direction_from_trend(trend, control)
         if direction == 0:
             return False
+        
+        # Reliability checks
+        foundation = getattr(metrics, f"foundation_version_{timeframe}", "v1_reconstructed")
+        is_legacy = foundation != "v2_option_a"
+        oi_reliable = getattr(metrics, f"oi_delta_reliable_{timeframe}", True)
+
         profile = TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])
         price_change = self._metric(metrics, "price_change", timeframe)
         volume_z = self._metric(metrics, "volume_z", timeframe)
-        oi_delta_z = self._metric(metrics, "oi_delta_z", timeframe)
-        oi_change = self._metric(metrics, "oi_change", timeframe)
+        
+        # Patch 2: OI Reliability Guard
+        oi_delta_z = self._metric(metrics, "oi_delta_z", timeframe) if oi_reliable else 0.0
+        oi_change = self._metric(metrics, "oi_change", timeframe) if oi_reliable else 0.0
+        
+        # Patch 1: Legacy Volume Impact
+        vol_impact = volume_z if not is_legacy else volume_z * 0.7
+        
         return (
             abs(price_change) >= float(profile["price_break"])
-            and volume_z >= 0.8
+            and vol_impact >= 0.8
             and abs(oi_delta_z) >= 0.6
             and oi_change > 0
         )

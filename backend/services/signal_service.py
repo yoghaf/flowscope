@@ -189,7 +189,39 @@ class AssetState:
 
     crowding_score: float | None = None
     crowding_status: str | None = None
+    crowding_side_4h: str | None = None
+    crowding_side_24h: str | None = None
     crowding_side: str | None = None
+
+    # Regime Diagnostics (Phase 2)
+    regime_is_structural: bool = False
+    regime_is_volatile: bool = False
+    regime_structure_direction: str = "unknown"
+    regime_structure_score: float = 0.0
+    regime_warning: str | None = None
+
+    # Expansion Diagnostics (Phase 2)
+    expansion_subtype: str = "unknown_expansion"
+    expansion_health_score: float = 0.0
+    expansion_chaos_score: float = 0.0
+    expansion_warning: str | None = None
+
+    # Trap/Absorption Diagnostics (Phase 2)
+    trap_absorption_risk: float = 0.0
+    trap_taker_divergence_risk: float = 0.0
+    trap_liquidation_risk: float = 0.0
+    trap_quality_reason: str | None = None
+
+    # Compression Diagnostics (Phase 2)
+    compression_type: str = "no_compression"
+    compression_participation_score: float = 0.0
+    compression_warning: str | None = None
+    
+    # Phase 3A Shadow Structural Permission
+    final_structural_permission: str = "NOT_APPLICABLE"
+    structural_block_reason: str | None = None
+    structural_warning_reason: str | None = None
+    structural_confidence_multiplier: float = 1.0
 
     liq_contribution_ratio: float | None = None
     liquidation_context: str | None = None
@@ -1217,6 +1249,8 @@ class SignalService:
                 closed_only=effective_closed_only,
                 now=now,
             )
+            self._market_regime(flow_metrics, timeframe)
+            
             state_assessment: StateAssessment = self.state_engine.evaluate(
                 bucket,
                 flow_metrics,
@@ -1558,7 +1592,24 @@ class SignalService:
             setattr(flow_metrics, f"efficient_build_quality_reason_{timeframe}", q_reason)
             setattr(flow_metrics, f"efficient_build_quality_score_{timeframe}", q_score)
 
+            # Phase 3A: Shadow Structural Permission
+            self._calculate_shadow_structural_permission(
+                symbol=symbol,
+                timeframe=timeframe,
+                flow_metrics=flow_metrics,
+                setup_type=action.setup_type
+            )
+
             hard_entry_filter_reasons: list[str] = []
+            
+            # Phase 3B-A: Selective Structural Gates
+            if self.settings.use_structural_gates and action.setup_type == "Continuation":
+                struct_permission = getattr(flow_metrics, f"final_structural_permission_{timeframe}", "NOT_APPLICABLE")
+                if struct_permission == "STRUCTURAL_BLOCK":
+                    struct_reason = getattr(flow_metrics, f"structural_block_reason_{timeframe}", "unknown_structural_block")
+                    # Map to the specific reasons requested by user
+                    mapped_reason = f"structural_{struct_reason}"
+                    hard_entry_filter_reasons.append(mapped_reason)
             if action.status in {"Ready", "Triggered"}:
                 allowed, block_reason, global_multiplier = self.portfolio_manager.assess_entry(
                     symbol=symbol,
@@ -2712,6 +2763,36 @@ class SignalService:
             crowding_status=getattr(flow_metrics, f"crowding_status_{timeframe}", None),
             crowding_side=getattr(flow_metrics, f"crowding_side_{timeframe}", None),
             
+            # Phase 2 Regime
+            regime_is_structural=getattr(flow_metrics, f"regime_is_structural_{timeframe}", False),
+            regime_is_volatile=getattr(flow_metrics, f"regime_is_volatile_{timeframe}", False),
+            regime_structure_direction=getattr(flow_metrics, f"regime_structure_direction_{timeframe}", "unknown"),
+            regime_structure_score=getattr(flow_metrics, f"regime_structure_score_{timeframe}", 0.0),
+            regime_warning=getattr(flow_metrics, f"regime_warning_{timeframe}", None),
+
+            # Phase 2 Expansion
+            expansion_subtype=getattr(flow_metrics, f"expansion_subtype_{timeframe}", "unknown_expansion"),
+            expansion_health_score=getattr(flow_metrics, f"expansion_health_score_{timeframe}", 0.0),
+            expansion_chaos_score=getattr(flow_metrics, f"expansion_chaos_score_{timeframe}", 0.0),
+            expansion_warning=getattr(flow_metrics, f"expansion_warning_{timeframe}", None),
+
+            # Phase 2 Trap/Absorption
+            trap_absorption_risk=getattr(flow_metrics, f"trap_absorption_risk_{timeframe}", 0.0),
+            trap_taker_divergence_risk=getattr(flow_metrics, f"trap_taker_divergence_risk_{timeframe}", 0.0),
+            trap_liquidation_risk=getattr(flow_metrics, f"trap_liquidation_risk_{timeframe}", 0.0),
+            trap_quality_reason=getattr(flow_metrics, f"trap_quality_reason_{timeframe}", None),
+
+            # Phase 2 Compression
+            compression_type=getattr(flow_metrics, f"compression_type_{timeframe}", "no_compression"),
+            compression_participation_score=getattr(flow_metrics, f"compression_participation_score_{timeframe}", 0.0),
+            compression_warning=getattr(flow_metrics, f"compression_warning_{timeframe}", None),
+
+            # Phase 3A Shadow Structural Permission
+            final_structural_permission=getattr(flow_metrics, f"final_structural_permission_{timeframe}", "NOT_APPLICABLE"),
+            structural_block_reason=getattr(flow_metrics, f"structural_block_reason_{timeframe}", None),
+            structural_warning_reason=getattr(flow_metrics, f"structural_warning_reason_{timeframe}", None),
+            structural_confidence_multiplier=getattr(flow_metrics, f"structural_confidence_multiplier_{timeframe}", 1.0),
+
             liq_contribution_ratio=getattr(flow_metrics, f"liq_contribution_ratio_{timeframe}", None),
             liquidation_context=getattr(flow_metrics, f"liquidation_context_{timeframe}", None),
 
@@ -6460,6 +6541,10 @@ class SignalService:
             
             if climax_cand and (is_extended or scenario_label == "climax_event"):
                 reasons.append("semantic_climax_continuation_block")
+            
+            crowding = (getattr(flow_metrics, f"crowding_status_{timeframe}", "") or "").lower()
+            is_extreme_crowding = "extreme" in crowding
+            is_late_context = scenario_label in {"late_expansion", "climax_event"}
                 
             if is_extreme_crowding and is_late_context:
                 reasons.append("semantic_crowded_late_continuation_block")
@@ -7561,11 +7646,53 @@ class SignalService:
         atr = SignalService._metric_or_zero(getattr(metrics, f"atr_{timeframe}", 0.0))
         price_change = SignalService._metric_or_zero(getattr(metrics, f"price_change_{timeframe}", 0.0))
         compression = SignalService._metric_or_zero(getattr(metrics, f"compression_score_{timeframe}", 0.0))
-        if abs(price_change) >= 0.025 or atr >= 0.018:
-            return "Trending"
-        if compression >= 0.65 or atr <= 0.005:
-            return "Ranging"
-        return "Balanced"
+        
+        # Patch 1: Structural Regime Diagnostics
+        regime = "Balanced"
+        warning = None
+        is_structural = False
+        is_volatile = False
+        structure_dir = "neutral"
+        structure_score = 0.0
+        
+        # Check for Trend (Existing Logic)
+        is_trending_threshold = abs(price_change) >= 0.025 or atr >= 0.018
+        
+        # Structural check (Improved definition)
+        # We look at structural consistency if available
+        # For now, we use market_pressure as a proxy for structural consistency in this static method
+        pressure = SignalService._metric_or_zero(getattr(metrics, f"market_pressure_{timeframe}", 0.0))
+        flow_support = abs(pressure) >= 0.4 and (pressure * price_change > 0)
+        
+        if is_trending_threshold:
+            regime = "Trending"
+            if abs(price_change) < 0.015 and atr >= 0.018:
+                warning = "ATR_HIGH_NOT_TREND"
+                is_volatile = True
+                is_structural = False
+            else:
+                # If price follows direction and flow supports it
+                if flow_support:
+                    is_structural = True
+                    is_volatile = False
+                else:
+                    is_volatile = True
+                    is_structural = False
+        elif compression >= 0.65 or atr <= 0.005:
+            regime = "Ranging"
+            
+        if is_structural:
+            structure_dir = "bullish" if price_change > 0 else "bearish"
+            structure_score = 0.8 # Static high score for structural detection for now
+            
+        # Set Diagnostics
+        setattr(metrics, f"regime_is_structural_{timeframe}", is_structural)
+        setattr(metrics, f"regime_is_volatile_{timeframe}", is_volatile)
+        setattr(metrics, f"regime_structure_direction_{timeframe}", structure_dir)
+        setattr(metrics, f"regime_structure_score_{timeframe}", structure_score)
+        setattr(metrics, f"regime_warning_{timeframe}", warning)
+        
+        return regime
 
     def _volatility_regime(self, metrics: FlowMetrics, timeframe: str) -> str:
         atr = SignalService._metric_or_zero(getattr(metrics, f"atr_{timeframe}", 0.0))
@@ -7667,4 +7794,57 @@ class SignalService:
                 return "WATCHLIST", "flat_baseline_observe", 0.7
                 
         return "WAIT", "non_efficient_or_mixed", 0.3
+
+    def _calculate_shadow_structural_permission(
+        self,
+        symbol: str,
+        timeframe: str,
+        flow_metrics: FlowMetrics,
+        setup_type: str
+    ) -> None:
+        if setup_type != "Continuation":
+            return
+
+        permission = "STRUCTURAL_ALLOW"
+        block_reason = None
+        warning_reason = None
+        multiplier = 1.0
+
+        # 1. Rule 2: Bad Expansion Subtype
+        expansion_subtype = getattr(flow_metrics, f"expansion_subtype_{timeframe}", "unknown_expansion")
+        if expansion_subtype in {"absorption_expansion", "chaotic_expansion"}:
+            permission = "STRUCTURAL_BLOCK"
+            block_reason = "bad_expansion_subtype"
+
+        # 2. Rule 3: Dead Range
+        elif getattr(flow_metrics, f"compression_type_{timeframe}", "no_compression") == "dead_range":
+            permission = "STRUCTURAL_BLOCK"
+            block_reason = "dead_range_low_participation"
+
+        # 3. Rule 4: Volatile Noise
+        elif getattr(flow_metrics, f"regime_warning_{timeframe}", None) == "ATR_HIGH_NOT_TREND":
+            quality = getattr(flow_metrics, f"efficient_build_quality_{timeframe}", "UNKNOWN")
+            if quality == "ALLOW_CANDIDATE" and expansion_subtype == "healthy_expansion":
+                # Allow high-efficiency outlier
+                permission = "STRUCTURAL_ALLOW"
+            else:
+                permission = "STRUCTURAL_BLOCK"
+                block_reason = "volatile_noise_no_structure"
+
+        # 4. Rule 5: Coiled Squeeze
+        elif getattr(flow_metrics, f"compression_type_{timeframe}", "no_compression") == "coiled_squeeze":
+            permission = "STRUCTURAL_WATCHLIST"
+            warning_reason = "awaiting_squeeze_breakout"
+
+        # 5. Rule 6: Non-structural
+        elif getattr(flow_metrics, f"regime_is_structural_{timeframe}", False) == False:
+            permission = "STRUCTURAL_PENALTY"
+            multiplier = 0.75
+            warning_reason = "non_structural_continuation"
+
+        # Set Diagnostics
+        setattr(flow_metrics, f"final_structural_permission_{timeframe}", permission)
+        setattr(flow_metrics, f"structural_block_reason_{timeframe}", block_reason)
+        setattr(flow_metrics, f"structural_warning_reason_{timeframe}", warning_reason)
+        setattr(flow_metrics, f"structural_confidence_multiplier_{timeframe}", multiplier)
 

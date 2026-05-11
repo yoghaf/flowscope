@@ -302,6 +302,111 @@ class FlowMetrics(BaseModel):
     crowding_side_4h: str | None = None
     crowding_side_24h: str | None = None
 
+    # Regime Diagnostics (Phase 2)
+    regime_is_structural_15m: bool = False
+    regime_is_structural_1h: bool = False
+    regime_is_structural_4h: bool = False
+    regime_is_structural_24h: bool = False
+    
+    regime_is_volatile_15m: bool = False
+    regime_is_volatile_1h: bool = False
+    regime_is_volatile_4h: bool = False
+    regime_is_volatile_24h: bool = False
+    
+    regime_structure_direction_15m: str = "unknown"
+    regime_structure_direction_1h: str = "unknown"
+    regime_structure_direction_4h: str = "unknown"
+    regime_structure_direction_24h: str = "unknown"
+    
+    regime_structure_score_15m: float = 0.0
+    regime_structure_score_1h: float = 0.0
+    regime_structure_score_4h: float = 0.0
+    regime_structure_score_24h: float = 0.0
+    
+    regime_warning_15m: str | None = None
+    regime_warning_1h: str | None = None
+    regime_warning_4h: str | None = None
+    regime_warning_24h: str | None = None
+
+    # Expansion Diagnostics (Phase 2)
+    expansion_subtype_15m: str = "unknown_expansion"
+    expansion_subtype_1h: str = "unknown_expansion"
+    expansion_subtype_4h: str = "unknown_expansion"
+    expansion_subtype_24h: str = "unknown_expansion"
+    
+    expansion_health_score_15m: float = 0.0
+    expansion_health_score_1h: float = 0.0
+    expansion_health_score_4h: float = 0.0
+    expansion_health_score_24h: float = 0.0
+    
+    expansion_chaos_score_15m: float = 0.0
+    expansion_chaos_score_1h: float = 0.0
+    expansion_chaos_score_4h: float = 0.0
+    expansion_chaos_score_24h: float = 0.0
+    
+    expansion_warning_15m: str | None = None
+    expansion_warning_1h: str | None = None
+    expansion_warning_4h: str | None = None
+    expansion_warning_24h: str | None = None
+
+    # Trap/Absorption Diagnostics (Phase 2)
+    trap_absorption_risk_15m: float = 0.0
+    trap_absorption_risk_1h: float = 0.0
+    trap_absorption_risk_4h: float = 0.0
+    trap_absorption_risk_24h: float = 0.0
+    
+    trap_taker_divergence_risk_15m: float = 0.0
+    trap_taker_divergence_risk_1h: float = 0.0
+    trap_taker_divergence_risk_4h: float = 0.0
+    trap_taker_divergence_risk_24h: float = 0.0
+    
+    trap_liquidation_risk_15m: float = 0.0
+    trap_liquidation_risk_1h: float = 0.0
+    trap_liquidation_risk_4h: float = 0.0
+    trap_liquidation_risk_24h: float = 0.0
+    
+    trap_quality_reason_15m: str | None = None
+    trap_quality_reason_1h: str | None = None
+    trap_quality_reason_4h: str | None = None
+    trap_quality_reason_24h: str | None = None
+
+    # Compression Diagnostics (Phase 2)
+    compression_type_15m: str = "no_compression"
+    compression_type_1h: str = "no_compression"
+    compression_type_4h: str = "no_compression"
+    compression_type_24h: str = "no_compression"
+    
+    compression_participation_score_15m: float = 0.0
+    compression_participation_score_1h: float = 0.0
+    compression_participation_score_4h: float = 0.0
+    compression_participation_score_24h: float = 0.0
+    
+    compression_warning_15m: str | None = None
+    compression_warning_1h: str | None = None
+    compression_warning_4h: str | None = None
+    compression_warning_24h: str | None = None
+    
+    # Phase 3A Shadow Structural Permission
+    final_structural_permission_15m: str = "NOT_APPLICABLE"
+    final_structural_permission_1h: str = "NOT_APPLICABLE"
+    final_structural_permission_4h: str = "NOT_APPLICABLE"
+    final_structural_permission_24h: str = "NOT_APPLICABLE"
+    
+    structural_block_reason_15m: str | None = None
+    structural_block_reason_1h: str | None = None
+    structural_block_reason_4h: str | None = None
+    structural_block_reason_24h: str | None = None
+    
+    structural_warning_reason_15m: str | None = None
+    structural_warning_reason_1h: str | None = None
+    structural_warning_reason_4h: str | None = None
+    structural_warning_reason_24h: str | None = None
+    
+    structural_confidence_multiplier_15m: float = 1.0
+    structural_confidence_multiplier_1h: float = 1.0
+    structural_confidence_multiplier_4h: float = 1.0
+    structural_confidence_multiplier_24h: float = 1.0
+
     # Z-Score Reliability (Patch 6)
     volume_z_reliable_15m: bool = True
     volume_z_reliable_1h: bool = True
@@ -450,6 +555,22 @@ class FlowMetrics(BaseModel):
 
     crowding_status_15m: str | None = None
     crowding_status_1h: str | None = None
+    # Regime Diagnostics (Phase 2)
+    regime_is_structural_15m: bool = False
+    regime_is_structural_1h: bool = False
+    regime_is_volatile_15m: bool = False
+    regime_is_volatile_1h: bool = False
+    regime_structure_direction_15m: str = "unknown"
+    regime_structure_direction_1h: str = "unknown"
+    regime_structure_score_15m: float = 0.0
+    regime_structure_score_1h: float = 0.0
+    regime_warning_15m: str | None = None
+    regime_warning_1h: str | None = None
+
+    # Expansion Diagnostics (Phase 2)
+    expansion_subtype_15m: str = "unknown_expansion"
+    expansion_subtype_1h: str = "unknown_expansion"
+
     crowding_status_4h: str | None = None
     crowding_status_24h: str | None = None
 

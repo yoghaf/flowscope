@@ -266,6 +266,7 @@ class Settings(BaseSettings):
     v2_april_fix_mfe_tight_trail_r: float = 1.30
     v2_april_fix_mfe_tight_trail_floor_r: float = 0.35
     decision_bridge_live_gate_enabled: bool = True
+    use_structural_gates: bool = False
     decision_bridge_live_gate_late_expansion_enabled: bool = False
     decision_bridge_bearish_taker_delta_4h_max: float = -0.07
     decision_bridge_bearish_taker_level_4h_max: float = -0.03

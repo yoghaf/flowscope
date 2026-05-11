@@ -123,19 +123,81 @@ class StateEngine:
         profile: dict[str, float | int],
         adaptive: AdaptiveThresholds,
     ) -> float:
+        # Reliability checks
+        foundation = getattr(metrics, f"foundation_version_{timeframe}", "v1_reconstructed")
+        is_legacy = foundation != "v2_option_a"
+        oi_reliable = getattr(metrics, f"oi_delta_reliable_{timeframe}", True)
+
         price_change = abs(self._metric(metrics, "price_change", timeframe))
         atr = self._metric(metrics, "atr", timeframe)
         volume_z = self._metric(metrics, "volume_z", timeframe)
-        oi_delta_z = abs(self._metric(metrics, "oi_delta_z", timeframe))
+        
+        # Patch 2: OI Reliability Guard
+        oi_delta_z = abs(self._metric(metrics, "oi_delta_z", timeframe)) if oi_reliable else 0.0
+        
         liq_z = abs(self._metric(metrics, "liq_z_score", timeframe))
-        return round(
+        
+        # Patch 1: Legacy Confidence Penalty
+        volume_weight = 0.2 if not is_legacy else 0.1
+        
+        score = (
             (0.35 * self._ratio_score(price_change, max(float(profile["price_break"]), adaptive.price_move * 1.2)))
             + (0.2 * self._ratio_score(atr, max(float(profile["atr_high"]), 0.01)))
-            + (0.2 * self._ratio_score(volume_z, max(adaptive.volume, 0.5)))
+            + (volume_weight * self._ratio_score(volume_z, max(adaptive.volume, 0.5)))
             + (0.15 * self._ratio_score(oi_delta_z, max(adaptive.oi_abs, 0.6)))
-            + (0.1 * self._ratio_score(liq_z, 1.0)),
-            4,
+            + (0.1 * self._ratio_score(liq_z, 1.0))
         )
+        
+        if is_legacy:
+            score *= 0.85 # 15% penalty for legacy data
+            
+        # Patch 2: Expansion Subtype Diagnostics
+        expansion_subtype = "unknown_expansion"
+        health_score = 0.0
+        chaos_score = 0.0
+        expansion_warning = None
+        
+        wick_ratio = self._metric(metrics, "wick_ratio", timeframe)
+        liq_contribution = self._metric(metrics, "liq_contribution_ratio", timeframe)
+        effort_result = getattr(metrics, f"effort_result_state_{timeframe}", "unknown")
+        taker_aligned = getattr(metrics, f"taker_price_alignment_{timeframe}", True)
+        
+        # Calculate scores
+        health_score = (0.4 * self._ratio_score(volume_z, 1.5)) + (0.3 * (1.0 - wick_ratio)) + (0.3 * (1.0 - liq_contribution))
+        chaos_score = (0.5 * self._ratio_score(liq_contribution, 0.15)) + (0.5 * (1.0 - float(taker_aligned)))
+        
+        # Patch 2: Expansion Subtype Diagnostics (Hardened)
+        is_structural = getattr(metrics, f"regime_is_structural_{timeframe}", False)
+        regime_warning = getattr(metrics, f"regime_warning_{timeframe}", None)
+        pressure_status = getattr(metrics, f"market_pressure_status_{timeframe}", "VALID")
+        
+        if effort_result == "Absorption":
+            expansion_subtype = "absorption_expansion"
+            expansion_warning = "EFFORT_RESULT_FAILURE"
+        elif liq_contribution >= 0.2 or chaos_score >= 0.6:
+            expansion_subtype = "chaotic_expansion"
+            expansion_warning = "LIQUIDATION_DRIVEN"
+        elif not is_structural and regime_warning == "ATR_HIGH_NOT_TREND":
+            expansion_subtype = "volatile_expansion"
+            expansion_warning = "ATR_HIGH_NOT_TREND"
+        elif wick_ratio >= 0.4 or volume_z >= 3.0:
+            expansion_subtype = "volatile_expansion"
+            if volume_z >= 3.0: expansion_warning = "EXTREME_VOLUME_CLIMAX"
+        elif (is_structural or (health_score >= 0.75 and taker_aligned)) \
+             and health_score >= 0.65 \
+             and oi_reliable \
+             and pressure_status in {"VALID", "PARTIAL"}:
+            expansion_subtype = "healthy_expansion"
+        else:
+            expansion_subtype = "unknown_expansion"
+            
+        # Set Diagnostics
+        setattr(metrics, f"expansion_subtype_{timeframe}", expansion_subtype)
+        setattr(metrics, f"expansion_health_score_{timeframe}", round(health_score, 4))
+        setattr(metrics, f"expansion_chaos_score_{timeframe}", round(chaos_score, 4))
+        setattr(metrics, f"expansion_warning_{timeframe}", expansion_warning)
+        
+        return round(score, 4)
 
     def _score_pre_squeeze(
         self,
@@ -145,13 +207,19 @@ class StateEngine:
         profile: dict[str, float | int],
         adaptive: AdaptiveThresholds,
     ) -> float:
-        oi_delta_z = abs(self._metric(metrics, "oi_delta_z", timeframe))
+        # Reliability checks
+        oi_reliable = getattr(metrics, f"oi_delta_reliable_{timeframe}", True)
+        
+        # Patch 2: OI Reliability Guard
+        oi_delta_z = abs(self._metric(metrics, "oi_delta_z", timeframe)) if oi_reliable else 0.0
+        
         compression = self._metric(metrics, "compression_score", timeframe)
         atr = self._metric(metrics, "atr", timeframe)
         funding_level = self._metric(metrics, "funding_level", timeframe)
         ls_delta = abs(self._metric(metrics, "long_short_ratio_delta", timeframe))
         liq_z = abs(self._metric(metrics, "liq_z_score", timeframe))
         price_change = abs(self._metric(metrics, "price_change", timeframe))
+        
         crowd_score = max(
             self._ratio_score(abs(funding_level), max(float(profile["funding_extreme"]), DELTA_EPSILON)),
             self._ratio_score(ls_delta, max(float(profile["ls_delta"]), DELTA_EPSILON)),
@@ -175,9 +243,15 @@ class StateEngine:
         adaptive: AdaptiveThresholds,
         taker_available: bool,
     ) -> float:
+        # Reliability checks
+        oi_reliable = getattr(metrics, f"oi_delta_reliable_{timeframe}", True)
+
         price_change = abs(self._metric(metrics, "price_change", timeframe))
         volume_z = self._metric(metrics, "volume_z", timeframe)
-        oi_delta_z = abs(self._metric(metrics, "oi_delta_z", timeframe))
+        
+        # Patch 2: OI Reliability Guard
+        oi_delta_z = abs(self._metric(metrics, "oi_delta_z", timeframe)) if oi_reliable else 0.0
+        
         funding_level = abs(self._metric(metrics, "funding_level", timeframe))
         ls_delta = abs(self._metric(metrics, "long_short_ratio_delta", timeframe))
         liq_z = abs(self._metric(metrics, "liq_z_score", timeframe))
@@ -204,8 +278,14 @@ class StateEngine:
         profile: dict[str, float | int],
         adaptive: AdaptiveThresholds,
     ) -> float:
+        # Reliability checks
+        oi_reliable = getattr(metrics, f"oi_delta_reliable_{timeframe}", True)
+
         volume_z = self._metric(metrics, "volume_z", timeframe)
-        oi_delta_z = abs(self._metric(metrics, "oi_delta_z", timeframe))
+        
+        # Patch 2: OI Reliability Guard
+        oi_delta_z = abs(self._metric(metrics, "oi_delta_z", timeframe)) if oi_reliable else 0.0
+        
         price_change = abs(self._metric(metrics, "price_change", timeframe))
         atr = self._metric(metrics, "atr", timeframe)
         liq_z = abs(self._metric(metrics, "liq_z_score", timeframe))
