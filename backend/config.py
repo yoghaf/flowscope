@@ -302,7 +302,7 @@ class Settings(BaseSettings):
     entry_signal_candle_confirmed_only: bool = False
 
     # Staged collector settings
-    oi_batch_size: int = 40          # OI symbols per rotary cycle (weight 1 each)
+    oi_batch_size: int = 100          # OI symbols per rotary cycle (weight 1 each)
     ratio_batch_size: int = 10       # L/S ratio symbols per cycle (weight 5 each)
     taker_batch_size: int = 10       # Taker ratio symbols per cycle (weight 5 each)
     volume_batch_size: int = 50      # Symbols per live kline-volume refresh cycle

@@ -444,21 +444,8 @@ class TimeframeBucket:
             "breakdown_compression": self.breakdown_compression,
             "breakdown_funding": self.breakdown_funding,
             "foundation_version": self.foundation_version,
-            
-            # OI Alignment
-            "oi_open_timestamp": self.oi_open_timestamp,
-            "oi_close_timestamp": self.oi_close_timestamp,
-            "oi_open_age": self.oi_open_age,
-            "oi_close_age": self.oi_close_age,
-            "oi_alignment_status": self.oi_alignment_status,
-            "oi_delta_reliable": self.oi_delta_reliable,
-
-            # Data Quality & Reliability
             "bucket_is_closed": self.bucket_is_closed,
             "bucket_completion_pct": self.bucket_completion_pct,
-            "volume_z_reliable": self.volume_z_reliable,
-            "oi_delta_z_reliable": self.oi_delta_z_reliable,
-            "zscore_baseline_status": self.zscore_baseline_status,
         }
 
 
@@ -479,89 +466,199 @@ class TimeframeAggregateStore:
             for timeframe in TIMEFRAME_ORDER
         }
 
-    def ingest(self, symbol: str, point: HistoryPoint, oi_history: dict[str, deque[tuple[datetime, float]]] | None = None) -> dict[str, TimeframeBucket]:
-        updated: dict[str, TimeframeBucket] = {}
+    def _update_bucket_lifecycle(self, bucket: TimeframeBucket, now: datetime) -> None:
+        """Update bucket completion and closed status based on time."""
+        tf_seconds = TIMEFRAME_DELTAS[bucket.timeframe].total_seconds()
+        elapsed = (bucket.last_timestamp - bucket.bucket_start).total_seconds()
+        bucket.bucket_completion_pct = round(min(max(elapsed / tf_seconds, 0.0), 1.0), 4)
+        
+        # A bucket is closed if the current time has passed its end
+        if now >= bucket.bucket_end:
+            bucket.bucket_is_closed = True
+            bucket.bucket_completion_pct = 1.0
+
+    def _finalize_bucket(self, bucket: TimeframeBucket, oi_history: deque[tuple[datetime, float]] | None = None) -> None:
+        """Lock bucket state and perform final boundary alignment."""
+        bucket.bucket_is_closed = True
+        bucket.bucket_completion_pct = 1.0
+        # Ensure last_timestamp doesn't leak into next bucket
+        if bucket.last_timestamp > bucket.bucket_end:
+            bucket.last_timestamp = bucket.bucket_end
+            
+        if oi_history is not None:
+            self._align_oi_boundary(bucket, oi_history, update_open=False)
+
+    def ingest(self, symbol: str, point: HistoryPoint, oi_history: dict[str, deque[tuple[datetime, float]]] | None = None) -> dict[str, list[TimeframeBucket]]:
+        updated: dict[str, list[TimeframeBucket]] = {}
+        symbol_oi_history = oi_history.get(symbol, deque()) if oi_history else None
+
         for timeframe in TIMEFRAME_ORDER:
             bucket_start = floor_timestamp(point.timestamp, timeframe)
             history = self.buckets[timeframe][symbol]
             previous_bucket = history[-1] if history else None
+            
+            timeframe_updated = []
 
-            if history and history[-1].bucket_start == bucket_start:
-                bucket = history[-1]
+            if previous_bucket and previous_bucket.bucket_start == bucket_start:
+                # Still in same bucket
+                bucket = previous_bucket
                 bucket.apply_point(point)
-                if oi_history:
-                    self._align_oi_boundary(bucket, oi_history.get(symbol, deque()), update_open=False)
+                if symbol_oi_history is not None:
+                    # Ongoing alignment for open bucket (update close boundary only)
+                    self._align_oi_boundary(bucket, symbol_oi_history, update_open=False)
             else:
+                # Rollover detected or first bucket
+                if previous_bucket:
+                    self._finalize_bucket(previous_bucket, symbol_oi_history)
+                    timeframe_updated.append(previous_bucket)
+                
                 new_bucket = TimeframeBucket.from_point(
                     symbol,
                     timeframe,
                     point,
                     previous_bucket=previous_bucket,
                 )
-                if oi_history:
-                    self._align_oi_boundary(new_bucket, oi_history.get(symbol, deque()))
-                history.append(new_bucket)
+                
+                # Minimal inheritance logic (Preferred safe fix)
+                if previous_bucket:
+                    tolerance = OI_ALIGNMENT_TOLERANCE.get(timeframe, 600)
+                    if (previous_bucket.oi_close_timestamp is not None and 
+                        previous_bucket.oi_close_age is not None and 
+                        previous_bucket.oi_close_age <= tolerance and
+                        previous_bucket.bucket_end == new_bucket.bucket_start):
+                        
+                        new_bucket.oi_open_timestamp = previous_bucket.oi_close_timestamp
+                        new_bucket.oi_open_age = previous_bucket.oi_close_age
+                        new_bucket.open_interest_open = previous_bucket.open_interest_close
+                        
+                        logger.debug(
+                            "OI Inherit [%s %s]: start=%s, inherited_ts=%s, age=%.1fs",
+                            symbol, timeframe, new_bucket.bucket_start, 
+                            new_bucket.oi_open_timestamp, new_bucket.oi_open_age
+                        )
 
-            updated[timeframe] = history[-1]
+                if symbol_oi_history is not None:
+                    # Initial alignment for new bucket
+                    self._align_oi_boundary(new_bucket, symbol_oi_history, update_open=True)
+                
+                history.append(new_bucket)
+                bucket = new_bucket
+
+            # Always update lifecycle for the active bucket
+            self._update_bucket_lifecycle(bucket, point.timestamp)
+            timeframe_updated.append(bucket)
+            updated[timeframe] = timeframe_updated
 
         return updated
 
-    def _align_oi_boundary(self, bucket: TimeframeBucket, history: deque[tuple[datetime, float]], update_open: bool = True) -> None:
+    def _align_oi_boundary(
+        self, 
+        bucket: TimeframeBucket, 
+        history: deque[tuple[datetime, float]], 
+        update_open: bool = True,
+    ) -> None:
         if not history:
-            bucket.oi_alignment_status = "MISSING"
+            # If we already have inherited boundaries, don't revert to MISSING
+            if bucket.oi_open_timestamp is None and bucket.oi_close_timestamp is None:
+                bucket.oi_alignment_status = "MISSING"
             return
 
         tolerance = OI_ALIGNMENT_TOLERANCE.get(bucket.timeframe, 600)
         
         # 1. Find nearest to bucket_start
         if update_open:
+            # Preserve existing valid boundary (e.g. from inheritance) 
+            # unless we find a better one in history.
+            current_age = bucket.oi_open_age if bucket.oi_open_age is not None else float('inf')
+            
             open_snap = self._find_nearest_snapshot(history, bucket.bucket_start)
             if open_snap:
                 ts, val = open_snap
-                bucket.oi_open_timestamp = ts
-                bucket.oi_open_age = abs((ts - bucket.bucket_start).total_seconds())
-                if bucket.oi_open_age <= tolerance:
-                    bucket.open_interest_open = val
-            else:
-                bucket.oi_open_age = None
+                new_age = abs((ts - bucket.bucket_start).total_seconds())
+                
+                # Only update if new snap is better (closer) than existing
+                if new_age < current_age:
+                    bucket.oi_open_timestamp = ts
+                    bucket.oi_open_age = new_age
+                    if new_age <= tolerance:
+                        bucket.open_interest_open = val
+                elif current_age <= tolerance:
+                    # Keep inherited value as it is better
+                    pass
+                else:
+                    # Both are bad, but let's keep the newer one if it exists
+                    pass
+            # If no snap found in history, keep existing (inherited) values
 
-        # 2. Find nearest to bucket_end
-        close_snap = self._find_nearest_snapshot(history, bucket.bucket_end)
-        if close_snap:
-            ts, val = close_snap
-            bucket.oi_close_timestamp = ts
-            bucket.oi_close_age = abs((ts - bucket.bucket_end).total_seconds())
-            if bucket.oi_close_age <= tolerance:
-                bucket.open_interest_close = val
+        # 2. Find nearest to bucket_end (Only if closed or near completion)
+        should_update_close = bucket.bucket_is_closed or bucket.bucket_completion_pct >= 0.9
+        
+        if should_update_close:
+            close_snap = self._find_nearest_snapshot(history, bucket.bucket_end)
+            if close_snap:
+                ts, val = close_snap
+                bucket.oi_close_timestamp = ts
+                bucket.oi_close_age = abs((ts - bucket.bucket_end).total_seconds())
+                if bucket.oi_close_age <= tolerance:
+                    bucket.open_interest_close = val
+            else:
+                # Only clear if we actually looked and found nothing
+                bucket.oi_close_timestamp = None
+                bucket.oi_close_age = None
         else:
-            bucket.oi_close_age = None
+            # For open buckets far from end, we don't look for close_timestamp yet.
+            # Preserve existing if it was loaded from DB and is still valid (rare case)
+            if bucket.oi_close_age is not None and bucket.oi_close_age > tolerance:
+                bucket.oi_close_timestamp = None
+                bucket.oi_close_age = None
 
         # 3. Determine status
         open_ok = bucket.oi_open_age is not None and bucket.oi_open_age <= tolerance
         close_ok = bucket.oi_close_age is not None and bucket.oi_close_age <= tolerance
         
-        if open_ok and close_ok:
-            bucket.oi_alignment_status = "ALIGNED"
-            bucket.oi_delta_reliable = True
-        elif open_ok or close_ok:
-            bucket.oi_alignment_status = "PARTIAL"
-            bucket.oi_delta_reliable = False
+        if bucket.bucket_is_closed:
+            if open_ok and close_ok:
+                bucket.oi_alignment_status = "ALIGNED"
+                bucket.oi_delta_reliable = True
+            elif open_ok or close_ok:
+                bucket.oi_alignment_status = "PARTIAL"
+                bucket.oi_delta_reliable = False
+            else:
+                bucket.oi_alignment_status = "MISALIGNED"
+                bucket.oi_delta_reliable = False
         else:
-            bucket.oi_alignment_status = "MISALIGNED"
-            bucket.oi_delta_reliable = False
+            # For open buckets, PARTIAL or MISSING is normal
+            if open_ok and close_ok:
+                bucket.oi_alignment_status = "ALIGNED"
+                bucket.oi_delta_reliable = True
+            elif open_ok:
+                bucket.oi_alignment_status = "PARTIAL"
+                bucket.oi_delta_reliable = False
+            elif close_ok:
+                # Should be rare given should_update_close logic
+                bucket.oi_alignment_status = "PARTIAL"
+                bucket.oi_delta_reliable = False
+            else:
+                bucket.oi_alignment_status = "MISSING"
+                bucket.oi_delta_reliable = False
 
     @staticmethod
     def _find_nearest_snapshot(history: deque[tuple[datetime, float]], target: datetime) -> tuple[datetime, float] | None:
+        """Find the nearest (timestamp, value) pair to the target datetime."""
         if not history:
             return None
+            
         best = None
         min_diff = float('inf')
+        
+        # Assume history is chronological
         for ts, val in history:
             diff = abs((ts - target).total_seconds())
             if diff < min_diff:
                 min_diff = diff
                 best = (ts, val)
             elif diff > min_diff:
+                # If we're getting further away in a sorted list, we've passed the nearest point
                 break
         return best
 
@@ -603,6 +700,46 @@ class TimeframeAggregateStore:
 
         ordered = [existing_by_start[key] for key in sorted(existing_by_start)]
         maxlen = history.maxlen
+
+        # Sanitize stale OI fields for seeded buckets
+        tolerance = OI_ALIGNMENT_TOLERANCE.get(bucket.timeframe, 600)
+        
+        # Clear if age is missing or exceeds tolerance
+        if bucket.oi_open_timestamp is not None:
+            if bucket.oi_open_age is None or bucket.oi_open_age > tolerance:
+                bucket.oi_open_timestamp = None
+                bucket.oi_open_age = None
+            
+        if bucket.oi_close_timestamp is not None:
+            if bucket.oi_close_age is None or bucket.oi_close_age > tolerance:
+                bucket.oi_close_timestamp = None
+                bucket.oi_close_age = None
+            
+        # Recompute status
+        open_ok = bucket.oi_open_age is not None and bucket.oi_open_age <= tolerance
+        close_ok = bucket.oi_close_age is not None and bucket.oi_close_age <= tolerance
+        
+        if bucket.bucket_is_closed:
+            if open_ok and close_ok:
+                bucket.oi_alignment_status = "ALIGNED"
+                bucket.oi_delta_reliable = True
+            elif open_ok or close_ok:
+                bucket.oi_alignment_status = "PARTIAL"
+                bucket.oi_delta_reliable = False
+            else:
+                bucket.oi_alignment_status = "MISALIGNED"
+                bucket.oi_delta_reliable = False
+        else:
+            if open_ok and close_ok:
+                bucket.oi_alignment_status = "ALIGNED"
+                bucket.oi_delta_reliable = True
+            elif open_ok:
+                bucket.oi_alignment_status = "PARTIAL"
+            elif close_ok:
+                bucket.oi_alignment_status = "PARTIAL"
+            else:
+                bucket.oi_alignment_status = "MISSING"
+            bucket.oi_delta_reliable = False
 
         history.clear()
         for item in (ordered[-maxlen:] if maxlen else ordered):

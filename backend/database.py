@@ -347,6 +347,8 @@ class DatabaseManager:
                 "breakdown_volume": excluded.breakdown_volume,
                 "breakdown_compression": excluded.breakdown_compression,
                 "breakdown_funding": excluded.breakdown_funding,
+                "bucket_is_closed": excluded.bucket_is_closed,
+                "bucket_completion_pct": excluded.bucket_completion_pct,
             },
         )
 

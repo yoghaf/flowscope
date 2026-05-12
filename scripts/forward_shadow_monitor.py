@@ -96,20 +96,26 @@ async def run_forward_monitor():
                     
                     risk_notes = mi.get("risk_notes", [])
                     warnings = mi.get("warnings", [])
-                    ef_reasons = ef.get("reasons", [])
+                    ef_reasons = data.get("hard_filter_reasons") or ef.get("reasons", [])
+                    
+                    # Efficient Build Quality & Reasons
+                    ebq = data.get("efficient_build_quality") or fm.get(f"efficient_build_quality_{snap.timeframe}", "UNKNOWN")
+                    ebqr = data.get("efficient_build_quality_reason") or fm.get(f"efficient_build_quality_reason_{snap.timeframe}")
+                    
+                    final_ep = data.get("final_entry_permission") or ("ALLOW" if ef.get("passed", True) else "BLOCK")
                     
                     candidates.append({
                         "timestamp": data.get("timestamp"),
                         "symbol": snap.symbol,
                         "timeframe": snap.timeframe,
                         "foundation_version": found_ver,
-                        "oi_delta_reliable": fm.get(f"oi_delta_z_reliable_{snap.timeframe}", False),
+                      "oi_delta_reliable": fm.get(f"oi_delta_reliable_{snap.timeframe}", False),
                         "zscore_baseline_status": fm.get(f"zscore_baseline_status_{snap.timeframe}", "NORMAL"),
                         "scenario_label": scenario_label,
                         "scenario_disposition": scenario_disposition,
                         "setup_type": setup,
-                        "efficient_build_quality": fm.get(f"efficient_build_quality_{snap.timeframe}", "UNKNOWN"),
-                        "efficient_build_quality_reason": fm.get(f"efficient_build_quality_reason_{snap.timeframe}"),
+                        "efficient_build_quality": ebq,
+                        "efficient_build_quality_reason": ebqr,
                         "scenario_reasons": "|".join(scenario_reasons_raw) if isinstance(scenario_reasons_raw, list) else str(scenario_reasons_raw),
                         "mode_c_risks": "|".join(risk_notes) if isinstance(risk_notes, list) else str(risk_notes),
                         "mode_a_reasons": "|".join(warnings) if isinstance(warnings, list) else str(warnings),
@@ -121,16 +127,15 @@ async def run_forward_monitor():
                         "absorption_candidate": fm.get(f"absorption_candidate_{snap.timeframe}", False),
                         "climax_candidate": fm.get(f"climax_candidate_{snap.timeframe}", False),
                         "regime_warning": data.get("regime_warning") or fm.get(f"regime_warning_{snap.timeframe}"),
-                        "expansion_subtype": data.get("expansion_subtype", "unknown_expansion"),
-                        "compression_type": data.get("compression_type", "no_compression"),
-                        "final_entry_permission": "ALLOW" if ef.get("passed") else "BLOCK",
+                        "expansion_subtype": data.get("expansion_subtype") or fm.get(f"expansion_subtype_{snap.timeframe}"),
+                        "compression_type": data.get("compression_type") or fm.get(f"compression_type_{snap.timeframe}"),
+                        "final_entry_permission": final_ep,
                         "final_structural_permission": data.get("final_structural_permission", "NOT_APPLICABLE"),
                         "structural_block_reason": data.get("structural_block_reason"),
                         "structural_warning_reason": data.get("structural_warning_reason"),
                         "structural_confidence_multiplier": data.get("structural_confidence_multiplier", 1.0),
-                        # Audit Fields
-                        "bucket_is_closed": fm.get(f"bucket_is_closed_{snap.timeframe}", False),
-                        "bucket_completion_pct": fm.get(f"bucket_completion_pct_{snap.timeframe}", 0.0),
+                        "bucket_is_closed": data.get("bucket_is_closed", False),
+                        "bucket_completion_pct": data.get("bucket_completion_pct", 0.0),
                         "volume_z_reliable": fm.get(f"volume_z_reliable_{snap.timeframe}", True),
                         "oi_delta_z_reliable": fm.get(f"oi_delta_z_reliable_{snap.timeframe}", True)
                     })
@@ -178,9 +183,12 @@ async def run_forward_monitor():
     # Sort columns to match df_cols
     df = df[df_cols]
     df.to_csv(csv_path, index=False)
-    print(f"Observations Processed: {len(candidates)}")
-
-    print(f"Total Logged in CSV:  {len(df)}")
+    
+    current_count = len(candidates)
+    total_logged = len(df)
+    
+    print(f"Current Run Observations: {current_count}")
+    print(f"Total Logged Observations: {total_logged}")
     print(f"Output CSV Path:      {csv_path.absolute()}")
 
     # 4. Generate Summary (Always)
@@ -188,15 +196,29 @@ async def run_forward_monitor():
         f.write("# Forward Shadow Daily Summary\n\n")
         f.write(f"**Report Generated**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n")
         
-        if len(df) == 0:
+        f.write("> [!IMPORTANT]\n")
+        f.write("> **Monitor Scope Notice**:\n")
+        f.write("> - This monitor reads `latest_asset_states` only (the current live state of the market).\n")
+        f.write("> - It is NOT a historical replay engine and does not represent a backtest.\n")
+        f.write("> - Zero current observations simply means no symbols are currently in a Continuation setup; it does NOT mean the pipeline is failing.\n\n")
+
+        f.write("## 0. Pipeline Status & Metadata\n")
+        f.write(f"- **v2 Buckets in DB**: {v2_count}\n")
+        f.write(f"- **v2 Symbols Tracked**: {v2_symbols}\n")
+        f.write(f"- **Latest Data Timestamp**: {latest_v2 if latest_v2 else 'None'}\n")
+        f.write(f"- **Current Run Observations**: {current_count}\n")
+        f.write(f"- **Total Logged Observations**: {total_logged}\n\n")
+
+        if total_logged == 0:
             f.write("> [!NOTE]\n")
             f.write("> No forward v2 continuation observations collected yet.\n\n")
-            f.write(f"- **v2 Buckets in DB**: {v2_count}\n")
-            f.write(f"- **Latest Data Timestamp**: {latest_v2 if latest_v2 else 'None'}\n")
         else:
-            total_candidates = len(df)
+            total_candidates = total_logged
             quality_counts = df["efficient_build_quality"].value_counts()
+            quality_reason_counts = df["efficient_build_quality_reason"].value_counts()
             scenario_counts = df["scenario_label"].value_counts()
+            disposition_counts = df["scenario_disposition"].value_counts()
+            
             baseline_allow = len(df[df["final_entry_permission"] == "ALLOW"])
             baseline_block = len(df[df["final_entry_permission"] == "BLOCK"])
             
@@ -225,10 +247,17 @@ async def run_forward_monitor():
             f.write("## 2. Efficient Build Quality Distribution\n")
             f.write(quality_counts.to_markdown() + "\n\n")
             
-            f.write("## 3. Scenario Label Distribution\n")
+            f.write("## 3. WAIT Reason Breakdown (Quality)\n")
+            f.write(quality_reason_counts.to_markdown() if not quality_reason_counts.empty else "No reasons logged yet.")
+            f.write("\n\n")
+            
+            f.write("## 4. Scenario Label Distribution\n")
             f.write(scenario_counts.to_markdown() + "\n\n")
             
-            f.write("## 4. Structural Shadow Conflict Matrix\n")
+            f.write("## 5. Scenario Disposition Breakdown\n")
+            f.write(disposition_counts.to_markdown() + "\n\n")
+            
+            f.write("## 6. Structural Shadow Conflict Matrix\n")
             f.write("| Combination | Count | Description |\n")
             f.write("| :--- | :--- | :--- |\n")
             f.write(f"| Baseline ALLOW + STRUCTURAL_ALLOW | {allow_struct_allow} | High Confidence Signals |\n")
@@ -236,30 +265,30 @@ async def run_forward_monitor():
             f.write(f"| Baseline ALLOW + STRUCTURAL_WATCHLIST | {allow_struct_watch} | Confidence Friction |\n")
             f.write(f"| Baseline ALLOW + STRUCTURAL_PENALTY | {allow_struct_pen} | Confidence Friction |\n\n")
             
-            f.write("## 5. Top Baseline Block Reasons (Hard Filters)\n")
+            f.write("## 7. Top Baseline Block Reasons (Hard Filters)\n")
             f.write(top_hard_filters.to_markdown() if not top_hard_filters.empty else "No hard blocks yet.")
             f.write("\n\n")
             
-            f.write("## 6. Top Structural Block Reasons\n")
+            f.write("## 8. Top Structural Block Reasons\n")
             f.write(top_block_reasons.to_markdown() if not top_block_reasons.empty else "No structural blocks yet.")
             f.write("\n\n")
             
-            f.write("## 7. Data Integrity Metrics\n")
+            f.write("## 9. Data Integrity Metrics\n")
             f.write(f"- **Foundation Versions**: {foundation_counts.to_dict()}\n")
             f.write(f"- **OI Reliability**: {oi_reliable_counts.to_dict()}\n")
             f.write(f"- **Z-Score Status**: {zscore_counts.to_dict()}\n\n")
             
-            f.write("## 8. Crowding & Sentiment Status\n")
+            f.write("## 10. Crowding & Sentiment Status\n")
             f.write(crowding_counts.to_markdown() + "\n\n")
             
-            f.write("## 9. Regime & Expansion Diagnostics\n")
+            f.write("## 11. Regime & Expansion Diagnostics\n")
             f.write("### Expansion Subtypes\n")
             f.write(expansion_counts.to_markdown() + "\n\n")
             f.write("### Regime Warnings\n")
             f.write(regime_warn_counts.to_markdown() if not regime_warn_counts.empty else "No regime warnings.")
             f.write("\n\n")
             
-            f.write("## 10. Compression Status\n")
+            f.write("## 12. Compression Status\n")
             f.write(compression_counts.to_markdown() + "\n")
 
 

@@ -1,17 +1,15 @@
-
 import asyncio
 from sqlalchemy import text
-from backend.config import get_settings
-from backend.database import DatabaseManager
+from sqlalchemy.ext.asyncio import create_async_engine
 
-async def check():
-    db = DatabaseManager(get_settings())
-    await db.init()
-    async with db.session_factory() as s:
-        print("Columns in demo_trades:")
-        r = await s.execute(text("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'demo_trades'"))
-        for row in r.fetchall():
-            print(f"- {row[0]} ({row[1]})")
+url = "postgresql+asyncpg://postgres:Yoga12345@localhost:5432/flowscope_db"
+
+async def main():
+    engine = create_async_engine(url)
+    async with engine.connect() as conn:
+        r = (await conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'market_data_buckets'"))).fetchall()
+        print([row[0] for row in r])
+    await engine.dispose()
 
 if __name__ == "__main__":
-    asyncio.run(check())
+    asyncio.run(main())

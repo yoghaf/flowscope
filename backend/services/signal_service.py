@@ -137,6 +137,11 @@ class AssetState:
     scenario_disposition: str = "observe"
     scenario_rationale: str = "Context remains mixed; keep observing."
     scenario_reasons: list[str] = field(default_factory=list)
+    efficient_build_quality: str | None = None
+    efficient_build_quality_reason: str | None = None
+    final_entry_permission: str = "ALLOW"
+    hard_filter_reasons: list[str] = field(default_factory=list)
+    block_reasons: list[str] = field(default_factory=list)
     debug_trace: dict[str, Any] = field(default_factory=dict)
     market_interpretation: dict[str, Any] = field(default_factory=dict)
 
@@ -273,6 +278,7 @@ class SignalService:
         self.user_initialized: set[str] = set()
         self.last_alert_at: dict[tuple[str, str, str], datetime] = {}
         self.last_trade_signal_at: dict[tuple[str, str, str], datetime] = {}
+        self._pending_buckets: list[TimeframeBucket] = []
         self.setup_expectancy: dict[str, float] = {}
         self.condition_expectancy: dict[tuple[str, str, str], float] = {}
         self.performance_snapshot = None
@@ -733,7 +739,9 @@ class SignalService:
                     exchange_count=current.exchange_count,
                 )
                 self.history[snapshot.symbol].append(point)
-                self.aggregate_store.ingest(snapshot.symbol, point, self.collectors[0]._oi_history)
+                ingest_result = self.aggregate_store.ingest(snapshot.symbol, point, self.collectors[0]._oi_history)
+                for tf_buckets in ingest_result.values():
+                    self._pending_buckets.extend(tf_buckets)
                 alert = await self._update_state(snapshot.symbol)
         except Exception:
             logger.exception("Stream tick update failed symbol=%s", snapshot.symbol)
@@ -828,7 +836,10 @@ class SignalService:
                 try:
                     point = self._coalesce_snapshot_point(symbol, point)
                     self.history[symbol].append(point)
-                    self.aggregate_store.ingest(symbol, point, self.collectors[0]._oi_history)
+                    ingest_result = self.aggregate_store.ingest(symbol, point, self.collectors[0]._oi_history)
+                    for tf_buckets in ingest_result.values():
+                        self._pending_buckets.extend(tf_buckets)
+                        
                     alert = await self._update_state(symbol)
                     changed_symbols.append(symbol)
                     if alert:
@@ -846,10 +857,16 @@ class SignalService:
                 for symbol in changed_symbols
                 if (state := self.states_by_timeframe.get(timeframe, {}).get(symbol)) is not None
             ]
-            bucket_rows = [
-                bucket.to_record()
-                for bucket in self.aggregate_store.latest_buckets_for_symbols(changed_symbols)
-            ]
+            
+            # Use pending buckets which include finalized rollovers
+            unique_buckets = {}
+            for b in self._pending_buckets:
+                # Key ensures only latest version of a bucket for this cycle is kept
+                key = (b.symbol, b.timeframe, b.bucket_start)
+                unique_buckets[key] = b
+            
+            bucket_rows = [b.to_record() for b in unique_buckets.values()]
+            self._pending_buckets = [] # Clear after processing
 
         await self.database.save_market_snapshots(assets_to_persist)
         await self.database.save_market_buckets(bucket_rows)
@@ -2389,6 +2406,12 @@ class SignalService:
             expansion_subtype=asset.expansion_subtype,
             compression_type=asset.compression_type,
             regime_warning=asset.regime_warning,
+            
+            efficient_build_quality=asset.efficient_build_quality,
+            efficient_build_quality_reason=asset.efficient_build_quality_reason,
+            final_entry_permission=asset.final_entry_permission,
+            hard_filter_reasons=list(asset.hard_filter_reasons),
+            block_reasons=list(asset.block_reasons),
 
             scenario=ContextScenarioSnapshot(
                 label=asset.scenario_label,
@@ -2851,6 +2874,13 @@ class SignalService:
 
             liq_contribution_ratio=getattr(flow_metrics, f"liq_contribution_ratio_{timeframe}", None),
             liquidation_context=getattr(flow_metrics, f"liquidation_context_{timeframe}", None),
+
+            # Phase 5 Observability
+            efficient_build_quality=getattr(flow_metrics, f"efficient_build_quality_{timeframe}", "UNKNOWN"),
+            efficient_build_quality_reason=getattr(flow_metrics, f"efficient_build_quality_reason_{timeframe}", None),
+            final_entry_permission="ALLOW" if not market_interpretation or (market_interpretation.get("entry_filters", {}).get("passed", True)) else "BLOCK",
+            hard_filter_reasons=market_interpretation.get("entry_filters", {}).get("reasons", []) if market_interpretation else [],
+            block_reasons=market_interpretation.get("entry_filters", {}).get("reasons", []) if market_interpretation else [],
 
             flow_metrics=flow_metrics,
             score=actual_score,

@@ -281,7 +281,7 @@ class BinanceCollector(BaseCollector):
                 logger.debug("OI batch done: %d symbols", len(batch))
             except Exception as exc:
                 logger.error("OI rotary error: %s", exc)
-            await asyncio.sleep(60)  # 40 calls/min = 40 weight/min
+            await asyncio.sleep(15)  # 100 calls/15s = 400 calls/min
 
     async def _rotary_ratio_loop(self) -> None:
         """Fetch long/short ratio for a batch of symbols every ~60 seconds."""

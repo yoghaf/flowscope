@@ -871,6 +871,13 @@ class AssetSnapshot(BaseModel):
     structural_warning_reason: str | None = None
     structural_confidence_multiplier: float = 1.0
     
+    # Phase 5 Observability
+    efficient_build_quality: str | None = None
+    efficient_build_quality_reason: str | None = None
+    final_entry_permission: str = "ALLOW"
+    hard_filter_reasons: list[str] = Field(default_factory=list)
+    block_reasons: list[str] = Field(default_factory=list)
+    
     # Scenario and Regime Diagnostics (Phase 5 Observability)
     scenario_label: str | None = None
     scenario_disposition: str | None = None
