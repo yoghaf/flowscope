@@ -635,7 +635,9 @@ class FlowMetrics(BaseModel):
     price_age_seconds_15m: float | None = None
     futures_volume_age_seconds_15m: float | None = None
     open_interest_age_seconds_15m: float | None = None
+    funding_timestamp_15m: datetime | None = None
     funding_age_seconds_15m: float | None = None
+    funding_reliable_15m: bool = False
     long_short_ratio_age_seconds_15m: float | None = None
     taker_ratio_age_seconds_15m: float | None = None
     liquidation_age_seconds_15m: float | None = None
@@ -655,7 +657,9 @@ class FlowMetrics(BaseModel):
     price_age_seconds_1h: float | None = None
     futures_volume_age_seconds_1h: float | None = None
     open_interest_age_seconds_1h: float | None = None
+    funding_timestamp_1h: datetime | None = None
     funding_age_seconds_1h: float | None = None
+    funding_reliable_1h: bool = False
     long_short_ratio_age_seconds_1h: float | None = None
     taker_ratio_age_seconds_1h: float | None = None
     liquidation_age_seconds_1h: float | None = None
@@ -675,7 +679,9 @@ class FlowMetrics(BaseModel):
     price_age_seconds_4h: float | None = None
     futures_volume_age_seconds_4h: float | None = None
     open_interest_age_seconds_4h: float | None = None
+    funding_timestamp_4h: datetime | None = None
     funding_age_seconds_4h: float | None = None
+    funding_reliable_4h: bool = False
     long_short_ratio_age_seconds_4h: float | None = None
     taker_ratio_age_seconds_4h: float | None = None
     liquidation_age_seconds_4h: float | None = None
@@ -695,7 +701,9 @@ class FlowMetrics(BaseModel):
     price_age_seconds_24h: float | None = None
     futures_volume_age_seconds_24h: float | None = None
     open_interest_age_seconds_24h: float | None = None
+    funding_timestamp_24h: datetime | None = None
     funding_age_seconds_24h: float | None = None
+    funding_reliable_24h: bool = False
     long_short_ratio_age_seconds_24h: float | None = None
     taker_ratio_age_seconds_24h: float | None = None
     liquidation_age_seconds_24h: float | None = None

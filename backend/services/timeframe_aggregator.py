@@ -28,6 +28,7 @@ DEFAULT_PERCENTILE_WINDOW = 100
 DEFAULT_STRUCTURE_WINDOW = 20
 MIN_MAD_THRESHOLD = 1e-6
 Z_SCORE_CLAMP = 20.0
+FUNDING_PROVENANCE_SLA_SECONDS = 30.0
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,8 @@ class TimeframeBucket:
     volume_source: str = "missing"
     oi_source: str = "missing"
     liq_source: str = "missing"
+    funding_rate_updated_at: datetime | None = None
+    funding_source: str = "missing"
     
     # OI Boundary Alignment
     oi_open_timestamp: datetime | None = None
@@ -162,6 +165,8 @@ class TimeframeBucket:
             oi_close_age=getter("oi_close_age"),
             oi_alignment_status=getter("oi_alignment_status", "MISSING"),
             oi_delta_reliable=bool(getter("oi_delta_reliable", False)),
+            funding_rate_updated_at=getter("funding_rate_updated_at"),
+            funding_source=getter("funding_source", "missing"),
         )
 
     @classmethod
@@ -238,6 +243,8 @@ class TimeframeBucket:
             futures_volume_delta=futures_volume_delta if (previous_bucket is not None or (official and official["volume"] > 0)) else 0.0,
             funding_rate_sum=point.funding_rate,
             funding_rate_close=point.funding_rate,
+            funding_rate_updated_at=point.funding_rate_updated_at,
+            funding_source=point.funding_source,
             long_short_ratio_sum=point.long_short_ratio,
             long_short_ratio_close=point.long_short_ratio,
             taker_buy_sell_ratio_sum=point.taker_buy_sell_ratio,
@@ -325,6 +332,14 @@ class TimeframeBucket:
 
         self.funding_rate_sum += point.funding_rate
         self.funding_rate_close = point.funding_rate
+        if point.funding_source not in ("missing", "missing_at_startup"):
+            if point.funding_rate_updated_at is not None:
+                self.funding_rate_updated_at = point.funding_rate_updated_at
+                self.funding_source = point.funding_source
+            elif point.funding_source != "carry_forward":
+                self.funding_source = point.funding_source
+            elif self.funding_rate_updated_at is not None:
+                self.funding_source = "carry_forward"
 
         self.long_short_ratio_sum += point.long_short_ratio
         self.long_short_ratio_close = point.long_short_ratio
@@ -698,6 +713,28 @@ class TimeframeAggregateStore:
         return open_age, close_age, "MISSING", False
 
     @staticmethod
+    def _funding_export_provenance(bucket: TimeframeBucket, now: datetime) -> tuple[datetime | None, float | None, str, bool]:
+        """Compute funding export provenance without mutating bucket state."""
+        timestamp = bucket.funding_rate_updated_at
+        source = bucket.funding_source or "missing"
+        age = abs((now - timestamp).total_seconds()) if timestamp is not None else None
+
+        if source == "carry_forward" and timestamp is None:
+            export_source = "MISSING_TIMESTAMP"
+        elif source == "missing":
+            export_source = "missing_at_startup"
+        else:
+            export_source = source
+
+        reliable = (
+            timestamp is not None
+            and export_source not in {"missing", "missing_at_startup", "MISSING_TIMESTAMP"}
+            and age is not None
+            and age <= FUNDING_PROVENANCE_SLA_SECONDS
+        )
+        return timestamp, age, export_source, reliable
+
+    @staticmethod
     def _find_nearest_snapshot(history: deque[tuple[datetime, float]], target: datetime) -> tuple[datetime, float] | None:
         """Find the nearest (timestamp, value) pair to the target datetime."""
         if not history:
@@ -923,6 +960,11 @@ class TimeframeAggregateStore:
             )
             structure = self._market_structure(history)
             funding_level = bucket.funding_rate_close if bucket is not None else 0.0
+            funding_timestamp, funding_age, funding_source, funding_reliable = (
+                self._funding_export_provenance(bucket, current_time)
+                if bucket is not None
+                else (None, None, "missing_at_startup", False)
+            )
             ls_level = self._latest_level(
                 history,
                 lambda item: math.log(max(item.long_short_ratio_close, ROBUST_EPSILON)),
@@ -966,6 +1008,10 @@ class TimeframeAggregateStore:
                     f"volume_change_{timeframe}": volume_change,
                     f"funding_level_{timeframe}": funding_level,
                     f"funding_extreme_{timeframe}": abs(funding_level) >= float(profile["funding_extreme"]),
+                    f"funding_timestamp_{timeframe}": funding_timestamp,
+                    f"funding_age_seconds_{timeframe}": funding_age,
+                    f"funding_source_{timeframe}": funding_source,
+                    f"funding_reliable_{timeframe}": funding_reliable,
                     f"oi_delta_z_{timeframe}": oi_delta_z,
                     f"oi_delta_z_reliable_{timeframe}": oi_reliable,
                     f"oi_percentile_{timeframe}": oi_percentile,

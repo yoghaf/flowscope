@@ -18,7 +18,7 @@ from backend.data_collector.base import BaseCollector, ExchangeSnapshot
 logger = logging.getLogger(__name__)
 
 # Binance futures WS for all mark prices + funding (0 API weight)
-_WS_MARK_PRICE_URL = "wss://fstream.binance.com/ws/!markPrice@arr"
+_WS_MARK_PRICE_URL = "wss://fstream.binance.com/market/ws/!markPrice@arr@1s"
 _WS_FORCE_ORDER_URL = "wss://fstream.binance.com/ws/!forceOrder@arr"
 
 # Bulk endpoints (1 call = all symbols)
@@ -90,6 +90,7 @@ class BinanceCollector(BaseCollector):
         self._futures_ohlc_24h: dict[str, dict[str, float]] = {}
         
         self._last_snapshot_time: dict[str, datetime] = {}
+        self._force_order_connected = False
 
         # ── freshness tracking ─────────────────────────────────────────
         self._price_updated_at: dict[str, datetime] = {}
@@ -230,6 +231,7 @@ class BinanceCollector(BaseCollector):
                     ping_timeout=10,
                     close_timeout=5,
                 ) as ws:
+                    self._force_order_connected = True
                     logger.info("WS forceOrder connected")
                     async for message in ws:
                         try:
@@ -262,6 +264,8 @@ class BinanceCollector(BaseCollector):
                 logger.warning("WS forceOrder disconnected: %s", exc)
             except Exception as exc:
                 logger.error("WS forceOrder error: %s", exc)
+            finally:
+                self._force_order_connected = False
 
             if self._running:
                 logger.info("WS forceOrder reconnecting in %ds", self._ws_reconnect_delay)
@@ -566,7 +570,7 @@ class BinanceCollector(BaseCollector):
             
             if (long_liq_delta + short_liq_delta) > 0:
                 liq_source = "force_order_ws"
-            elif self._ws_connected:
+            elif self._force_order_connected:
                 liq_source = "force_order_ws_zero"
                 self._liquidation_updated_at[symbol] = timestamp
             else:
@@ -936,6 +940,8 @@ class BinanceCollector(BaseCollector):
                         timestamp=self.utcnow(),
                         price=price,
                         funding_rate=self._ws_funding.get(symbol, 0.0),
+                        funding_rate_updated_at=self._funding_updated_at.get(symbol),
+                        funding_source=self._funding_source.get(symbol, "missing"),
                     )
                     await callback(snapshot)
             await asyncio.sleep(3)

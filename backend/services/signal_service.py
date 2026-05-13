@@ -724,12 +724,16 @@ class SignalService:
                     return
                 current = current_history[-1]
                 updated_futures_volume = max(snapshot.futures_volume, current.futures_volume)
+                has_stream_funding = (
+                    snapshot.funding_source not in ("missing", "carry_forward")
+                    and snapshot.funding_rate_updated_at is not None
+                )
                 point = HistoryPoint(
                     timestamp=snapshot.timestamp,
                     price=snapshot.price or current.price,
                     volume=current.spot_volume + updated_futures_volume,
                     open_interest=current.open_interest,
-                    funding_rate=current.funding_rate,
+                    funding_rate=snapshot.funding_rate if has_stream_funding else current.funding_rate,
                     long_short_ratio=current.long_short_ratio,
                     taker_buy_sell_ratio=current.taker_buy_sell_ratio,
                     spot_volume=current.spot_volume,
@@ -737,6 +741,14 @@ class SignalService:
                     long_liquidations=current.long_liquidations,
                     short_liquidations=current.short_liquidations,
                     exchange_count=current.exchange_count,
+                    funding_rate_updated_at=(
+                        snapshot.funding_rate_updated_at if has_stream_funding else current.funding_rate_updated_at
+                    ),
+                    funding_source=(
+                        snapshot.funding_source
+                        if has_stream_funding
+                        else ("carry_forward" if current.funding_rate_updated_at is not None else "missing")
+                    ),
                 )
                 self.history[snapshot.symbol].append(point)
                 ingest_result = self.aggregate_store.ingest(snapshot.symbol, point, self.collectors[0]._oi_history)
@@ -1114,6 +1126,28 @@ class SignalService:
             fallback_fields = []
             
             if latest_point:
+                # Match the exported provenance fields used by audits and DQ views.
+                def get_age(upd, src):
+                    if src in ("carry_forward", "missing", "missing_at_startup"):
+                        return self.freshness_age(now, upd) # No fallback
+                    return self.freshness_age(now, upd, latest_point.timestamp)
+
+                def get_src(upd, src):
+                    if src == "carry_forward" and upd is None:
+                        return "MISSING_TIMESTAMP"
+                    if src == "missing":
+                        return "missing_at_startup"
+                    return src
+
+                def invalid_ratio_provenance(src: str, age_seconds: float | None) -> bool:
+                    invalid_sources = {
+                        "missing",
+                        "missing_at_startup",
+                        "MISSING_TIMESTAMP",
+                        "default_neutral",
+                    }
+                    return src in invalid_sources or (src == "carry_forward" and age_seconds is None)
+
                 # Check price age
                 p_age = self.freshness_age(now, latest_point.price_updated_at)
                 if not self.is_fresh(p_age, self.settings.dq_sla_price):
@@ -1139,11 +1173,27 @@ class SignalService:
                     dq_score -= 0.1
                     stale_fields.append("funding")
                 
-                # Check ratio source
-                if latest_point.taker_ratio_source == "default_neutral" or latest_point.taker_ratio_source == "missing":
+                # Check ratio provenance
+                taker_ratio_age = get_age(
+                    latest_point.taker_buy_sell_ratio_updated_at,
+                    latest_point.taker_ratio_source,
+                )
+                taker_ratio_source = get_src(
+                    latest_point.taker_buy_sell_ratio_updated_at,
+                    latest_point.taker_ratio_source,
+                )
+                long_short_ratio_age = get_age(
+                    latest_point.long_short_ratio_updated_at,
+                    latest_point.long_short_ratio_source,
+                )
+                long_short_ratio_source = get_src(
+                    latest_point.long_short_ratio_updated_at,
+                    latest_point.long_short_ratio_source,
+                )
+                if invalid_ratio_provenance(taker_ratio_source, taker_ratio_age):
                     dq_score -= 0.05
                     fallback_fields.append("taker_ratio")
-                if latest_point.long_short_ratio_source == "default_neutral" or latest_point.long_short_ratio_source == "missing":
+                if invalid_ratio_provenance(long_short_ratio_source, long_short_ratio_age):
                     dq_score -= 0.05
                     fallback_fields.append("ls_ratio")
                     
@@ -1157,7 +1207,7 @@ class SignalService:
             status: DataQualityStatus = "FRESH"
             if dq_score < 0.4: status = "STALE"
             elif dq_score < 0.7: status = "PARTIAL"
-            elif fallback_fields and dq_score > 0.9: status = "FALLBACK_ONLY"
+            elif fallback_fields: status = "FALLBACK_ONLY"
             
             # Update flow_metrics with DQ fields
             setattr(flow_metrics, f"data_quality_score_{tf}", dq_score)
@@ -1168,15 +1218,15 @@ class SignalService:
             if latest_point:
                 # Populate detailed metadata for trade auditing (April vs May analysis)
                 # DO NOT use point timestamp as fallback for carry_forward (Priority 1)
-                def get_age(upd, src):
-                    if src in ("carry_forward", "missing", "missing_at_startup"):
-                        return self.freshness_age(now, upd) # No fallback
-                    return self.freshness_age(now, upd, latest_point.timestamp)
-
                 p_age = get_age(latest_point.price_updated_at, latest_point.price_source)
                 fv_age = get_age(latest_point.futures_volume_updated_at, latest_point.volume_source)
                 oi_age = get_age(latest_point.open_interest_updated_at, latest_point.open_interest_source)
-                f_age = get_age(latest_point.funding_rate_updated_at, latest_point.funding_source)
+                bucket_funding_timestamp = getattr(flow_metrics, f"funding_timestamp_{tf}", None)
+                f_age = (
+                    getattr(flow_metrics, f"funding_age_seconds_{tf}", None)
+                    if bucket_funding_timestamp is not None
+                    else get_age(latest_point.funding_rate_updated_at, latest_point.funding_source)
+                )
                 ls_age = get_age(latest_point.long_short_ratio_updated_at, latest_point.long_short_ratio_source)
                 t_age = get_age(latest_point.taker_buy_sell_ratio_updated_at, latest_point.taker_ratio_source)
                 l_age = get_age(latest_point.liquidation_updated_at, latest_point.liquidation_source)
@@ -1189,17 +1239,11 @@ class SignalService:
                 setattr(flow_metrics, f"taker_ratio_age_seconds_{tf}", t_age)
                 setattr(flow_metrics, f"liquidation_age_seconds_{tf}", l_age)
                 
-                def get_src(upd, src):
-                    if src == "carry_forward" and upd is None:
-                        return "MISSING_TIMESTAMP"
-                    if src == "missing":
-                        return "missing_at_startup"
-                    return src
-
                 setattr(flow_metrics, f"price_source_{tf}", get_src(latest_point.price_updated_at, latest_point.price_source))
                 setattr(flow_metrics, f"volume_source_{tf}", get_src(latest_point.futures_volume_updated_at, latest_point.volume_source))
                 setattr(flow_metrics, f"open_interest_source_{tf}", get_src(latest_point.open_interest_updated_at, latest_point.open_interest_source))
-                setattr(flow_metrics, f"funding_source_{tf}", get_src(latest_point.funding_rate_updated_at, latest_point.funding_source))
+                if bucket_funding_timestamp is None:
+                    setattr(flow_metrics, f"funding_source_{tf}", get_src(latest_point.funding_rate_updated_at, latest_point.funding_source))
                 setattr(flow_metrics, f"long_short_ratio_source_{tf}", get_src(latest_point.long_short_ratio_updated_at, latest_point.long_short_ratio_source))
                 setattr(flow_metrics, f"taker_ratio_source_{tf}", get_src(latest_point.taker_buy_sell_ratio_updated_at, latest_point.taker_ratio_source))
                 setattr(flow_metrics, f"liquidation_source_{tf}", get_src(latest_point.liquidation_updated_at, latest_point.liquidation_source))

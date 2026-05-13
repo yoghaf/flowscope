@@ -765,16 +765,26 @@ class PositioningEngine:
         if current_index is None or current_index < 6:
             return
         current_features = self._bar_features(history, current_index)
-        try:
-            assert abs(current_features["oi_delta_z"] - oi_delta_z) < FEATURE_CONSISTENCY_TOLERANCE
-            assert abs(current_features["volume_z"] - volume_z) < FEATURE_CONSISTENCY_TOLERANCE
-        except AssertionError:
-            logger.error(
-                "positioning_feature_mismatch symbol=%s timeframe=%s raw_oi_delta_z=%.12f engine_oi_delta_z=%.12f raw_volume_z=%.12f engine_volume_z=%.12f",
-                bucket.symbol,
-                timeframe,
-                current_features["oi_delta_z"],
-                oi_delta_z,
-                current_features["volume_z"],
-                volume_z,
-            )
+        raw_oi_delta_z = current_features["oi_delta_z"]
+        raw_volume_z = current_features["volume_z"]
+        oi_mismatch = abs(raw_oi_delta_z - oi_delta_z) >= FEATURE_CONSISTENCY_TOLERANCE
+        volume_mismatch = abs(raw_volume_z - volume_z) >= FEATURE_CONSISTENCY_TOLERANCE
+        oi_clamp_explained = (
+            oi_mismatch
+            and math.isclose(abs(oi_delta_z), 20.0, abs_tol=FEATURE_CONSISTENCY_TOLERANCE)
+            and raw_oi_delta_z != 0.0
+            and math.copysign(1.0, raw_oi_delta_z) == math.copysign(1.0, oi_delta_z)
+        )
+        if not oi_mismatch and not volume_mismatch:
+            return
+
+        log = logger.debug if oi_clamp_explained and not volume_mismatch else logger.error
+        log(
+            "positioning_feature_mismatch symbol=%s timeframe=%s raw_oi_delta_z=%.12f engine_oi_delta_z=%.12f raw_volume_z=%.12f engine_volume_z=%.12f",
+            bucket.symbol,
+            timeframe,
+            raw_oi_delta_z,
+            oi_delta_z,
+            raw_volume_z,
+            volume_z,
+        )
