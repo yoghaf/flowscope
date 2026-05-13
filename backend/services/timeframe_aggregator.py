@@ -446,6 +446,13 @@ class TimeframeBucket:
             "foundation_version": self.foundation_version,
             "bucket_is_closed": self.bucket_is_closed,
             "bucket_completion_pct": self.bucket_completion_pct,
+            # OI Alignment (Persistent fields)
+            "oi_open_timestamp": self.oi_open_timestamp,
+            "oi_close_timestamp": self.oi_close_timestamp,
+            "oi_open_age": self.oi_open_age,
+            "oi_close_age": self.oi_close_age,
+            "oi_alignment_status": self.oi_alignment_status,
+            "oi_delta_reliable": self.oi_delta_reliable,
         }
 
 
@@ -504,8 +511,10 @@ class TimeframeAggregateStore:
                 bucket = previous_bucket
                 bucket.apply_point(point)
                 if symbol_oi_history is not None:
-                    # Ongoing alignment for open bucket (update close boundary only)
-                    self._align_oi_boundary(bucket, symbol_oi_history, update_open=False)
+                    # Ongoing alignment for open bucket
+                    # Retry open alignment if it's currently missing/stale
+                    retry_open = bucket.oi_open_timestamp is None or bucket.oi_alignment_status == "MISSING"
+                    self._align_oi_boundary(bucket, symbol_oi_history, update_open=retry_open)
             else:
                 # Rollover detected or first bucket
                 if previous_bucket:
@@ -576,6 +585,11 @@ class TimeframeAggregateStore:
                 ts, val = open_snap
                 new_age = abs((ts - bucket.bucket_start).total_seconds())
                 
+                logger.debug(
+                    "OI ALIGN [%s %s] OPEN: snap=%s, age=%.1fs, tolerance=%ds, current_age=%s",
+                    bucket.symbol, bucket.timeframe, ts, new_age, tolerance, current_age
+                )
+                
                 # Only update if new snap is better (closer) than existing
                 if new_age < current_age:
                     bucket.oi_open_timestamp = ts
@@ -612,10 +626,32 @@ class TimeframeAggregateStore:
                 bucket.oi_close_timestamp = None
                 bucket.oi_close_age = None
 
-        # 3. Determine status
+        # 3. Determine status via helper
+        self._sanitize_oi_boundary_state(bucket)
+
+    def _sanitize_oi_boundary_state(self, bucket: TimeframeBucket) -> None:
+        """Runtime sanitization of OI fields to prevent stale/misaligned data leak."""
+        tolerance = OI_ALIGNMENT_TOLERANCE.get(bucket.timeframe, 600)
+
+        # OI boundary timestamps are valid relative to their bucket boundary,
+        # not relative to current wall-clock time. Closed/historical buckets may
+        # legitimately have old timestamps.
+        open_exists = bucket.oi_open_timestamp is not None
+        close_exists = bucket.oi_close_timestamp is not None
+
+        if open_exists:
+            bucket.oi_open_age = abs((bucket.oi_open_timestamp - bucket.bucket_start).total_seconds())
+        else:
+            bucket.oi_open_age = None
+
+        if close_exists:
+            bucket.oi_close_age = abs((bucket.oi_close_timestamp - bucket.bucket_end).total_seconds())
+        else:
+            bucket.oi_close_age = None
+
         open_ok = bucket.oi_open_age is not None and bucket.oi_open_age <= tolerance
         close_ok = bucket.oi_close_age is not None and bucket.oi_close_age <= tolerance
-        
+
         if bucket.bucket_is_closed:
             if open_ok and close_ok:
                 bucket.oi_alignment_status = "ALIGNED"
@@ -623,24 +659,43 @@ class TimeframeAggregateStore:
             elif open_ok or close_ok:
                 bucket.oi_alignment_status = "PARTIAL"
                 bucket.oi_delta_reliable = False
-            else:
+            elif open_exists or close_exists:
                 bucket.oi_alignment_status = "MISALIGNED"
-                bucket.oi_delta_reliable = False
-        else:
-            # For open buckets, PARTIAL or MISSING is normal
-            if open_ok and close_ok:
-                bucket.oi_alignment_status = "ALIGNED"
-                bucket.oi_delta_reliable = True
-            elif open_ok:
-                bucket.oi_alignment_status = "PARTIAL"
-                bucket.oi_delta_reliable = False
-            elif close_ok:
-                # Should be rare given should_update_close logic
-                bucket.oi_alignment_status = "PARTIAL"
                 bucket.oi_delta_reliable = False
             else:
                 bucket.oi_alignment_status = "MISSING"
                 bucket.oi_delta_reliable = False
+        else:
+            # For open buckets: status = PARTIAL if valid open exists, MISSING if neither valid.
+            # Do not require a close boundary and do not mark MISALIGNED.
+            if open_ok:
+                bucket.oi_alignment_status = "PARTIAL"
+            else:
+                bucket.oi_alignment_status = "MISSING"
+            bucket.oi_delta_reliable = False
+
+    @staticmethod
+    def _oi_export_alignment(bucket: TimeframeBucket) -> tuple[float | None, float | None, str, bool]:
+        """Compute OI export alignment without mutating bucket state."""
+        tolerance = OI_ALIGNMENT_TOLERANCE.get(bucket.timeframe, 600)
+        open_age = (
+            abs((bucket.oi_open_timestamp - bucket.bucket_start).total_seconds())
+            if bucket.oi_open_timestamp is not None
+            else None
+        )
+        close_age = (
+            abs((bucket.oi_close_timestamp - bucket.bucket_end).total_seconds())
+            if bucket.oi_close_timestamp is not None
+            else None
+        )
+        open_ok = open_age is not None and open_age <= tolerance
+        close_ok = close_age is not None and close_age <= tolerance
+
+        if bucket.bucket_is_closed and open_ok and close_ok:
+            return open_age, close_age, "ALIGNED", True
+        if open_ok or close_ok:
+            return open_age, close_age, "PARTIAL", False
+        return open_age, close_age, "MISSING", False
 
     @staticmethod
     def _find_nearest_snapshot(history: deque[tuple[datetime, float]], target: datetime) -> tuple[datetime, float] | None:
@@ -702,44 +757,7 @@ class TimeframeAggregateStore:
         maxlen = history.maxlen
 
         # Sanitize stale OI fields for seeded buckets
-        tolerance = OI_ALIGNMENT_TOLERANCE.get(bucket.timeframe, 600)
-        
-        # Clear if age is missing or exceeds tolerance
-        if bucket.oi_open_timestamp is not None:
-            if bucket.oi_open_age is None or bucket.oi_open_age > tolerance:
-                bucket.oi_open_timestamp = None
-                bucket.oi_open_age = None
-            
-        if bucket.oi_close_timestamp is not None:
-            if bucket.oi_close_age is None or bucket.oi_close_age > tolerance:
-                bucket.oi_close_timestamp = None
-                bucket.oi_close_age = None
-            
-        # Recompute status
-        open_ok = bucket.oi_open_age is not None and bucket.oi_open_age <= tolerance
-        close_ok = bucket.oi_close_age is not None and bucket.oi_close_age <= tolerance
-        
-        if bucket.bucket_is_closed:
-            if open_ok and close_ok:
-                bucket.oi_alignment_status = "ALIGNED"
-                bucket.oi_delta_reliable = True
-            elif open_ok or close_ok:
-                bucket.oi_alignment_status = "PARTIAL"
-                bucket.oi_delta_reliable = False
-            else:
-                bucket.oi_alignment_status = "MISALIGNED"
-                bucket.oi_delta_reliable = False
-        else:
-            if open_ok and close_ok:
-                bucket.oi_alignment_status = "ALIGNED"
-                bucket.oi_delta_reliable = True
-            elif open_ok:
-                bucket.oi_alignment_status = "PARTIAL"
-            elif close_ok:
-                bucket.oi_alignment_status = "PARTIAL"
-            else:
-                bucket.oi_alignment_status = "MISSING"
-            bucket.oi_delta_reliable = False
+        self._sanitize_oi_boundary_state(bucket)
 
         history.clear()
         for item in (ordered[-maxlen:] if maxlen else ordered):
@@ -981,6 +999,10 @@ class TimeframeAggregateStore:
             
             # Map OI Alignment from Bucket
             if bucket:
+                # OI delta reliability is sourced from the last closed bucket
+                # because open buckets cannot have a reliable close boundary.
+                oi_ref_bucket = self.latest_bucket(symbol, timeframe, closed_only=True, now=current_time) or bucket
+
                 # Morphology
                 body_ratio = self._body_ratio(bucket)
                 upper_wick = self._upper_wick_ratio(bucket)
@@ -998,6 +1020,8 @@ class TimeframeAggregateStore:
                     price_change=body_change
                 )
                 
+                oi_open_age, oi_close_age, oi_alignment_status, oi_delta_reliable = self._oi_export_alignment(oi_ref_bucket)
+
                 # OI Semantic (Patch 2)
                 oi_diag = self._calculate_oi_semantic_diagnostics(
                     oi_delta=oi_delta,
@@ -1006,7 +1030,7 @@ class TimeframeAggregateStore:
                     taker_delta=taker_impulse,
                     volume_z=volume_z,
                     compression=compression_score,
-                    reliable=bucket.oi_delta_reliable
+                    reliable=oi_delta_reliable
                 )
                 
                 # Taker Divergence (Patch 3)
@@ -1040,12 +1064,12 @@ class TimeframeAggregateStore:
                         values[f"{k}_{timeframe}"] = v
 
                 values.update({
-                    f"oi_open_timestamp_{timeframe}": bucket.oi_open_timestamp,
-                    f"oi_close_timestamp_{timeframe}": bucket.oi_close_timestamp,
-                    f"oi_open_age_seconds_{timeframe}": bucket.oi_open_age,
-                    f"oi_close_age_seconds_{timeframe}": bucket.oi_close_age,
-                    f"oi_alignment_status_{timeframe}": bucket.oi_alignment_status,
-                    f"oi_delta_reliable_{timeframe}": bucket.oi_delta_reliable,
+                    f"oi_open_timestamp_{timeframe}": oi_ref_bucket.oi_open_timestamp,
+                    f"oi_close_timestamp_{timeframe}": oi_ref_bucket.oi_close_timestamp,
+                    f"oi_open_age_seconds_{timeframe}": oi_open_age,
+                    f"oi_close_age_seconds_{timeframe}": oi_close_age,
+                    f"oi_alignment_status_{timeframe}": oi_alignment_status,
+                    f"oi_delta_reliable_{timeframe}": oi_delta_reliable,
                     f"foundation_version_{timeframe}": bucket.foundation_version,
                     f"volume_metric_status_{timeframe}": (
                         "VALID" if bucket.foundation_version == "v2_option_a" else "LEGACY_UNTRUSTED"

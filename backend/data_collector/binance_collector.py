@@ -376,14 +376,15 @@ class BinanceCollector(BaseCollector):
                     response.raise_for_status()
                     data = response.json()
                     now = self.utcnow()
-                    self._oi_cache[symbol] = self.parse_float(
-                        data.get("openInterest")
-                    )
+                    val = self.parse_float(data.get("openInterest"))
+                    self._oi_cache[symbol] = val
                     self._oi_updated_at[symbol] = now
                     self._oi_source[symbol] = "open_interest_endpoint"
-                    self._oi_history[symbol].append((now, self._oi_cache[symbol]))
+                    self._oi_history[symbol].append((now, val))
+                    if len(self._oi_history[symbol]) % 100 == 0:
+                        logger.info("OI FETCH SUCCESS [%s]: val=%.2f", symbol, val)
                 except Exception as exc:
-                    logger.debug("OI fetch failed %s: %s", symbol, exc)
+                    logger.warning("OI fetch failed %s: %s", symbol, exc)
 
         await asyncio.gather(*(fetch_one(s) for s in symbols))
 

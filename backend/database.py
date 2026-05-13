@@ -308,53 +308,84 @@ class DatabaseManager:
         if not payload:
             return
 
-        statement = pg_insert(MarketDataBucket).values(payload)
-        excluded = statement.excluded
-        upsert = statement.on_conflict_do_update(
-            index_elements=["symbol", "timeframe", "bucket_start"],
-            set_={
-                "bucket_end": excluded.bucket_end,
-                "last_timestamp": excluded.last_timestamp,
-                "open_price": excluded.open_price,
-                "high_price": excluded.high_price,
-                "low_price": excluded.low_price,
-                "close_price": excluded.close_price,
-                "open_interest_open": excluded.open_interest_open,
-                "open_interest_high": excluded.open_interest_high,
-                "open_interest_low": excluded.open_interest_low,
-                "open_interest_close": excluded.open_interest_close,
-                "spot_volume_open": excluded.spot_volume_open,
-                "spot_volume_close": excluded.spot_volume_close,
-                "spot_volume_delta": excluded.spot_volume_delta,
-                "futures_volume_open": excluded.futures_volume_open,
-                "futures_volume_close": excluded.futures_volume_close,
-                "futures_volume_delta": excluded.futures_volume_delta,
-                "volume_delta": excluded.volume_delta,
-                "funding_rate_avg": excluded.funding_rate_avg,
-                "funding_rate_close": excluded.funding_rate_close,
-                "long_short_ratio_avg": excluded.long_short_ratio_avg,
-                "long_short_ratio_close": excluded.long_short_ratio_close,
-                "taker_buy_sell_ratio_avg": excluded.taker_buy_sell_ratio_avg,
-                "taker_buy_sell_ratio_close": excluded.taker_buy_sell_ratio_close,
-                "long_liquidations_total": excluded.long_liquidations_total,
-                "short_liquidations_total": excluded.short_liquidations_total,
-                "foundation_version": excluded.foundation_version,
-                "exchange_count_avg": excluded.exchange_count_avg,
-                "sample_count": excluded.sample_count,
-                "score": excluded.score,
-                "signal_type": excluded.signal_type,
-                "breakdown_open_interest": excluded.breakdown_open_interest,
-                "breakdown_volume": excluded.breakdown_volume,
-                "breakdown_compression": excluded.breakdown_compression,
-                "breakdown_funding": excluded.breakdown_funding,
-                "bucket_is_closed": excluded.bucket_is_closed,
-                "bucket_completion_pct": excluded.bucket_completion_pct,
-            },
-        )
+        # PostgreSQL wire protocol caps bind parameters at 32767 per statement.
+        # params_total = rows * cols_per_row. Chunk to stay safely below.
+        cols_per_row = len(payload[0])
+        if cols_per_row == 0:
+            return
+
+        # Lightweight observability only; do not normalize rows here.
+        if any(len(row) != cols_per_row for row in payload):
+            logger.warning(
+                "save_market_buckets payload has inconsistent key counts; "
+                "using first row cols=%d as chunk basis",
+                cols_per_row,
+            )
+
+        max_params = 30000
+        chunk_size = max(1, max_params // cols_per_row)
+        total_rows = len(payload)
+        total_chunks = (total_rows + chunk_size - 1) // chunk_size
 
         async with self.session_factory() as session:
-            await session.execute(upsert)
+            for start in range(0, total_rows, chunk_size):
+                chunk = payload[start:start + chunk_size]
+                statement = pg_insert(MarketDataBucket).values(chunk)
+                excluded = statement.excluded
+                upsert = statement.on_conflict_do_update(
+                    index_elements=["symbol", "timeframe", "bucket_start"],
+                    set_={
+                        "bucket_end": excluded.bucket_end,
+                        "last_timestamp": excluded.last_timestamp,
+                        "open_price": excluded.open_price,
+                        "high_price": excluded.high_price,
+                        "low_price": excluded.low_price,
+                        "close_price": excluded.close_price,
+                        "open_interest_open": excluded.open_interest_open,
+                        "open_interest_high": excluded.open_interest_high,
+                        "open_interest_low": excluded.open_interest_low,
+                        "open_interest_close": excluded.open_interest_close,
+                        "spot_volume_open": excluded.spot_volume_open,
+                        "spot_volume_close": excluded.spot_volume_close,
+                        "spot_volume_delta": excluded.spot_volume_delta,
+                        "futures_volume_open": excluded.futures_volume_open,
+                        "futures_volume_close": excluded.futures_volume_close,
+                        "futures_volume_delta": excluded.futures_volume_delta,
+                        "volume_delta": excluded.volume_delta,
+                        "funding_rate_avg": excluded.funding_rate_avg,
+                        "funding_rate_close": excluded.funding_rate_close,
+                        "long_short_ratio_avg": excluded.long_short_ratio_avg,
+                        "long_short_ratio_close": excluded.long_short_ratio_close,
+                        "taker_buy_sell_ratio_avg": excluded.taker_buy_sell_ratio_avg,
+                        "taker_buy_sell_ratio_close": excluded.taker_buy_sell_ratio_close,
+                        "long_liquidations_total": excluded.long_liquidations_total,
+                        "short_liquidations_total": excluded.short_liquidations_total,
+                        "foundation_version": excluded.foundation_version,
+                        "exchange_count_avg": excluded.exchange_count_avg,
+                        "sample_count": excluded.sample_count,
+                        "score": excluded.score,
+                        "signal_type": excluded.signal_type,
+                        "breakdown_open_interest": excluded.breakdown_open_interest,
+                        "breakdown_volume": excluded.breakdown_volume,
+                        "breakdown_compression": excluded.breakdown_compression,
+                        "breakdown_funding": excluded.breakdown_funding,
+                        "bucket_is_closed": excluded.bucket_is_closed,
+                        "bucket_completion_pct": excluded.bucket_completion_pct,
+                        "oi_open_timestamp": excluded.oi_open_timestamp,
+                        "oi_close_timestamp": excluded.oi_close_timestamp,
+                        "oi_open_age": excluded.oi_open_age,
+                        "oi_close_age": excluded.oi_close_age,
+                        "oi_alignment_status": excluded.oi_alignment_status,
+                        "oi_delta_reliable": excluded.oi_delta_reliable,
+                    },
+                )
+                await session.execute(upsert)
             await session.commit()
+
+        logger.info(
+            "save_market_buckets rows=%d cols=%d chunk_size=%d chunks=%d",
+            total_rows, cols_per_row, chunk_size, total_chunks,
+        )
 
     async def save_latest_asset_states(self, snapshots: Iterable[AssetSnapshot]) -> None:
         if not self.enabled:
