@@ -882,9 +882,20 @@ class AssetSnapshot(BaseModel):
     # Phase 5 Observability
     efficient_build_quality: str | None = None
     efficient_build_quality_reason: str | None = None
-    final_entry_permission: str = "ALLOW"
+    final_entry_permission: str = "BLOCK"
     hard_filter_reasons: list[str] = Field(default_factory=list)
     block_reasons: list[str] = Field(default_factory=list)
+    layer5_watch_status: str = "NONE"
+    layer5_watch_reason: str = "none"
+    layer5_candidate_tier: str | None = None
+    layer5_direction_bias: str = "NO_DIRECTION"
+    layer5_direction_reason: str = "not_watchlist"
+    v2_action_bias: str | None = None
+    v2_action_status: str | None = None
+    direction_alignment_status: str = "NO_DIRECTION"
+    direction_alignment_reason: str = "no_layer5_direction"
+    v2balanced_candidate_stage: str = "NO_SETUP"
+    v2balanced_stage_reason: str = "no_setup"
     
     # Scenario and Regime Diagnostics (Phase 5 Observability)
     scenario_label: str | None = None

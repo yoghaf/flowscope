@@ -86,6 +86,21 @@ DEFAULT_SIGNAL_TYPES: tuple[SignalType, ...] = (
 MAX_ALERTS_PER_USER = 1000
 FEATURE_CONSISTENCY_TOLERANCE = 1e-9
 VALUE_EPSILON = 1e-12
+LAYER5_HARD_RISK_REASONS = {
+    "oi_delta_unreliable",
+    "exhaustion_oi_climax",
+    "exhaustion_volume_climax",
+    "semantic_absorption_block",
+    "chasing_pump_candle",
+    "volatile_noise_no_structure",
+    "continuation_higher_timeframe_not_aligned",
+    "continuation_flow_alignment_below_threshold",
+    "funding_extreme_short_premium",
+    "funding_extreme_long_premium",
+}
+LAYER5_RISK_SCENARIOS = {"reversal_watch", "range_context", "late_expansion", "climax_event"}
+LAYER5_MIXED_SOFT_REASONS = {"mixed_context_blocked", "scenario_not_allow"}
+LAYER5_WEAK_SOFT_REASONS = {"scenario_not_allow"}
 
 
 @dataclass(slots=True)
@@ -139,9 +154,20 @@ class AssetState:
     scenario_reasons: list[str] = field(default_factory=list)
     efficient_build_quality: str | None = None
     efficient_build_quality_reason: str | None = None
-    final_entry_permission: str = "ALLOW"
+    final_entry_permission: str = "BLOCK"
     hard_filter_reasons: list[str] = field(default_factory=list)
     block_reasons: list[str] = field(default_factory=list)
+    layer5_watch_status: str = "NONE"
+    layer5_watch_reason: str = "none"
+    layer5_candidate_tier: str | None = None
+    layer5_direction_bias: str = "NO_DIRECTION"
+    layer5_direction_reason: str = "not_watchlist"
+    v2_action_bias: str | None = None
+    v2_action_status: str | None = None
+    direction_alignment_status: str = "NO_DIRECTION"
+    direction_alignment_reason: str = "no_layer5_direction"
+    v2balanced_candidate_stage: str = "NO_SETUP"
+    v2balanced_stage_reason: str = "no_setup"
     debug_trace: dict[str, Any] = field(default_factory=dict)
     market_interpretation: dict[str, Any] = field(default_factory=dict)
 
@@ -1932,6 +1958,80 @@ class SignalService:
                 sharpness=sharpness,
             )
             breakdown = self._score_breakdown(flow_metrics, timeframe, profile)
+            entry_filter_stage = (
+                "squeeze_confirmation"
+                if squeeze_confirmation_pending
+                else "pullback_acceptance"
+                if pullback_acceptance_pending
+                else "follow_through"
+                if followthrough_pending
+                else "pass"
+            )
+            entry_filter_reasons = (
+                ["awaiting_squeeze_confirmation"]
+                if squeeze_confirmation_pending
+                else ["awaiting_pullback_acceptance"]
+                if pullback_acceptance_pending
+                else ["awaiting_follow_through"]
+                if followthrough_pending
+                else []
+            )
+            interpretation_payload = {
+                **market_interpretation.to_dict(),
+                "scenario": scenario.to_dict(),
+                "entry_filters": {
+                    "passed": True,
+                    "stage": entry_filter_stage,
+                    "reasons": entry_filter_reasons,
+                },
+            }
+            direct_efficient_build_quality = getattr(flow_metrics, f"efficient_build_quality_{timeframe}", "UNKNOWN")
+            direct_final_entry_permission = self._safe_final_entry_permission(
+                action_status=action.status,
+                setup_type=action.setup_type,
+                scenario_disposition=scenario.disposition,
+                efficient_build_quality=direct_efficient_build_quality,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                market_interpretation=interpretation_payload,
+            )
+            _, direct_entry_filter_reasons = self._entry_filters_from_interpretation(interpretation_payload)
+            direct_hard_filter_reasons = direct_entry_filter_reasons if direct_final_entry_permission == "BLOCK" else []
+            direct_structural_permission = getattr(flow_metrics, f"final_structural_permission_{timeframe}", "NOT_APPLICABLE")
+            direct_expansion_subtype = getattr(flow_metrics, f"expansion_subtype_{timeframe}", "unknown_expansion")
+            direct_layer5_status, direct_layer5_reason, direct_layer5_tier = self._layer5_watch_classification(
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                data_quality_status=getattr(flow_metrics, f"data_quality_status_{timeframe}", None),
+                scenario_label=scenario.label,
+                scenario_disposition=scenario.disposition,
+                final_structural_permission=direct_structural_permission,
+                hard_filter_reasons=direct_hard_filter_reasons,
+                expansion_subtype=direct_expansion_subtype,
+            )
+            direct_layer5_direction_bias, direct_layer5_direction_reason = self._layer5_direction_classification(
+                layer5_watch_status=direct_layer5_status,
+                action_bias=action.bias,
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                market_interpretation=interpretation_payload,
+            )
+            direct_direction_alignment_status, direct_direction_alignment_reason = self._direction_alignment_classification(
+                action_bias=action.bias,
+                action_status=action.status,
+                layer5_direction_bias=direct_layer5_direction_bias,
+                action_setup_type=action.setup_type,
+            )
+            direct_v2balanced_stage, direct_v2balanced_stage_reason = self._v2balanced_candidate_stage_classification(
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                action_status=action.status,
+                scenario_disposition=scenario.disposition,
+                layer5_watch_status=direct_layer5_status,
+                layer5_direction_bias=direct_layer5_direction_bias,
+                hard_filter_reasons=direct_hard_filter_reasons,
+                data_quality_status=getattr(flow_metrics, f"data_quality_status_{timeframe}", None),
+            )
             
             self.aggregate_store.apply_signal(
                 symbol,
@@ -1991,37 +2091,35 @@ class SignalService:
                 phase=phase_result.phase,
                 phase_score=phase_result.phase_score,
                 phase_confidence=phase_result.phase_confidence,
+                crowding_status=getattr(flow_metrics, f"crowding_status_{timeframe}", None),
+                expansion_subtype=direct_expansion_subtype,
+                final_structural_permission=direct_structural_permission,
+                structural_block_reason=getattr(flow_metrics, f"structural_block_reason_{timeframe}", None),
+                structural_warning_reason=getattr(flow_metrics, f"structural_warning_reason_{timeframe}", None),
+                structural_confidence_multiplier=getattr(flow_metrics, f"structural_confidence_multiplier_{timeframe}", 1.0),
                 scenario_label=scenario.label,
                 scenario_score=scenario.score,
                 scenario_disposition=scenario.disposition,
                 scenario_rationale=scenario.rationale,
                 scenario_reasons=list(scenario.reasons),
                 debug_trace=positioning.debug_trace,
-                market_interpretation={
-                    **market_interpretation.to_dict(),
-                    "scenario": scenario.to_dict(),
-                    "entry_filters": {
-                        "passed": True,
-                        "stage": (
-                            "squeeze_confirmation"
-                            if squeeze_confirmation_pending
-                            else "pullback_acceptance"
-                            if pullback_acceptance_pending
-                            else "follow_through"
-                            if followthrough_pending
-                            else "pass"
-                        ),
-                        "reasons": (
-                            ["awaiting_squeeze_confirmation"]
-                            if squeeze_confirmation_pending
-                            else ["awaiting_pullback_acceptance"]
-                            if pullback_acceptance_pending
-                            else ["awaiting_follow_through"]
-                            if followthrough_pending
-                            else []
-                        ),
-                    },
-                },
+                efficient_build_quality=direct_efficient_build_quality,
+                efficient_build_quality_reason=getattr(flow_metrics, f"efficient_build_quality_reason_{timeframe}", None),
+                final_entry_permission=direct_final_entry_permission,
+                hard_filter_reasons=direct_hard_filter_reasons,
+                block_reasons=direct_hard_filter_reasons,
+                layer5_watch_status=direct_layer5_status,
+                layer5_watch_reason=direct_layer5_reason,
+                layer5_candidate_tier=direct_layer5_tier,
+                layer5_direction_bias=direct_layer5_direction_bias,
+                layer5_direction_reason=direct_layer5_direction_reason,
+                v2_action_bias=action.bias,
+                v2_action_status=action.status,
+                direction_alignment_status=direct_direction_alignment_status,
+                direction_alignment_reason=direct_direction_alignment_reason,
+                v2balanced_candidate_stage=direct_v2balanced_stage,
+                v2balanced_stage_reason=direct_v2balanced_stage_reason,
+                market_interpretation=interpretation_payload,
             )
             self.last_timeframe_update[(symbol, timeframe)] = now
 
@@ -2466,6 +2564,17 @@ class SignalService:
             final_entry_permission=asset.final_entry_permission,
             hard_filter_reasons=list(asset.hard_filter_reasons),
             block_reasons=list(asset.block_reasons),
+            layer5_watch_status=asset.layer5_watch_status,
+            layer5_watch_reason=asset.layer5_watch_reason,
+            layer5_candidate_tier=asset.layer5_candidate_tier,
+            layer5_direction_bias=asset.layer5_direction_bias,
+            layer5_direction_reason=asset.layer5_direction_reason,
+            v2_action_bias=asset.v2_action_bias,
+            v2_action_status=asset.v2_action_status,
+            direction_alignment_status=asset.direction_alignment_status,
+            direction_alignment_reason=asset.direction_alignment_reason,
+            v2balanced_candidate_stage=asset.v2balanced_candidate_stage,
+            v2balanced_stage_reason=asset.v2balanced_stage_reason,
 
             scenario=ContextScenarioSnapshot(
                 label=asset.scenario_label,
@@ -2576,6 +2685,29 @@ class SignalService:
                 else "Context remains mixed; keep observing."
             ),
             scenario_reasons=list(snapshot.scenario.reasons) if snapshot.scenario is not None else [],
+            efficient_build_quality=snapshot.efficient_build_quality,
+            efficient_build_quality_reason=snapshot.efficient_build_quality_reason,
+            final_entry_permission=snapshot.final_entry_permission,
+            hard_filter_reasons=list(snapshot.hard_filter_reasons),
+            block_reasons=list(snapshot.block_reasons),
+            layer5_watch_status=snapshot.layer5_watch_status,
+            layer5_watch_reason=snapshot.layer5_watch_reason,
+            layer5_candidate_tier=snapshot.layer5_candidate_tier,
+            layer5_direction_bias=snapshot.layer5_direction_bias,
+            layer5_direction_reason=snapshot.layer5_direction_reason,
+            v2_action_bias=snapshot.v2_action_bias,
+            v2_action_status=snapshot.v2_action_status,
+            direction_alignment_status=snapshot.direction_alignment_status,
+            direction_alignment_reason=snapshot.direction_alignment_reason,
+            v2balanced_candidate_stage=snapshot.v2balanced_candidate_stage,
+            v2balanced_stage_reason=snapshot.v2balanced_stage_reason,
+            expansion_subtype=snapshot.expansion_subtype or "unknown_expansion",
+            compression_type=snapshot.compression_type or "no_compression",
+            regime_warning=snapshot.regime_warning,
+            final_structural_permission=snapshot.final_structural_permission,
+            structural_block_reason=snapshot.structural_block_reason,
+            structural_warning_reason=snapshot.structural_warning_reason,
+            structural_confidence_multiplier=snapshot.structural_confidence_multiplier,
             debug_trace=snapshot.debug_trace.model_dump() if snapshot.debug_trace is not None else None,
             market_interpretation=(
                 snapshot.market_interpretation.model_dump()
@@ -2682,6 +2814,385 @@ class SignalService:
         if not values:
             return 0.0
         return round(sum(values) / len(values), 4)
+
+    @staticmethod
+    def _entry_filters_from_interpretation(market_interpretation: dict[str, Any] | None) -> tuple[bool, list[str]]:
+        if not market_interpretation:
+            return False, []
+        entry_filters = market_interpretation.get("entry_filters", {})
+        if not isinstance(entry_filters, dict):
+            return False, []
+        passed = entry_filters.get("passed") is True
+        raw_reasons = entry_filters.get("reasons", [])
+        if isinstance(raw_reasons, list):
+            reasons = [str(reason) for reason in raw_reasons if str(reason)]
+        elif raw_reasons:
+            reasons = [str(raw_reasons)]
+        else:
+            reasons = []
+        return passed, reasons
+
+    def _safe_final_entry_permission(
+        self,
+        *,
+        action_status: str | None,
+        setup_type: str | None,
+        scenario_disposition: str | None,
+        efficient_build_quality: str | None,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        market_interpretation: dict[str, Any] | None,
+    ) -> str:
+        entry_filters_passed, hard_filter_reasons = self._entry_filters_from_interpretation(market_interpretation)
+        if action_status not in {"Ready", "Triggered"}:
+            return "BLOCK"
+        if scenario_disposition != "allow":
+            return "BLOCK"
+        if not entry_filters_passed or hard_filter_reasons:
+            return "BLOCK"
+        if efficient_build_quality in {"WAIT", "REDUCE_OR_WAIT", "BLOCK"}:
+            return "BLOCK"
+        if setup_type == "Continuation" and getattr(flow_metrics, f"oi_delta_reliable_{timeframe}", True) is False:
+            return "BLOCK"
+        return "ALLOW"
+
+    @staticmethod
+    def _normalized_reason_set(reasons: list[str] | tuple[str, ...] | None) -> set[str]:
+        if not reasons:
+            return set()
+        return {str(reason).strip() for reason in reasons if str(reason).strip()}
+
+    def _layer5_hard_risk_reason(
+        self,
+        *,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        data_quality_status: str | None,
+        final_structural_permission: str | None,
+        hard_filter_reasons: list[str],
+    ) -> str | None:
+        dq_status = (
+            getattr(flow_metrics, f"data_quality_status_{timeframe}", None)
+            or data_quality_status
+            or "UNKNOWN"
+        )
+        if dq_status != "FRESH":
+            return "data_quality_not_fresh"
+
+        if getattr(flow_metrics, f"oi_delta_reliable_{timeframe}", True) is False:
+            return "oi_delta_unreliable"
+
+        zscore_status = getattr(flow_metrics, f"zscore_baseline_status_{timeframe}", "NORMAL")
+        if zscore_status != "NORMAL":
+            return "zscore_baseline_not_normal"
+
+        if final_structural_permission == "STRUCTURAL_BLOCK":
+            return "structural_block"
+
+        crowding_status = getattr(flow_metrics, f"crowding_status_{timeframe}", None)
+        if crowding_status in {"extreme_crowded_long", "extreme_crowded_short"}:
+            return str(crowding_status)
+
+        for reason in hard_filter_reasons:
+            if reason in LAYER5_HARD_RISK_REASONS or reason.startswith("funding_extreme_"):
+                return reason
+        return None
+
+    def _layer5_watch_classification(
+        self,
+        *,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        data_quality_status: str | None,
+        scenario_label: str | None,
+        scenario_disposition: str | None,
+        final_structural_permission: str | None,
+        hard_filter_reasons: list[str],
+        expansion_subtype: str | None,
+    ) -> tuple[str, str, str | None]:
+        hard_risk = self._layer5_hard_risk_reason(
+            flow_metrics=flow_metrics,
+            timeframe=timeframe,
+            data_quality_status=data_quality_status,
+            final_structural_permission=final_structural_permission,
+            hard_filter_reasons=hard_filter_reasons,
+        )
+        if hard_risk:
+            return "AVOID_HARD_RISK", f"hard_risk:{hard_risk}", None
+
+        label = scenario_label or ""
+        disposition = scenario_disposition or ""
+        if label in LAYER5_RISK_SCENARIOS:
+            return "WAIT_RISK", f"wait_risk:{label}", "C"
+
+        crowding_status = getattr(flow_metrics, f"crowding_status_{timeframe}", None)
+        reason_set = self._normalized_reason_set(hard_filter_reasons)
+        is_clean_foundation = (
+            (getattr(flow_metrics, f"data_quality_status_{timeframe}", None) or data_quality_status) == "FRESH"
+            and getattr(flow_metrics, f"oi_delta_reliable_{timeframe}", True) is True
+            and getattr(flow_metrics, f"zscore_baseline_status_{timeframe}", "NORMAL") == "NORMAL"
+            and final_structural_permission != "STRUCTURAL_BLOCK"
+        )
+        is_healthy_expansion = expansion_subtype == "healthy_expansion"
+        has_watchlist_tier_a = (
+            is_healthy_expansion
+            and final_structural_permission in {"STRUCTURAL_ALLOW", "STRUCTURAL_PENALTY"}
+        )
+
+        if (
+            is_clean_foundation
+            and crowding_status == "neutral"
+            and label == "mixed_context"
+            and disposition == "observe"
+            and reason_set.issubset(LAYER5_MIXED_SOFT_REASONS)
+        ):
+            return (
+                "WATCHLIST_MIXED_BUILDING",
+                "clean_mixed_context_building",
+                "A" if has_watchlist_tier_a else "B" if not is_healthy_expansion else "C",
+            )
+
+        if (
+            is_clean_foundation
+            and crowding_status == "neutral"
+            and label == "weak_propulsion"
+            and disposition == "wait"
+            and reason_set.issubset(LAYER5_WEAK_SOFT_REASONS)
+        ):
+            return (
+                "WATCHLIST_WEAK_PROPULSION",
+                "clean_weak_propulsion_waiting_confirmation",
+                "A" if has_watchlist_tier_a else "B" if not is_healthy_expansion else "C",
+            )
+
+        if (
+            is_clean_foundation
+            and is_healthy_expansion
+            and crowding_status not in {"extreme_crowded_long", "extreme_crowded_short"}
+        ):
+            return (
+                "WATCHLIST_HEALTHY_EXPANSION",
+                "healthy_expansion_watch",
+                "A" if has_watchlist_tier_a else "C",
+            )
+
+        return "NONE", "none", None
+
+    @staticmethod
+    def _metric_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(numeric):
+            return None
+        return numeric
+
+    @staticmethod
+    def _direction_text(value: Any) -> str:
+        return str(value or "").strip().lower()
+
+    def _layer5_direction_classification(
+        self,
+        *,
+        layer5_watch_status: str | None,
+        action_bias: str | None,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        market_interpretation: dict[str, Any] | None,
+    ) -> tuple[str, str]:
+        if not str(layer5_watch_status or "").startswith("WATCHLIST_"):
+            return "NO_DIRECTION", "not_watchlist"
+
+        market_interpretation = market_interpretation or {}
+        price_change_15m = self._metric_float(getattr(flow_metrics, f"price_change_{timeframe}", None))
+        taker_delta_15m = self._metric_float(getattr(flow_metrics, f"taker_buy_sell_ratio_delta_{timeframe}", None))
+        flow_alignment = self._metric_float(market_interpretation.get("flow_alignment"))
+        htf_alignment = self._direction_text(market_interpretation.get("higher_timeframe_alignment"))
+        market_control = str(market_interpretation.get("control") or "")
+        crowding_status = getattr(flow_metrics, f"crowding_status_{timeframe}", None)
+        funding_level_15m = self._metric_float(getattr(flow_metrics, "funding_level_15m", None))
+
+        missing = []
+        if price_change_15m is None:
+            missing.append("price_change_15m")
+        if taker_delta_15m is None:
+            missing.append("taker_delta_15m")
+        if not action_bias and not market_control:
+            missing.append("action_bias_or_market_control")
+        if missing:
+            return "NEUTRAL_WATCH", f"insufficient_direction_data:{','.join(missing)}"
+
+        weak_price = price_change_15m is not None and price_change_15m <= 0.001
+        funding_positive_or_missing = funding_level_15m is None or funding_level_15m > 0
+        funding_negative_or_missing = funding_level_15m is None or funding_level_15m < 0
+
+        if (
+            crowding_status in {"crowded_long", "extreme_crowded_long"}
+            and taker_delta_15m is not None
+            and taker_delta_15m > 0
+            and weak_price
+            and funding_positive_or_missing
+        ):
+            return "LONG_TRAP_WATCH", "crowded_long_taker_bid_price_weak"
+
+        if (
+            crowding_status in {"crowded_short", "extreme_crowded_short"}
+            and price_change_15m is not None
+            and price_change_15m > 0
+            and taker_delta_15m is not None
+            and taker_delta_15m > 0
+            and funding_negative_or_missing
+        ):
+            return "SHORT_SQUEEZE_WATCH", "crowded_short_price_taker_up"
+
+        bullish_source = action_bias == "Bullish" or market_control == "Buyer Dominant"
+        bearish_source = action_bias == "Bearish" or market_control == "Seller Dominant"
+        htf_blocks_long = "bearish" in htf_alignment or "seller" in htf_alignment
+        htf_blocks_short = "bullish" in htf_alignment or "buyer" in htf_alignment
+        long_taker_or_flow = (
+            (taker_delta_15m is not None and taker_delta_15m >= 0)
+            or flow_alignment is None
+            or flow_alignment >= 0
+        )
+        short_taker_or_flow = (
+            (taker_delta_15m is not None and taker_delta_15m <= 0)
+            or flow_alignment is None
+            or flow_alignment <= 0
+        )
+
+        if (
+            bullish_source
+            and not bearish_source
+            and price_change_15m is not None
+            and price_change_15m >= 0
+            and long_taker_or_flow
+            and not htf_blocks_long
+            and crowding_status != "extreme_crowded_long"
+        ):
+            return "LONG_WATCH", "bullish_bias_price_taker_supported"
+
+        if (
+            bearish_source
+            and not bullish_source
+            and price_change_15m is not None
+            and price_change_15m <= 0
+            and short_taker_or_flow
+            and not htf_blocks_short
+            and crowding_status != "extreme_crowded_short"
+        ):
+            return "SHORT_WATCH", "bearish_bias_price_taker_supported"
+
+        return "NEUTRAL_WATCH", "conflicting_or_insufficient_direction"
+
+    @staticmethod
+    def _direction_alignment_classification(
+        action_bias: str | None,
+        action_status: str | None,
+        layer5_direction_bias: str | None,
+        action_setup_type: str | None,
+    ) -> tuple[str, str]:
+        layer5_direction = str(layer5_direction_bias or "").strip()
+        if not layer5_direction or layer5_direction == "NO_DIRECTION":
+            return "NO_DIRECTION", "no_layer5_direction"
+
+        action_direction = str(action_bias or "").strip()
+        setup_type = str(action_setup_type or "").strip()
+        has_action_direction = action_direction in {"Bullish", "Bearish"}
+        directional_layer5 = {
+            "LONG_WATCH",
+            "SHORT_WATCH",
+            "LONG_TRAP_WATCH",
+            "SHORT_SQUEEZE_WATCH",
+        }
+
+        if layer5_direction in {"LONG_TRAP_WATCH", "SHORT_SQUEEZE_WATCH"} and setup_type not in {"Trap", "Squeeze"}:
+            return "TRAP_OR_SQUEEZE_UNCONSUMED", f"{layer5_direction.lower()}_not_represented_by_{setup_type or 'none'}"
+
+        if layer5_direction in directional_layer5 and not has_action_direction:
+            status = str(action_status or "").strip() or "none"
+            return "LAYER5_HAS_DIRECTION_ACTION_NONE", f"layer5_{layer5_direction.lower()}_action_{action_direction or status}"
+
+        if (
+            (action_direction == "Bullish" and layer5_direction in {"SHORT_WATCH", "LONG_TRAP_WATCH"})
+            or (action_direction == "Bearish" and layer5_direction in {"LONG_WATCH", "SHORT_SQUEEZE_WATCH"})
+        ):
+            return "CONFLICT_LONG_SHORT", f"action_{action_direction.lower()}_layer5_{layer5_direction.lower()}"
+
+        if (
+            (action_direction == "Bullish" and layer5_direction in {"LONG_WATCH", "SHORT_SQUEEZE_WATCH"})
+            or (action_direction == "Bearish" and layer5_direction in {"SHORT_WATCH", "LONG_TRAP_WATCH"})
+        ):
+            return "ALIGNED", f"action_{action_direction.lower()}_matches_layer5_{layer5_direction.lower()}"
+
+        if has_action_direction and layer5_direction == "NEUTRAL_WATCH":
+            return "ACTION_HAS_DIRECTION_LAYER5_NEUTRAL", f"action_{action_direction.lower()}_layer5_neutral"
+
+        return "UNKNOWN_ALIGNMENT", f"action_{action_direction or 'none'}_layer5_{layer5_direction}"
+
+    def _v2balanced_candidate_stage_classification(
+        self,
+        *,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        action_status: str | None,
+        scenario_disposition: str | None,
+        layer5_watch_status: str | None,
+        layer5_direction_bias: str | None,
+        hard_filter_reasons: list[str] | tuple[str, ...] | None,
+        data_quality_status: str | None = None,
+    ) -> tuple[str, str]:
+        dq_status = (
+            getattr(flow_metrics, f"data_quality_status_{timeframe}", None)
+            or data_quality_status
+            or "UNKNOWN"
+        )
+        if dq_status != "FRESH":
+            return "DATA_BLOCKED", "data_quality_not_fresh"
+
+        if getattr(flow_metrics, f"oi_delta_reliable_{timeframe}", True) is False:
+            return "DATA_BLOCKED", "oi_unreliable"
+
+        zscore_status = getattr(flow_metrics, f"zscore_baseline_status_{timeframe}", "NORMAL")
+        if zscore_status != "NORMAL":
+            return "DATA_BLOCKED", "zscore_not_normal"
+
+        fallback_fields = getattr(flow_metrics, f"fallback_fields_{timeframe}", []) or []
+        if isinstance(fallback_fields, str):
+            has_fallback_fields = bool(fallback_fields.strip())
+        else:
+            has_fallback_fields = bool(fallback_fields)
+        if has_fallback_fields:
+            return "DATA_BLOCKED", "fallback_fields_present"
+
+        reason_set = self._normalized_reason_set(hard_filter_reasons)
+        has_hard_risk = any(
+            reason in LAYER5_HARD_RISK_REASONS
+            or reason.startswith("funding_extreme_")
+            or reason.startswith("structural_")
+            or reason == "structural_block"
+            for reason in reason_set
+        )
+        watch_status = str(layer5_watch_status or "").strip()
+        if watch_status == "AVOID_HARD_RISK" or has_hard_risk:
+            return "AVOID_RISK", "avoid_hard_risk"
+
+        if action_status in {"Ready", "Triggered"}:
+            return "READY_LEGACY", "legacy_ready_or_triggered"
+
+        layer5_direction = str(layer5_direction_bias or "").strip()
+        if watch_status.startswith("WATCHLIST"):
+            if layer5_direction in {"LONG_WATCH", "SHORT_WATCH", "LONG_TRAP_WATCH", "SHORT_SQUEEZE_WATCH"}:
+                return "WATCH_DIRECTIONAL", "directional_watchlist"
+            if layer5_direction == "NEUTRAL_WATCH":
+                return "WATCH_NEUTRAL", "neutral_watchlist"
+
+        if watch_status.startswith("WATCHLIST") or scenario_disposition in {"wait", "observe"}:
+            return "WAIT_TRIGGER", "waiting_for_trigger"
+
+        return "NO_SETUP", "no_setup"
 
     def _mark_state_with_status(
         self,
@@ -2864,6 +3375,57 @@ class SignalService:
             if latest_pt.open_interest_source == "missing": missing_f.append("open_interest")
             if latest_pt.volume_source == "missing": missing_f.append("volume")
 
+        entry_filters_passed, entry_filter_reasons = self._entry_filters_from_interpretation(market_interpretation)
+        efficient_build_quality = getattr(flow_metrics, f"efficient_build_quality_{timeframe}", "UNKNOWN")
+        final_entry_permission = self._safe_final_entry_permission(
+            action_status=action_status,
+            setup_type=setup_type,
+            scenario_disposition=scenario_disposition,
+            efficient_build_quality=efficient_build_quality,
+            flow_metrics=flow_metrics,
+            timeframe=timeframe,
+            market_interpretation=market_interpretation,
+        )
+        hard_filter_reasons = entry_filter_reasons if not entry_filters_passed or final_entry_permission == "BLOCK" else []
+        final_structural_permission = getattr(flow_metrics, f"final_structural_permission_{timeframe}", "NOT_APPLICABLE")
+        expansion_subtype = getattr(flow_metrics, f"expansion_subtype_{timeframe}", "unknown_expansion")
+        layer5_watch_status, layer5_watch_reason, layer5_candidate_tier = self._layer5_watch_classification(
+            flow_metrics=flow_metrics,
+            timeframe=timeframe,
+            data_quality_status=dq_status,
+            scenario_label=scenario_label if scenario_label is not None else "mixed_context",
+            scenario_disposition=scenario_disposition if scenario_disposition is not None else "observe",
+            final_structural_permission=final_structural_permission,
+            hard_filter_reasons=hard_filter_reasons,
+            expansion_subtype=expansion_subtype,
+        )
+        layer5_direction_bias, layer5_direction_reason = self._layer5_direction_classification(
+            layer5_watch_status=layer5_watch_status,
+            action_bias=action_bias if action_bias is not None else previous_state.action_bias if previous_state is not None else None,
+            flow_metrics=flow_metrics,
+            timeframe=timeframe,
+            market_interpretation=market_interpretation,
+        )
+        v2_action_bias = action_bias if action_bias is not None else previous_state.action_bias if previous_state is not None else None
+        v2_action_status = action_status if action_status is not None else previous_state.action_status if previous_state is not None else None
+        v2_setup_type = setup_type if setup_type is not None else previous_state.setup_type if previous_state is not None else None
+        direction_alignment_status, direction_alignment_reason = self._direction_alignment_classification(
+            action_bias=v2_action_bias,
+            action_status=v2_action_status,
+            layer5_direction_bias=layer5_direction_bias,
+            action_setup_type=v2_setup_type,
+        )
+        v2balanced_candidate_stage, v2balanced_stage_reason = self._v2balanced_candidate_stage_classification(
+            flow_metrics=flow_metrics,
+            timeframe=timeframe,
+            action_status=v2_action_status,
+            scenario_disposition=scenario_disposition,
+            layer5_watch_status=layer5_watch_status,
+            layer5_direction_bias=layer5_direction_bias,
+            hard_filter_reasons=hard_filter_reasons,
+            data_quality_status=dq_status,
+        )
+
         return AssetState(
             symbol=symbol,
             name=self.universe_service.get_name(symbol),
@@ -2907,7 +3469,7 @@ class SignalService:
             regime_warning=getattr(flow_metrics, f"regime_warning_{timeframe}", None),
 
             # Phase 2 Expansion
-            expansion_subtype=getattr(flow_metrics, f"expansion_subtype_{timeframe}", "unknown_expansion"),
+            expansion_subtype=expansion_subtype,
             expansion_health_score=getattr(flow_metrics, f"expansion_health_score_{timeframe}", 0.0),
             expansion_chaos_score=getattr(flow_metrics, f"expansion_chaos_score_{timeframe}", 0.0),
             expansion_warning=getattr(flow_metrics, f"expansion_warning_{timeframe}", None),
@@ -2924,7 +3486,7 @@ class SignalService:
             compression_warning=getattr(flow_metrics, f"compression_warning_{timeframe}", None),
 
             # Phase 3A Shadow Structural Permission
-            final_structural_permission=getattr(flow_metrics, f"final_structural_permission_{timeframe}", "NOT_APPLICABLE"),
+            final_structural_permission=final_structural_permission,
             structural_block_reason=getattr(flow_metrics, f"structural_block_reason_{timeframe}", None),
             structural_warning_reason=getattr(flow_metrics, f"structural_warning_reason_{timeframe}", None),
             structural_confidence_multiplier=getattr(flow_metrics, f"structural_confidence_multiplier_{timeframe}", 1.0),
@@ -2933,11 +3495,22 @@ class SignalService:
             liquidation_context=getattr(flow_metrics, f"liquidation_context_{timeframe}", None),
 
             # Phase 5 Observability
-            efficient_build_quality=getattr(flow_metrics, f"efficient_build_quality_{timeframe}", "UNKNOWN"),
+            efficient_build_quality=efficient_build_quality,
             efficient_build_quality_reason=getattr(flow_metrics, f"efficient_build_quality_reason_{timeframe}", None),
-            final_entry_permission="ALLOW" if not market_interpretation or (market_interpretation.get("entry_filters", {}).get("passed", True)) else "BLOCK",
-            hard_filter_reasons=market_interpretation.get("entry_filters", {}).get("reasons", []) if market_interpretation else [],
-            block_reasons=market_interpretation.get("entry_filters", {}).get("reasons", []) if market_interpretation else [],
+            final_entry_permission=final_entry_permission,
+            hard_filter_reasons=hard_filter_reasons,
+            block_reasons=hard_filter_reasons,
+            layer5_watch_status=layer5_watch_status,
+            layer5_watch_reason=layer5_watch_reason,
+            layer5_candidate_tier=layer5_candidate_tier,
+            layer5_direction_bias=layer5_direction_bias,
+            layer5_direction_reason=layer5_direction_reason,
+            v2_action_bias=v2_action_bias,
+            v2_action_status=v2_action_status,
+            direction_alignment_status=direction_alignment_status,
+            direction_alignment_reason=direction_alignment_reason,
+            v2balanced_candidate_stage=v2balanced_candidate_stage,
+            v2balanced_stage_reason=v2balanced_stage_reason,
 
             flow_metrics=flow_metrics,
             score=actual_score,
@@ -2954,8 +3527,8 @@ class SignalService:
             decision_type=decision_type,
             reliability_score=reliability_score,
             priority_multiplier=priority_multiplier,
-            action_bias=action_bias if action_bias is not None else previous_state.action_bias if previous_state is not None else None,
-            action_status=action_status if action_status is not None else previous_state.action_status if previous_state is not None else None,
+            action_bias=v2_action_bias,
+            action_status=v2_action_status,
             action_confidence_label=action_confidence_label if action_confidence_label is not None else previous_state.action_confidence_label if previous_state is not None else None,
             action_opportunity_score=action_opportunity_score if action_opportunity_score is not None else previous_state.action_opportunity_score if previous_state is not None else None,
             setup_type=setup_type,

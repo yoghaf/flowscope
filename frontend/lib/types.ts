@@ -193,6 +193,11 @@ export interface FlowMetrics {
   final_structural_permission_15m?: string;
   structural_block_reason_15m?: string | null;
   structural_warning_reason_15m?: string | null;
+  layer5_watch_status?: string;
+  layer5_watch_reason?: string;
+  layer5_candidate_tier?: string | null;
+  layer5_direction_bias?: string;
+  layer5_direction_reason?: string;
   efficient_build_quality?: string;
   efficient_build_quality_reason?: string;
 }
@@ -290,6 +295,11 @@ export interface AssetSnapshot {
   final_structural_permission?: string;
   structural_block_reason?: string | null;
   structural_warning_reason?: string | null;
+  layer5_watch_status?: string;
+  layer5_watch_reason?: string;
+  layer5_candidate_tier?: string | null;
+  layer5_direction_bias?: string;
+  layer5_direction_reason?: string;
   efficient_build_quality?: string;
   efficient_build_quality_reason?: string;
   signal: SignalType;

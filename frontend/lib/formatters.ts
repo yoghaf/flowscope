@@ -54,6 +54,20 @@ const HUMAN_LABELS: Record<string, string> = {
   missing_at_startup: "Waiting for source",
   structural_block: "Structural block",
   structural_watchlist: "Structural watchlist",
+  watchlist_mixed_building: "Watchlist",
+  watchlist_weak_propulsion: "Watchlist",
+  watchlist_healthy_expansion: "Watchlist",
+  wait_risk: "Wait",
+  avoid_hard_risk: "Avoid",
+  clean_mixed_context_building: "Watchlist: mixed context building",
+  clean_weak_propulsion_waiting_confirmation: "Watchlist: waiting for confirmation",
+  healthy_expansion_watch: "Watchlist: healthy expansion",
+  long_watch: "Long Watch",
+  short_watch: "Short Watch",
+  neutral_watch: "Neutral Watch",
+  long_trap_watch: "Long Trap Watch",
+  short_squeeze_watch: "Short Squeeze Watch",
+  no_direction: "No direction",
   no_trade: "No setup",
   no_clear_edge: "No clear edge",
 };
@@ -288,6 +302,22 @@ export function getEntryPermission(asset: AssetSnapshot): string {
   return stringOrNull(asset.final_entry_permission) ?? stringOrNull(flowValue(asset, "final_entry_permission")) ?? "UNKNOWN";
 }
 
+export function getLayer5WatchStatus(asset: AssetSnapshot): string {
+  return stringOrNull(asset.layer5_watch_status) ?? stringOrNull(flowValue(asset, "layer5_watch_status")) ?? "NONE";
+}
+
+export function getLayer5WatchReason(asset: AssetSnapshot): string {
+  return stringOrNull(asset.layer5_watch_reason) ?? stringOrNull(flowValue(asset, "layer5_watch_reason")) ?? "none";
+}
+
+export function getLayer5DirectionBias(asset: AssetSnapshot): string {
+  return stringOrNull(asset.layer5_direction_bias) ?? stringOrNull(flowValue(asset, "layer5_direction_bias")) ?? "NO_DIRECTION";
+}
+
+export function getLayer5DirectionReason(asset: AssetSnapshot): string {
+  return stringOrNull(asset.layer5_direction_reason) ?? stringOrNull(flowValue(asset, "layer5_direction_reason")) ?? "not_watchlist";
+}
+
 export function getStructuralPermission(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string {
   return (
     stringOrNull(flowValue(asset, `final_structural_permission_${timeframe}`)) ??
@@ -340,8 +370,16 @@ export function isStructuralBlock(asset: AssetSnapshot, timeframe: Timeframe = "
 export function isWatchlist(asset: AssetSnapshot, timeframe: Timeframe = "15m"): boolean {
   const entry = getEntryPermission(asset).toUpperCase();
   const structural = getStructuralPermission(asset, timeframe).toUpperCase();
+  const layer5 = getLayer5WatchStatus(asset).toUpperCase();
   const text = normalizeDecisionText(assetText(asset));
-  return entry.includes("WATCHLIST") || structural === "STRUCTURAL_WATCHLIST" || text.includes("watchlist");
+  return (
+    entry.includes("WATCHLIST") ||
+    structural === "STRUCTURAL_WATCHLIST" ||
+    layer5 === "WATCHLIST_MIXED_BUILDING" ||
+    layer5 === "WATCHLIST_WEAK_PROPULSION" ||
+    layer5 === "WATCHLIST_HEALTHY_EXPANSION" ||
+    text.includes("watchlist")
+  );
 }
 
 export function formatPipelineLabel(value: string | null | undefined): string {
@@ -424,10 +462,27 @@ export function getDisplayDecision(asset: AssetSnapshot, timeframe: Timeframe = 
   const scenario = normalizeDecisionText(getScenarioDisposition(asset));
   const structure = normalizeDecisionText(getStructuralPermission(asset, timeframe));
   const hardReasons = getHardFilterReasons(asset);
+  const layer5 = normalizeDecisionText(getLayer5WatchStatus(asset));
   const text = normalizeDecisionText(assetText(asset));
 
   if (hasDisplayDataIssue(asset, timeframe)) {
     return "DATA ISSUE";
+  }
+
+  if (layer5 === "avoid_hard_risk") {
+    return "BLOCKED";
+  }
+
+  if (
+    layer5 === "watchlist_mixed_building" ||
+    layer5 === "watchlist_weak_propulsion" ||
+    layer5 === "watchlist_healthy_expansion"
+  ) {
+    return "WATCHLIST";
+  }
+
+  if (layer5 === "wait_risk") {
+    return "WAIT";
   }
 
   if (entry === "block" || hardReasons.length > 0 || structure === "block" || structure === "structural_block") {
@@ -468,6 +523,31 @@ export function getDisplayDecision(asset: AssetSnapshot, timeframe: Timeframe = 
 }
 
 export function getHumanReason(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string {
+  const layer5 = normalizeDecisionText(getLayer5WatchStatus(asset));
+  const layer5Reason = getLayer5WatchReason(asset);
+  if (
+    layer5 === "watchlist_mixed_building" ||
+    layer5 === "watchlist_weak_propulsion" ||
+    layer5 === "watchlist_healthy_expansion"
+  ) {
+    const direction = normalizeDecisionText(getLayer5DirectionBias(asset));
+    if (
+      direction === "long_watch" ||
+      direction === "short_watch" ||
+      direction === "neutral_watch" ||
+      direction === "long_trap_watch" ||
+      direction === "short_squeeze_watch"
+    ) {
+      return getHumanLabel(direction);
+    }
+    return getHumanLabel(layer5Reason);
+  }
+  if (layer5 === "wait_risk") {
+    return layer5Reason.startsWith("wait_risk:")
+      ? getHumanLabel(layer5Reason.split(":")[1])
+      : getHumanLabel(layer5Reason);
+  }
+
   const hardReason = getHardFilterReasons(asset)[0] ?? getBlockReasons(asset)[0];
   if (hardReason) {
     return getReasonLabel(hardReason);
