@@ -168,6 +168,8 @@ class AssetState:
     direction_alignment_reason: str = "no_layer5_direction"
     v2balanced_candidate_stage: str = "NO_SETUP"
     v2balanced_stage_reason: str = "no_setup"
+    v2balanced_semantic_readiness: str = "NO_SETUP"
+    v2balanced_readiness_reason: str = "no_setup"
     debug_trace: dict[str, Any] = field(default_factory=dict)
     market_interpretation: dict[str, Any] = field(default_factory=dict)
 
@@ -2029,7 +2031,24 @@ class SignalService:
                 scenario_disposition=scenario.disposition,
                 layer5_watch_status=direct_layer5_status,
                 layer5_direction_bias=direct_layer5_direction_bias,
+                direction_alignment_status=direct_direction_alignment_status,
                 hard_filter_reasons=direct_hard_filter_reasons,
+                data_quality_status=getattr(flow_metrics, f"data_quality_status_{timeframe}", None),
+            )
+            direct_semantic_readiness, direct_readiness_reason = self._v2balanced_semantic_readiness_classification(
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                action_status=action.status,
+                action_bias=action.bias,
+                scenario_label=scenario.label,
+                scenario_disposition=scenario.disposition,
+                final_entry_permission=direct_final_entry_permission,
+                layer5_watch_status=direct_layer5_status,
+                layer5_watch_reason=direct_layer5_reason,
+                layer5_direction_bias=direct_layer5_direction_bias,
+                direction_alignment_status=direct_direction_alignment_status,
+                hard_filter_reasons=direct_hard_filter_reasons,
+                final_structural_permission=direct_structural_permission,
                 data_quality_status=getattr(flow_metrics, f"data_quality_status_{timeframe}", None),
             )
             
@@ -2119,6 +2138,8 @@ class SignalService:
                 direction_alignment_reason=direct_direction_alignment_reason,
                 v2balanced_candidate_stage=direct_v2balanced_stage,
                 v2balanced_stage_reason=direct_v2balanced_stage_reason,
+                v2balanced_semantic_readiness=direct_semantic_readiness,
+                v2balanced_readiness_reason=direct_readiness_reason,
                 market_interpretation=interpretation_payload,
             )
             self.last_timeframe_update[(symbol, timeframe)] = now
@@ -2575,6 +2596,8 @@ class SignalService:
             direction_alignment_reason=asset.direction_alignment_reason,
             v2balanced_candidate_stage=asset.v2balanced_candidate_stage,
             v2balanced_stage_reason=asset.v2balanced_stage_reason,
+            v2balanced_semantic_readiness=asset.v2balanced_semantic_readiness,
+            v2balanced_readiness_reason=asset.v2balanced_readiness_reason,
 
             scenario=ContextScenarioSnapshot(
                 label=asset.scenario_label,
@@ -2701,6 +2724,8 @@ class SignalService:
             direction_alignment_reason=snapshot.direction_alignment_reason,
             v2balanced_candidate_stage=snapshot.v2balanced_candidate_stage,
             v2balanced_stage_reason=snapshot.v2balanced_stage_reason,
+            v2balanced_semantic_readiness=snapshot.v2balanced_semantic_readiness,
+            v2balanced_readiness_reason=snapshot.v2balanced_readiness_reason,
             expansion_subtype=snapshot.expansion_subtype or "unknown_expansion",
             compression_type=snapshot.compression_type or "no_compression",
             regime_warning=snapshot.regime_warning,
@@ -3141,6 +3166,7 @@ class SignalService:
         scenario_disposition: str | None,
         layer5_watch_status: str | None,
         layer5_direction_bias: str | None,
+        direction_alignment_status: str | None,
         hard_filter_reasons: list[str] | tuple[str, ...] | None,
         data_quality_status: str | None = None,
     ) -> tuple[str, str]:
@@ -3180,7 +3206,19 @@ class SignalService:
             return "AVOID_RISK", "avoid_hard_risk"
 
         if action_status in {"Ready", "Triggered"}:
-            return "READY_LEGACY", "legacy_ready_or_triggered"
+            alignment_status = str(direction_alignment_status or "").strip()
+            layer5_direction = str(layer5_direction_bias or "").strip()
+            if watch_status == "AVOID_HARD_RISK":
+                return "READY_LEGACY", "legacy_ready_but_layer5_avoid"
+            if alignment_status == "CONFLICT_LONG_SHORT":
+                return "READY_LEGACY", "legacy_ready_but_direction_conflict"
+            if alignment_status == "TRAP_OR_SQUEEZE_UNCONSUMED":
+                return "READY_LEGACY", "legacy_ready_but_trap_or_squeeze_unconsumed"
+            if scenario_disposition != "allow":
+                return "READY_LEGACY", "legacy_ready_but_scenario_not_allow"
+            if not layer5_direction or layer5_direction == "NO_DIRECTION":
+                return "READY_LEGACY", "legacy_ready_but_no_layer5_direction"
+            return "READY_LEGACY", "legacy_ready_clean"
 
         layer5_direction = str(layer5_direction_bias or "").strip()
         if watch_status.startswith("WATCHLIST"):
@@ -3191,6 +3229,109 @@ class SignalService:
 
         if watch_status.startswith("WATCHLIST") or scenario_disposition in {"wait", "observe"}:
             return "WAIT_TRIGGER", "waiting_for_trigger"
+
+        return "NO_SETUP", "no_setup"
+
+    def _v2balanced_semantic_readiness_classification(
+        self,
+        *,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        action_status: str | None,
+        action_bias: str | None,
+        scenario_label: str | None,
+        scenario_disposition: str | None,
+        final_entry_permission: str | None,
+        layer5_watch_status: str | None,
+        layer5_watch_reason: str | None,
+        layer5_direction_bias: str | None,
+        direction_alignment_status: str | None,
+        hard_filter_reasons: list[str] | tuple[str, ...] | None,
+        final_structural_permission: str | None,
+        data_quality_status: str | None = None,
+    ) -> tuple[str, str]:
+        dq_status = (
+            getattr(flow_metrics, f"data_quality_status_{timeframe}", None)
+            or data_quality_status
+            or "UNKNOWN"
+        )
+        if dq_status != "FRESH":
+            return "DATA_BLOCKED", "data_quality_not_fresh"
+
+        if getattr(flow_metrics, f"oi_delta_reliable_{timeframe}", True) is False:
+            return "DATA_BLOCKED", "oi_unreliable"
+
+        zscore_status = getattr(flow_metrics, f"zscore_baseline_status_{timeframe}", "NORMAL")
+        if zscore_status != "NORMAL":
+            return "DATA_BLOCKED", "zscore_not_normal"
+
+        fallback_fields = getattr(flow_metrics, f"fallback_fields_{timeframe}", []) or []
+        if isinstance(fallback_fields, str):
+            has_fallback_fields = bool(fallback_fields.strip())
+        else:
+            has_fallback_fields = bool(fallback_fields)
+        if has_fallback_fields:
+            return "DATA_BLOCKED", "fallback_fields_present"
+
+        reason_set = self._normalized_reason_set(hard_filter_reasons)
+        watch_status = str(layer5_watch_status or "").strip()
+        watch_reason = str(layer5_watch_reason or "").strip()
+        if watch_status == "AVOID_HARD_RISK":
+            if watch_reason.startswith("hard_risk:"):
+                hard_reason = watch_reason.split(":", 1)[1]
+                if hard_reason == "structural_block":
+                    return "AVOID_LAYER5_RISK", "structural_block"
+                return "AVOID_LAYER5_RISK", f"layer5_{hard_reason}"
+            return "AVOID_LAYER5_RISK", "layer5_avoid_hard_risk"
+
+        if final_structural_permission == "STRUCTURAL_BLOCK":
+            return "AVOID_LAYER5_RISK", "structural_block"
+
+        for reason in reason_set:
+            if reason == "volatile_noise_no_structure":
+                return "AVOID_LAYER5_RISK", "volatile_noise_no_structure"
+            if (
+                reason in LAYER5_HARD_RISK_REASONS
+                or reason.startswith("funding_extreme_")
+                or reason.startswith("structural_")
+                or reason == "structural_block"
+            ):
+                return "AVOID_LAYER5_RISK", f"layer5_{reason}"
+
+        label = str(scenario_label or "").strip()
+        disposition = str(scenario_disposition or "").strip()
+        if disposition in {"wait", "observe", "reversal_watch"}:
+            if label == "mixed_context":
+                return "WAIT_SCENARIO", "mixed_context_wait"
+            if disposition == "reversal_watch" or label == "reversal_watch":
+                return "WAIT_SCENARIO", "reversal_watch"
+            return "WAIT_SCENARIO", f"scenario_{disposition}"
+
+        if label in {"mixed_context", "range_context", "reversal_watch", "late_expansion", "climax_event"}:
+            return "WAIT_SCENARIO", f"{label}_wait"
+
+        if final_entry_permission == "BLOCK" and "scenario_not_allow" in reason_set:
+            return "WAIT_SCENARIO", "scenario_not_allow"
+
+        layer5_direction = str(layer5_direction_bias or "").strip()
+        alignment_status = str(direction_alignment_status or "").strip()
+        has_action_bias = action_bias in {"Bullish", "Bearish"}
+        if watch_status.startswith("WATCHLIST") and layer5_direction in {"NEUTRAL_WATCH", "NO_DIRECTION", ""}:
+            if layer5_direction == "NEUTRAL_WATCH":
+                return "WAIT_DIRECTION", "neutral_watch_direction"
+            return "WAIT_DIRECTION", "no_layer5_direction"
+
+        if alignment_status == "CONFLICT_LONG_SHORT":
+            return "WAIT_DIRECTION", "direction_conflict"
+        if alignment_status == "TRAP_OR_SQUEEZE_UNCONSUMED":
+            return "WAIT_DIRECTION", "trap_or_squeeze_unconsumed"
+        if alignment_status == "ACTION_HAS_DIRECTION_LAYER5_NEUTRAL":
+            return "WAIT_DIRECTION", "neutral_watch_direction"
+        if has_action_bias and layer5_direction in {"NO_DIRECTION", ""}:
+            return "WAIT_DIRECTION", "no_layer5_direction"
+
+        if action_status in {"Ready", "Triggered"} and disposition == "allow":
+            return "READY_CANDIDATE", "semantic_ready_candidate"
 
         return "NO_SETUP", "no_setup"
 
@@ -3422,7 +3563,24 @@ class SignalService:
             scenario_disposition=scenario_disposition,
             layer5_watch_status=layer5_watch_status,
             layer5_direction_bias=layer5_direction_bias,
+            direction_alignment_status=direction_alignment_status,
             hard_filter_reasons=hard_filter_reasons,
+            data_quality_status=dq_status,
+        )
+        v2balanced_semantic_readiness, v2balanced_readiness_reason = self._v2balanced_semantic_readiness_classification(
+            flow_metrics=flow_metrics,
+            timeframe=timeframe,
+            action_status=v2_action_status,
+            action_bias=v2_action_bias,
+            scenario_label=scenario_label,
+            scenario_disposition=scenario_disposition,
+            final_entry_permission=final_entry_permission,
+            layer5_watch_status=layer5_watch_status,
+            layer5_watch_reason=layer5_watch_reason,
+            layer5_direction_bias=layer5_direction_bias,
+            direction_alignment_status=direction_alignment_status,
+            hard_filter_reasons=hard_filter_reasons,
+            final_structural_permission=final_structural_permission,
             data_quality_status=dq_status,
         )
 
@@ -3511,6 +3669,8 @@ class SignalService:
             direction_alignment_reason=direction_alignment_reason,
             v2balanced_candidate_stage=v2balanced_candidate_stage,
             v2balanced_stage_reason=v2balanced_stage_reason,
+            v2balanced_semantic_readiness=v2balanced_semantic_readiness,
+            v2balanced_readiness_reason=v2balanced_readiness_reason,
 
             flow_metrics=flow_metrics,
             score=actual_score,

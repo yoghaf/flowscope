@@ -896,6 +896,8 @@ class AssetSnapshot(BaseModel):
     direction_alignment_reason: str = "no_layer5_direction"
     v2balanced_candidate_stage: str = "NO_SETUP"
     v2balanced_stage_reason: str = "no_setup"
+    v2balanced_semantic_readiness: str = "NO_SETUP"
+    v2balanced_readiness_reason: str = "no_setup"
     
     # Scenario and Regime Diagnostics (Phase 5 Observability)
     scenario_label: str | None = None

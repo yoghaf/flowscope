@@ -325,7 +325,20 @@ def _v2balanced_stage_from_candidate(row: dict) -> tuple[str, str]:
         or ""
     ).strip()
     if action_status in {"Ready", "Triggered"}:
-        return "READY_LEGACY", "legacy_ready_or_triggered"
+        direction_alignment_status = str(_clean_value(row.get("direction_alignment_status"), "") or "").strip()
+        layer5_direction = str(_clean_value(row.get("layer5_direction_bias"), "") or "").strip()
+        if layer5_status == "AVOID_HARD_RISK":
+            return "READY_LEGACY", "legacy_ready_but_layer5_avoid"
+        if direction_alignment_status == "CONFLICT_LONG_SHORT":
+            return "READY_LEGACY", "legacy_ready_but_direction_conflict"
+        if direction_alignment_status == "TRAP_OR_SQUEEZE_UNCONSUMED":
+            return "READY_LEGACY", "legacy_ready_but_trap_or_squeeze_unconsumed"
+        scenario_disposition = _clean_value(row.get("scenario_disposition"))
+        if scenario_disposition != "allow":
+            return "READY_LEGACY", "legacy_ready_but_scenario_not_allow"
+        if not layer5_direction or layer5_direction == "NO_DIRECTION":
+            return "READY_LEGACY", "legacy_ready_but_no_layer5_direction"
+        return "READY_LEGACY", "legacy_ready_clean"
 
     layer5_direction = str(_clean_value(row.get("layer5_direction_bias"), "") or "").strip()
     if layer5_status.startswith("WATCHLIST"):
@@ -337,6 +350,100 @@ def _v2balanced_stage_from_candidate(row: dict) -> tuple[str, str]:
     scenario_disposition = _clean_value(row.get("scenario_disposition"))
     if layer5_status.startswith("WATCHLIST") or scenario_disposition in {"wait", "observe"}:
         return "WAIT_TRIGGER", "waiting_for_trigger"
+
+    return "NO_SETUP", "no_setup"
+
+
+def _semantic_readiness_from_candidate(row: dict) -> tuple[str, str]:
+    data_quality_status = _clean_value(row.get("data_quality_status"))
+    if data_quality_status != "FRESH":
+        return "DATA_BLOCKED", "data_quality_not_fresh"
+
+    oi_delta_reliable = _clean_value(row.get("oi_delta_reliable"))
+    if oi_delta_reliable is False or str(oi_delta_reliable).lower() == "false":
+        return "DATA_BLOCKED", "oi_unreliable"
+
+    zscore_status = _clean_value(row.get("zscore_baseline_status"), "NORMAL")
+    if zscore_status != "NORMAL":
+        return "DATA_BLOCKED", "zscore_not_normal"
+
+    fallback_fields = _clean_value(row.get("fallback_fields_15m"), "")
+    if isinstance(fallback_fields, list):
+        has_fallback_fields = bool(fallback_fields)
+    else:
+        has_fallback_fields = bool(str(fallback_fields or "").strip())
+    if has_fallback_fields:
+        return "DATA_BLOCKED", "fallback_fields_present"
+
+    hard_reasons = _split_reasons(row.get("hard_filter_reasons"))
+    layer5_status = str(_clean_value(row.get("layer5_watch_status"), "") or "").strip()
+    layer5_reason = str(_clean_value(row.get("layer5_watch_reason"), "") or "").strip()
+    if layer5_status == "AVOID_HARD_RISK":
+        if layer5_reason.startswith("hard_risk:"):
+            hard_reason = layer5_reason.split(":", 1)[1]
+            if hard_reason == "structural_block":
+                return "AVOID_LAYER5_RISK", "structural_block"
+            return "AVOID_LAYER5_RISK", f"layer5_{hard_reason}"
+        return "AVOID_LAYER5_RISK", "layer5_avoid_hard_risk"
+
+    if _clean_value(row.get("final_structural_permission")) == "STRUCTURAL_BLOCK":
+        return "AVOID_LAYER5_RISK", "structural_block"
+
+    for reason in hard_reasons:
+        if reason == "volatile_noise_no_structure":
+            return "AVOID_LAYER5_RISK", "volatile_noise_no_structure"
+        if (
+            reason in LAYER5_HARD_RISK_REASONS
+            or reason.startswith("funding_extreme_")
+            or reason.startswith("structural_")
+            or reason == "structural_block"
+        ):
+            return "AVOID_LAYER5_RISK", f"layer5_{reason}"
+
+    scenario_label = str(_clean_value(row.get("scenario_label"), "") or "").strip()
+    scenario_disposition = str(_clean_value(row.get("scenario_disposition"), "") or "").strip()
+    if scenario_disposition in {"wait", "observe", "reversal_watch"}:
+        if scenario_label == "mixed_context":
+            return "WAIT_SCENARIO", "mixed_context_wait"
+        if scenario_disposition == "reversal_watch" or scenario_label == "reversal_watch":
+            return "WAIT_SCENARIO", "reversal_watch"
+        return "WAIT_SCENARIO", f"scenario_{scenario_disposition}"
+
+    if scenario_label in {"mixed_context", "range_context", "reversal_watch", "late_expansion", "climax_event"}:
+        return "WAIT_SCENARIO", f"{scenario_label}_wait"
+
+    if _clean_value(row.get("final_entry_permission")) == "BLOCK" and "scenario_not_allow" in hard_reasons:
+        return "WAIT_SCENARIO", "scenario_not_allow"
+
+    layer5_direction = str(_clean_value(row.get("layer5_direction_bias"), "") or "").strip()
+    direction_alignment = str(_clean_value(row.get("direction_alignment_status"), "") or "").strip()
+    action_bias = str(
+        _clean_value(row.get("v2_action_bias"))
+        or _clean_value(row.get("action_bias"))
+        or ""
+    ).strip()
+    has_action_bias = action_bias in {"Bullish", "Bearish"}
+    if layer5_status.startswith("WATCHLIST") and layer5_direction in {"NEUTRAL_WATCH", "NO_DIRECTION", ""}:
+        if layer5_direction == "NEUTRAL_WATCH":
+            return "WAIT_DIRECTION", "neutral_watch_direction"
+        return "WAIT_DIRECTION", "no_layer5_direction"
+
+    if direction_alignment == "CONFLICT_LONG_SHORT":
+        return "WAIT_DIRECTION", "direction_conflict"
+    if direction_alignment == "TRAP_OR_SQUEEZE_UNCONSUMED":
+        return "WAIT_DIRECTION", "trap_or_squeeze_unconsumed"
+    if direction_alignment == "ACTION_HAS_DIRECTION_LAYER5_NEUTRAL":
+        return "WAIT_DIRECTION", "neutral_watch_direction"
+    if has_action_bias and layer5_direction in {"NO_DIRECTION", ""}:
+        return "WAIT_DIRECTION", "no_layer5_direction"
+
+    action_status = str(
+        _clean_value(row.get("v2_action_status"))
+        or _clean_value(row.get("action_status"))
+        or ""
+    ).strip()
+    if action_status in {"Ready", "Triggered"} and scenario_disposition == "allow":
+        return "READY_CANDIDATE", "semantic_ready_candidate"
 
     return "NO_SETUP", "no_setup"
 
@@ -519,6 +626,9 @@ async def run_forward_monitor():
                     fallback_stage, fallback_stage_reason = _v2balanced_stage_from_candidate(candidate)
                     candidate["v2balanced_candidate_stage"] = data.get("v2balanced_candidate_stage") or fallback_stage
                     candidate["v2balanced_stage_reason"] = data.get("v2balanced_stage_reason") or fallback_stage_reason
+                    fallback_readiness, fallback_readiness_reason = _semantic_readiness_from_candidate(candidate)
+                    candidate["v2balanced_semantic_readiness"] = data.get("v2balanced_semantic_readiness") or fallback_readiness
+                    candidate["v2balanced_readiness_reason"] = data.get("v2balanced_readiness_reason") or fallback_readiness_reason
                     candidates.append(candidate)
     except Exception as e:
         print(f"\n[ERROR] Database error: {e}")
@@ -548,6 +658,7 @@ async def run_forward_monitor():
         "layer5_direction_bias", "layer5_direction_reason",
         "direction_alignment_status", "direction_alignment_reason",
         "v2balanced_candidate_stage", "v2balanced_stage_reason",
+        "v2balanced_semantic_readiness", "v2balanced_readiness_reason",
         "bucket_is_closed", "bucket_completion_pct", "volume_z_reliable", "oi_delta_z_reliable"
     ]
     
@@ -590,6 +701,8 @@ async def run_forward_monitor():
         "direction_alignment_reason",
         "v2balanced_candidate_stage",
         "v2balanced_stage_reason",
+        "v2balanced_semantic_readiness",
+        "v2balanced_readiness_reason",
     ]:
         df[layer5_col] = df[layer5_col].astype("object")
     for idx, row in df.iterrows():
@@ -610,6 +723,9 @@ async def run_forward_monitor():
         v2_stage, v2_stage_reason = _v2balanced_stage_from_candidate(df.loc[idx].to_dict())
         df.at[idx, "v2balanced_candidate_stage"] = v2_stage
         df.at[idx, "v2balanced_stage_reason"] = v2_stage_reason
+        semantic_readiness, readiness_reason = _semantic_readiness_from_candidate(df.loc[idx].to_dict())
+        df.at[idx, "v2balanced_semantic_readiness"] = semantic_readiness
+        df.at[idx, "v2balanced_readiness_reason"] = readiness_reason
     df.to_csv(csv_path, index=False)
     
     current_count = len(candidates)
@@ -692,6 +808,12 @@ async def run_forward_monitor():
                 ]
             ]
             v2_stage_counts = df["v2balanced_candidate_stage"].fillna("NO_SETUP").replace("", "NO_SETUP").value_counts()
+            ready_legacy_reason_counts = (
+                df[df["v2balanced_candidate_stage"].fillna("") == "READY_LEGACY"]["v2balanced_stage_reason"]
+                .fillna("unknown")
+                .replace("", "unknown")
+                .value_counts()
+            )
             stage_by_layer5_watch = pd.crosstab(
                 df["layer5_watch_status"].fillna("NONE").replace("", "NONE"),
                 df["v2balanced_candidate_stage"].fillna("NO_SETUP").replace("", "NO_SETUP"),
@@ -703,6 +825,19 @@ async def run_forward_monitor():
             stage_by_v2_action_status = pd.crosstab(
                 df["v2_action_status"].fillna("UNKNOWN").replace("", "UNKNOWN"),
                 df["v2balanced_candidate_stage"].fillna("NO_SETUP").replace("", "NO_SETUP"),
+            )
+            semantic_readiness_counts = df["v2balanced_semantic_readiness"].fillna("NO_SETUP").replace("", "NO_SETUP").value_counts()
+            readiness_by_v2_action_status = pd.crosstab(
+                df["v2_action_status"].fillna("UNKNOWN").replace("", "UNKNOWN"),
+                df["v2balanced_semantic_readiness"].fillna("NO_SETUP").replace("", "NO_SETUP"),
+            )
+            readiness_by_layer5_watch = pd.crosstab(
+                df["layer5_watch_status"].fillna("NONE").replace("", "NONE"),
+                df["v2balanced_semantic_readiness"].fillna("NO_SETUP").replace("", "NO_SETUP"),
+            )
+            ready_legacy_vs_semantic = pd.crosstab(
+                df["v2balanced_candidate_stage"].fillna("NO_SETUP").replace("", "NO_SETUP"),
+                df["v2balanced_semantic_readiness"].fillna("NO_SETUP").replace("", "NO_SETUP"),
             )
             directional_coverage = {
                 "price_change_15m": _populated_count(df, "price_change_15m"),
@@ -799,6 +934,9 @@ async def run_forward_monitor():
             f.write("### v2balanced Candidate Stage Distribution\n")
             f.write(v2_stage_counts.to_markdown() if not v2_stage_counts.empty else "No v2balanced stage labels yet.")
             f.write("\n\n")
+            f.write("### READY_LEGACY Reason Breakdown\n")
+            f.write(ready_legacy_reason_counts.to_markdown() if not ready_legacy_reason_counts.empty else "No READY_LEGACY rows yet.")
+            f.write("\n\n")
             f.write("### Stage by Layer5 Watch Status\n")
             f.write(stage_by_layer5_watch.to_markdown() if not stage_by_layer5_watch.empty else "No stage/watch cross-tab yet.")
             f.write("\n\n")
@@ -807,6 +945,18 @@ async def run_forward_monitor():
             f.write("\n\n")
             f.write("### Stage by v2 Action Status\n")
             f.write(stage_by_v2_action_status.to_markdown() if not stage_by_v2_action_status.empty else "No stage/action cross-tab yet.")
+            f.write("\n\n")
+            f.write("### Semantic Readiness Distribution\n")
+            f.write(semantic_readiness_counts.to_markdown() if not semantic_readiness_counts.empty else "No semantic readiness labels yet.")
+            f.write("\n\n")
+            f.write("### Readiness by v2 Action Status\n")
+            f.write(readiness_by_v2_action_status.to_markdown() if not readiness_by_v2_action_status.empty else "No readiness/action cross-tab yet.")
+            f.write("\n\n")
+            f.write("### Readiness by Layer5 Watch Status\n")
+            f.write(readiness_by_layer5_watch.to_markdown() if not readiness_by_layer5_watch.empty else "No readiness/watch cross-tab yet.")
+            f.write("\n\n")
+            f.write("### Ready Legacy vs Semantic Readiness\n")
+            f.write(ready_legacy_vs_semantic.to_markdown() if not ready_legacy_vs_semantic.empty else "No legacy/readiness cross-tab yet.")
             f.write("\n\n")
 
             f.write("## 10. Directional Primitive Coverage\n")
