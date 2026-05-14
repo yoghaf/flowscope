@@ -170,6 +170,28 @@ export interface FlowMetrics {
   market_pressure_1h: number | null;
   market_pressure_4h: number | null;
   market_pressure_24h: number | null;
+  oi_alignment_status_15m?: string;
+  oi_delta_reliable_15m?: boolean;
+  funding_timestamp_15m?: string | null;
+  funding_source_15m?: string;
+  funding_age_seconds_15m?: number | null;
+  funding_reliable_15m?: boolean;
+  liquidation_source_15m?: string;
+  liquidation_age_seconds_15m?: number | null;
+  taker_ratio_source_15m?: string;
+  taker_ratio_age_seconds_15m?: number | null;
+  long_short_ratio_source_15m?: string;
+  long_short_ratio_age_seconds_15m?: number | null;
+  fallback_fields_15m?: string[];
+  data_quality_status_15m?: string;
+  hard_filter_reasons?: string[] | string;
+  block_reasons?: string[] | string;
+  scenario_label?: string;
+  scenario_disposition?: string;
+  final_entry_permission?: string;
+  final_structural_permission?: string;
+  efficient_build_quality?: string;
+  efficient_build_quality_reason?: string;
 }
 
 export interface ScoreBreakdown {
@@ -248,6 +270,23 @@ export interface AssetSnapshot {
   short_liquidations: number | null;
   flow_metrics: FlowMetrics;
   score: number;
+  data_quality_score?: number;
+  data_quality_status?: string;
+  stale_fields?: string[];
+  missing_fields?: string[];
+  fallback_fields?: string[];
+  funding_age_seconds?: number | null;
+  funding_source?: string;
+  liquidation_age_seconds?: number | null;
+  liquidation_source?: string;
+  final_entry_permission?: string;
+  hard_filter_reasons?: string[] | string;
+  block_reasons?: string[] | string;
+  scenario_label?: string;
+  scenario_disposition?: string;
+  final_structural_permission?: string;
+  efficient_build_quality?: string;
+  efficient_build_quality_reason?: string;
   signal: SignalType;
   signal_status: SignalStatus;
   data_status: DataStatus;

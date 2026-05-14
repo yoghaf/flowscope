@@ -140,3 +140,66 @@ export function getVolumeChange(asset: AssetSnapshot, timeframe: Timeframe): num
   }
   return toNumberOrNull(asset.flow_metrics?.volume_change_1h);
 }
+
+function flowValue(asset: AssetSnapshot, field: string): unknown {
+  return (asset.flow_metrics as unknown as Record<string, unknown> | undefined)?.[field];
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+export function normalizeReasonList(value: string[] | string | null | undefined): string[] {
+  if (Array.isArray(value)) {
+    return value.map(String).filter(Boolean);
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+export function getDqStatus(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string {
+  return (
+    stringOrNull(flowValue(asset, `data_quality_status_${timeframe}`)) ??
+    stringOrNull(asset.data_quality_status) ??
+    asset.data_status ??
+    "UNKNOWN"
+  );
+}
+
+export function getFallbackFields(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string[] {
+  const timeframeFields = flowValue(asset, `fallback_fields_${timeframe}`);
+  if (Array.isArray(timeframeFields)) {
+    return timeframeFields.map(String).filter(Boolean);
+  }
+  return normalizeReasonList(asset.fallback_fields);
+}
+
+export function formatAge(seconds: number | null | undefined): string {
+  const numeric = toNumberOrNull(seconds);
+  if (numeric === null) {
+    return "--";
+  }
+  if (numeric < 1) {
+    return "<1s";
+  }
+  if (numeric < 60) {
+    return `${Math.round(numeric)}s`;
+  }
+  if (numeric < 3600) {
+    return `${Math.round(numeric / 60)}m`;
+  }
+  return `${(numeric / 3600).toFixed(1)}h`;
+}
+
+export function isReliable(value: unknown): boolean {
+  return value === true || value === "true" || value === "reliable" || value === "ALIGNED";
+}
+
+export function getProvenanceValue(asset: AssetSnapshot, field: string, timeframe: Timeframe): unknown {
+  return flowValue(asset, `${field}_${timeframe}`) ?? (asset as unknown as Record<string, unknown>)[field];
+}

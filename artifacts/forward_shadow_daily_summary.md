@@ -1,6 +1,6 @@
 # Forward Shadow Daily Summary
 
-**Report Generated**: 2026-05-14 02:27:23 UTC
+**Report Generated**: 2026-05-14 02:37:26 UTC
 
 > [!IMPORTANT]
 > **Monitor Scope Notice**:
@@ -9,24 +9,24 @@
 > - Zero current observations simply means no symbols are currently in a Continuation setup; it does NOT mean the pipeline is failing.
 
 ## 0. Pipeline Status & Metadata
-- **v2 Buckets in DB**: 48258
+- **v2 Buckets in DB**: 48660
 - **v2 Symbols Tracked**: 222
-- **Latest Data Timestamp**: 2026-05-14 02:27:15.184495+00:00
+- **Latest Data Timestamp**: 2026-05-14 02:37:20.056012+00:00
 - **Active State Window**: 10 minutes
-- **Active States Scanned**: 122
-- **Stale States Ignored**: 100
-- **Current Run Observations**: 4
-- **Total Logged Observations**: 7
+- **Active States Scanned**: 120
+- **Stale States Ignored**: 102
+- **Current Run Observations**: 1
+- **Total Logged Observations**: 8
 
 ## 1. Candidate Volume & Disposition
-- **Total Continuation Candidates**: 7
+- **Total Continuation Candidates**: 8
 - **Baseline ALLOW**: 1
-- **Baseline BLOCK**: 6
+- **Baseline BLOCK**: 7
 
 ## 2. Efficient Build Quality Distribution
 | efficient_build_quality   |   count |
 |:--------------------------|--------:|
-| WAIT                      |       5 |
+| WAIT                      |       6 |
 | REDUCE_OR_WAIT            |       2 |
 
 ## 3. WAIT Reason Breakdown (Quality)
@@ -34,16 +34,17 @@
 |:---------------------------------|--------:|
 | non_efficient_or_mixed           |       5 |
 | extreme_crowding                 |       2 |
+| taker_price_divergence           |       1 |
 
 ## 4. Scenario Label Distribution
 | scenario_label   |   count |
 |:-----------------|--------:|
-| mixed_context    |       7 |
+| mixed_context    |       8 |
 
 ## 5. Scenario Disposition Breakdown
 | scenario_disposition   |   count |
 |:-----------------------|--------:|
-| observe                |       7 |
+| observe                |       8 |
 
 ## 6. Structural Shadow Conflict Matrix
 | Combination | Count | Description |
@@ -56,10 +57,10 @@
 ## 7. Top Baseline Block Reasons (Hard Filters)
 | hard_filter_reasons   |   count |
 |:----------------------|--------:|
-| mixed_context_blocked |       6 |
-| scenario_not_allow    |       6 |
-| oi_delta_unreliable   |       6 |
-| exhaustion_oi_climax  |       4 |
+| mixed_context_blocked |       7 |
+| scenario_not_allow    |       7 |
+| oi_delta_unreliable   |       7 |
+| exhaustion_oi_climax  |       5 |
 
 ## 8. Top Structural Block Reasons
 | structural_block_reason     |   count |
@@ -67,21 +68,21 @@
 | volatile_noise_no_structure |       3 |
 
 ## 9. Data Integrity Metrics
-- **Foundation Versions**: {'v2_option_a': 7}
-- **OI Reliability**: {False: 7}
-- **Z-Score Status**: {'NORMAL': 4, 'FLAT_BASELINE': 3}
+- **Foundation Versions**: {'v2_option_a': 8}
+- **OI Reliability**: {False: 8}
+- **Z-Score Status**: {'NORMAL': 5, 'FLAT_BASELINE': 3}
 
 ## 10. Crowding & Sentiment Status
 | crowding_status      |   count |
 |:---------------------|--------:|
 | crowded_long         |       5 |
-| extreme_crowded_long |       2 |
+| extreme_crowded_long |       3 |
 
 ## 11. Regime & Expansion Diagnostics
 ### Expansion Subtypes
 | expansion_subtype   |   count |
 |:--------------------|--------:|
-| unknown_expansion   |       4 |
+| unknown_expansion   |       5 |
 | volatile_expansion  |       3 |
 
 ### Regime Warnings
@@ -92,4 +93,4 @@
 ## 12. Compression Status
 | compression_type   |   count |
 |:-------------------|--------:|
-| no_compression     |       7 |
+| no_compression     |       8 |

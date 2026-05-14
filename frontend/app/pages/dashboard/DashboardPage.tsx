@@ -14,7 +14,18 @@ import {
 import CoinTable from "@/app/components/CoinTable";
 import MetricCard from "@/app/components/MetricCard";
 import { api } from "@/lib/api";
-import { formatFundingRate, formatPercent, shortSymbol, toNumberOrNull } from "@/lib/formatters";
+import { formatFundingRate, formatPercent, getDqStatus, shortSymbol, toNumberOrNull } from "@/lib/formatters";
+
+function dqTone(status: string): string {
+  const normalized = status.toUpperCase();
+  if (normalized === "FRESH") {
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
+  }
+  if (["PARTIAL", "STALE", "FALLBACK_ONLY"].includes(normalized)) {
+    return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+  }
+  return "border-red-500/20 bg-red-500/10 text-red-300";
+}
 
 function getDashboardRefreshMs(): number {
   return 30_000;
@@ -133,6 +144,9 @@ export default function DashboardPage() {
                   <span className="font-semibold text-emerald-400">
                     {formatPercent(coin.flow_metrics.oi_change_1h)}
                   </span>
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${dqTone(getDqStatus(coin, coin.timeframe))}`}>
+                    {getDqStatus(coin, coin.timeframe)}
+                  </span>
                 </Link>
               ))}
             </div>
@@ -204,6 +218,9 @@ export default function DashboardPage() {
                         }
                       >
                         {formatFundingRate(fundingRate)}
+                      </span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${dqTone(getDqStatus(coin, coin.timeframe))}`}>
+                        {getDqStatus(coin, coin.timeframe)}
                       </span>
                     </Link>
                   );

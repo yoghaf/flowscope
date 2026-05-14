@@ -13,11 +13,17 @@ import {
 } from "@/app/components/Charts";
 import { api } from "@/lib/api";
 import {
+  formatAge,
   formatCompactNumber,
   formatFundingRate,
   formatPercent,
   formatPrice,
   formatRatio,
+  getDqStatus,
+  getFallbackFields,
+  getProvenanceValue,
+  isReliable,
+  normalizeReasonList,
   shortSymbol,
   toNumberOrNull,
 } from "@/lib/formatters";
@@ -149,6 +155,50 @@ function MetricRow({
   );
 }
 
+function dqTone(status: string): string {
+  const normalized = status.toUpperCase();
+  if (["FRESH", "ALIGNED", "OK", "RELIABLE", "ALLOW"].includes(normalized)) {
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
+  }
+  if (["PARTIAL", "STALE", "FALLBACK_ONLY", "UNRELIABLE", "WATCHLIST", "PENALTY"].includes(normalized)) {
+    return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+  }
+  if (["MISSING", "NO_DATA", "INVALID", "BLOCK"].includes(normalized)) {
+    return "border-red-500/20 bg-red-500/10 text-red-300";
+  }
+  return "border-white/10 bg-white/5 text-slate-300";
+}
+
+function displaySource(value: unknown): string {
+  return typeof value === "string" && value.length > 0 ? value : "missing";
+}
+
+function ProvenanceCard({
+  title,
+  status,
+  lines,
+}: {
+  title: string;
+  status: string;
+  lines: string[];
+}) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+        <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${dqTone(status)}`}>
+          {status}
+        </span>
+      </div>
+      <div className="space-y-1 text-xs text-muted-foreground">
+        {lines.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function CoinDetailPage({ symbol }: { symbol: string }) {
   const searchParams = useSearchParams();
   const timeframeParam = searchParams.get("timeframe") as Timeframe | null;
@@ -250,6 +300,31 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
       : coin.data_status === "INSUFFICIENT_HISTORY"
         ? "border-amber-500/20 bg-amber-500/10 text-amber-300"
         : "border-red-500/20 bg-red-500/10 text-red-300";
+  const dqStatus = getDqStatus(coin, timeframeParam);
+  const fallbackFields = getFallbackFields(coin, timeframeParam);
+  const usingFrontendInterpretationFallback = !coin.market_interpretation;
+  const oiAlignment = displaySource(getProvenanceValue(coin, "oi_alignment_status", timeframeParam)).toUpperCase();
+  const oiReliable = isReliable(getProvenanceValue(coin, "oi_delta_reliable", timeframeParam));
+  const fundingSource = displaySource(getProvenanceValue(coin, "funding_source", timeframeParam));
+  const fundingAge = toNumberOrNull(getProvenanceValue(coin, "funding_age_seconds", timeframeParam));
+  const fundingReliable = isReliable(getProvenanceValue(coin, "funding_reliable", timeframeParam));
+  const liquidationSource = displaySource(getProvenanceValue(coin, "liquidation_source", timeframeParam));
+  const liquidationAge = toNumberOrNull(getProvenanceValue(coin, "liquidation_age_seconds", timeframeParam));
+  const takerRatioSource = displaySource(getProvenanceValue(coin, "taker_ratio_source", timeframeParam));
+  const takerRatioAge = toNumberOrNull(getProvenanceValue(coin, "taker_ratio_age_seconds", timeframeParam));
+  const longShortRatioSource = displaySource(getProvenanceValue(coin, "long_short_ratio_source", timeframeParam));
+  const longShortRatioAge = toNumberOrNull(getProvenanceValue(coin, "long_short_ratio_age_seconds", timeframeParam));
+  const hardFilterReasons = normalizeReasonList(
+    coin.hard_filter_reasons ?? coin.flow_metrics.hard_filter_reasons,
+  );
+  const blockReasons = normalizeReasonList(
+    coin.block_reasons ?? coin.flow_metrics.block_reasons,
+  );
+  const scenarioLabel = coin.scenario_label ?? coin.flow_metrics.scenario_label ?? "unknown";
+  const scenarioDisposition = coin.scenario_disposition ?? coin.flow_metrics.scenario_disposition ?? "unknown";
+  const structuralPermission = coin.final_structural_permission ?? coin.flow_metrics.final_structural_permission ?? "NOT_APPLICABLE";
+  const efficientBuildQuality = coin.efficient_build_quality ?? coin.flow_metrics.efficient_build_quality ?? "UNKNOWN";
+  const efficientBuildReason = coin.efficient_build_quality_reason ?? coin.flow_metrics.efficient_build_quality_reason ?? "none";
 
   return (
     <div className="space-y-6">
@@ -282,6 +357,14 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
               <div className={`rounded-xl border px-4 py-2 text-sm font-semibold ${dataStatusTone}`}>
                 Data: {dataStatusLabel}
               </div>
+              <div className={`rounded-xl border px-4 py-2 text-sm font-semibold ${dqTone(dqStatus)}`}>
+                DQ: {dqStatus}
+              </div>
+              {usingFrontendInterpretationFallback ? (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-300">
+                  Frontend fallback interpretation
+                </div>
+              ) : null}
               <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-foreground">
                 {marketInterpretation.state}
               </div>
@@ -605,6 +688,82 @@ export default function CoinDetailPage({ symbol }: { symbol: string }) {
 
       <div className="rounded-2xl border border-white/10 bg-card/50 p-6 backdrop-blur-xl transition-all hover:border-white/20">
         <h3 className="mb-5 text-lg font-semibold text-foreground">Flow Metrics Deep Dive</h3>
+        <div className="mb-6 rounded-xl border border-white/10 bg-white/5 p-4">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Data Provenance</p>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${dqTone(dqStatus)}`}>
+              DQ {dqStatus}
+            </span>
+            <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${dqTone(structuralPermission)}`}>
+              Structural {structuralPermission}
+            </span>
+            <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${dqTone(coin.final_entry_permission ?? "UNKNOWN")}`}>
+              Entry {coin.final_entry_permission ?? "UNKNOWN"}
+            </span>
+            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-300">
+              Scenario {scenarioLabel} / {scenarioDisposition}
+            </span>
+            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-300">
+              Efficient {efficientBuildQuality}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <ProvenanceCard
+              title="OI"
+              status={oiReliable && oiAlignment === "ALIGNED" ? "ALIGNED" : "UNRELIABLE"}
+              lines={[
+                `alignment: ${oiAlignment}`,
+                `reliable: ${oiReliable ? "true" : "false"}`,
+              ]}
+            />
+            <ProvenanceCard
+              title="Funding"
+              status={fundingReliable ? "RELIABLE" : "UNRELIABLE"}
+              lines={[
+                `source: ${fundingSource}`,
+                `age: ${formatAge(fundingAge)}`,
+                `reliable: ${fundingReliable ? "true" : "false"}`,
+              ]}
+            />
+            <ProvenanceCard
+              title="Liquidation"
+              status={liquidationSource === "missing" ? "MISSING" : "FRESH"}
+              lines={[
+                `source: ${liquidationSource}`,
+                `age: ${formatAge(liquidationAge)}`,
+              ]}
+            />
+            <ProvenanceCard
+              title="Taker Ratio"
+              status={fallbackFields.includes("taker_ratio") ? "FALLBACK_ONLY" : "FRESH"}
+              lines={[
+                `source: ${takerRatioSource}`,
+                `age: ${formatAge(takerRatioAge)}`,
+              ]}
+            />
+            <ProvenanceCard
+              title="L/S Ratio"
+              status={fallbackFields.some((field) => field === "ls_ratio" || field === "long_short_ratio") ? "FALLBACK_ONLY" : "FRESH"}
+              lines={[
+                `source: ${longShortRatioSource}`,
+                `age: ${formatAge(longShortRatioAge)}`,
+              ]}
+            />
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-3 text-xs text-muted-foreground md:grid-cols-2">
+            <div>
+              <p className="mb-2 font-semibold uppercase tracking-wider text-muted-foreground">Fallback Fields</p>
+              <p>{fallbackFields.length > 0 ? fallbackFields.join(", ") : "none"}</p>
+            </div>
+            <div>
+              <p className="mb-2 font-semibold uppercase tracking-wider text-muted-foreground">Hard Filters</p>
+              <p>{hardFilterReasons.length > 0 ? hardFilterReasons.join(", ") : blockReasons.length > 0 ? blockReasons.join(", ") : "none"}</p>
+              <p className="mt-1">efficient reason: {efficientBuildReason}</p>
+            </div>
+          </div>
+        </div>
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/* ── Price & Momentum ── */}
           <div className="rounded-xl border border-white/10 bg-white/5 p-4">

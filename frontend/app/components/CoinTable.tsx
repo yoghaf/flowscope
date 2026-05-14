@@ -6,8 +6,12 @@ import {
   formatPercent,
   formatPrice,
   formatRatio,
+  getDqStatus,
+  getFallbackFields,
   getOiChange,
+  getProvenanceValue,
   getVolumeChange,
+  isReliable,
   scoreToPercent,
   shortSymbol,
   toNumberOrNull,
@@ -18,6 +22,20 @@ interface CoinTableProps {
   rows: AssetSnapshot[];
   timeframe: Timeframe;
   variant?: "dashboard" | "scanner";
+}
+
+function dqTone(status: string): string {
+  const normalized = status.toUpperCase();
+  if (["FRESH", "ALIGNED", "OK", "RELIABLE"].includes(normalized)) {
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
+  }
+  if (["PARTIAL", "STALE", "FALLBACK_ONLY", "UNRELIABLE"].includes(normalized)) {
+    return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+  }
+  if (["MISSING", "NO_DATA", "INVALID"].includes(normalized)) {
+    return "border-red-500/20 bg-red-500/10 text-red-300";
+  }
+  return "border-white/10 bg-white/5 text-slate-300";
 }
 
 export default function CoinTable({
@@ -72,6 +90,10 @@ export default function CoinTable({
             const score = scoreToPercent(coin.score);
             const fundingRate = toNumberOrNull(coin.funding_rate);
             const coinTimeframe = coin.timeframe ?? timeframe;
+            const dqStatus = getDqStatus(coin, timeframe);
+            const fallbackFields = getFallbackFields(coin, timeframe);
+            const oiReliable = isReliable(getProvenanceValue(coin, "oi_delta_reliable", timeframe));
+            const fundingReliable = isReliable(getProvenanceValue(coin, "funding_reliable", timeframe));
 
             return (
               <tr key={coin.symbol} className="group border-b border-white/5 transition-colors hover:bg-white/5">
@@ -141,7 +163,25 @@ export default function CoinTable({
                   </div>
                 </td>
                 <td className="px-6 py-4">
-                  <SignalBadge signal={coin.signal} status={coin.signal_status} dataStatus={coin.data_status} />
+                  <div className="flex flex-col items-start gap-1.5">
+                    <SignalBadge signal={coin.signal} status={coin.signal_status} dataStatus={coin.data_status} />
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${dqTone(dqStatus)}`}>
+                        DQ {dqStatus}
+                      </span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${dqTone(oiReliable ? "RELIABLE" : "UNRELIABLE")}`}>
+                        OI {oiReliable ? "OK" : "UNREL"}
+                      </span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${dqTone(fundingReliable ? "RELIABLE" : "UNRELIABLE")}`}>
+                        FUND {fundingReliable ? "OK" : "UNREL"}
+                      </span>
+                      {fallbackFields.length > 0 ? (
+                        <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+                          FB {fallbackFields.length}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
                 </td>
               </tr>
             );

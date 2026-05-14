@@ -1,11 +1,16 @@
 import Link from "next/link";
 
 import {
+  formatAge,
   formatFundingRate,
   formatPercent,
   formatPrice,
   formatRatio,
+  getDqStatus,
+  getFallbackFields,
   shortSymbol,
+  getProvenanceValue,
+  isReliable,
   toNumberOrNull,
 } from "@/lib/formatters";
 import {
@@ -124,6 +129,24 @@ function formatZ(value: number | null): string {
   return numeric.toFixed(2);
 }
 
+function dqTone(status: string): string {
+  const normalized = status.toUpperCase();
+  if (["FRESH", "ALIGNED", "OK", "RELIABLE"].includes(normalized)) {
+    return "text-emerald-300 border-emerald-500/30 bg-emerald-500/10";
+  }
+  if (["PARTIAL", "STALE", "FALLBACK_ONLY", "UNRELIABLE"].includes(normalized)) {
+    return "text-amber-300 border-amber-500/30 bg-amber-500/10";
+  }
+  if (["MISSING", "NO_DATA", "INVALID"].includes(normalized)) {
+    return "text-red-300 border-red-500/30 bg-red-500/10";
+  }
+  return "text-slate-300 border-white/10 bg-white/5";
+}
+
+function compactSource(value: unknown): string {
+  return typeof value === "string" && value.length > 0 ? value : "missing";
+}
+
 export default function MarketStateCard({ asset, timeframe, setupStats }: MarketStateCardProps) {
   const marketInterpretation = getMarketInterpretation(asset, timeframe);
   const action = buildActionLayer(asset, timeframe);
@@ -133,18 +156,19 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
   const decision = asset.decision_type ?? "No-Trade";
   const stateStyle = QUALITY_STYLES[quality] ?? QUALITY_STYLES.Unknown;
   const confidence = Math.round(getOpportunityScore(asset, timeframe) * 100);
-  const dataStatusLabel =
-    asset.data_status === "INSUFFICIENT_HISTORY"
-      ? "Insufficient History"
-      : asset.data_status === "NO_DATA"
-        ? "No Data"
-        : "Valid";
-  const dataStatusTone =
-    asset.data_status === "VALID"
-      ? "text-emerald-300 border-emerald-500/30 bg-emerald-500/10"
-      : asset.data_status === "INSUFFICIENT_HISTORY"
-        ? "text-amber-300 border-amber-500/30 bg-amber-500/10"
-        : "text-red-300 border-red-500/30 bg-red-500/10";
+  const dqStatus = getDqStatus(asset, timeframe);
+  const fallbackFields = getFallbackFields(asset, timeframe);
+  const oiAlignment = compactSource(getProvenanceValue(asset, "oi_alignment_status", timeframe)).toUpperCase();
+  const oiReliable = isReliable(getProvenanceValue(asset, "oi_delta_reliable", timeframe));
+  const fundingSource = compactSource(getProvenanceValue(asset, "funding_source", timeframe));
+  const fundingReliable = isReliable(getProvenanceValue(asset, "funding_reliable", timeframe));
+  const fundingAge = toNumberOrNull(getProvenanceValue(asset, "funding_age_seconds", timeframe));
+  const liquidationSource = compactSource(getProvenanceValue(asset, "liquidation_source", timeframe));
+  const takerSource = compactSource(getProvenanceValue(asset, "taker_ratio_source", timeframe));
+  const longShortSource = compactSource(getProvenanceValue(asset, "long_short_ratio_source", timeframe));
+  const ratioFallback = fallbackFields.some((field) =>
+    ["taker_ratio", "ls_ratio", "long_short_ratio"].includes(field),
+  );
 
   const priceChange = metricForTimeframe(asset, "price_change", timeframe);
   const fundingTrend = metricForTimeframe(asset, "funding_trend", timeframe);
@@ -264,8 +288,8 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${dataStatusTone}`}>
-            Data: {dataStatusLabel}
+          <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${dqTone(dqStatus)}`}>
+            DQ: {dqStatus}
           </span>
           <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${biasTone}`}>
             Trend: {marketInterpretation.trend}
@@ -282,6 +306,26 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
           <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${confidenceTone}`}>
             Confidence: {action.confidenceLabel}
           </span>
+        </div>
+
+        <div className="flex flex-wrap gap-2 text-[11px]">
+          <span className={`rounded-full border px-2.5 py-1 font-semibold uppercase tracking-wide ${dqTone(oiReliable && oiAlignment === "ALIGNED" ? "ALIGNED" : "UNRELIABLE")}`}>
+            OI {oiAlignment}
+          </span>
+          <span className={`rounded-full border px-2.5 py-1 font-semibold uppercase tracking-wide ${dqTone(fundingReliable ? "RELIABLE" : "UNRELIABLE")}`}>
+            Funding {fundingSource} {formatAge(fundingAge)}
+          </span>
+          <span className={`rounded-full border px-2.5 py-1 font-semibold uppercase tracking-wide ${dqTone(liquidationSource === "missing" ? "MISSING" : "FRESH")}`}>
+            Liq {liquidationSource}
+          </span>
+          <span className={`rounded-full border px-2.5 py-1 font-semibold uppercase tracking-wide ${dqTone(ratioFallback ? "FALLBACK_ONLY" : "FRESH")}`}>
+            Ratio {ratioFallback ? "FALLBACK" : "OK"}
+          </span>
+          {fallbackFields.slice(0, 3).map((field) => (
+            <span key={field} className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 font-semibold uppercase tracking-wide text-amber-300">
+              {field}
+            </span>
+          ))}
         </div>
 
         <div className="rounded-xl border border-white/10 bg-white/5 p-4">
@@ -447,6 +491,7 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
             <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Ratios</p>
             <p className="font-semibold text-foreground">Taker {formatRatio(takerRatio)}</p>
             <p className="mt-1 text-[10px] text-muted-foreground">L/S {formatRatio(longShortRatio)}</p>
+            <p className="mt-1 text-[10px] text-muted-foreground">Src {takerSource} / {longShortSource}</p>
           </div>
         </div>
       </div>
