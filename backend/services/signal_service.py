@@ -749,6 +749,10 @@ class SignalService:
                         if has_stream_funding
                         else ("carry_forward" if current.funding_rate_updated_at is not None else "missing")
                     ),
+                    long_short_ratio_updated_at=current.long_short_ratio_updated_at,
+                    taker_buy_sell_ratio_updated_at=current.taker_buy_sell_ratio_updated_at,
+                    long_short_ratio_source=current.long_short_ratio_source,
+                    taker_ratio_source=current.taker_ratio_source,
                 )
                 self.history[snapshot.symbol].append(point)
                 ingest_result = self.aggregate_store.ingest(snapshot.symbol, point, self.collectors[0]._oi_history)
@@ -1771,6 +1775,9 @@ class SignalService:
                     action_confidence_label=action.confidence_label,
                     action_opportunity_score=action.opportunity_score,
                     setup_type=action.setup_type,
+                    scenario_label=scenario.label,
+                    scenario_score=scenario.score,
+                    scenario_disposition=scenario.disposition,
                     market_interpretation=interpretation_payload,
                     previous_state=previous_state,
                 )
@@ -1874,6 +1881,9 @@ class SignalService:
                     action_opportunity_score=action.opportunity_score,
                     setup_type=action.setup_type,
                     execution=execution,
+                    scenario_label=scenario.label,
+                    scenario_score=scenario.score,
+                    scenario_disposition=scenario.disposition,
                     market_interpretation=interpretation_payload,
                     previous_state=previous_state,
                 )
@@ -2701,6 +2711,9 @@ class SignalService:
         action_opportunity_score: float | None = None,
         setup_type: str | None = None,
         execution: ExecutionPlan | None = None,
+        scenario_label: str | None = None,
+        scenario_score: float | None = None,
+        scenario_disposition: str | None = None,
         market_interpretation: dict[str, Any] | None = None,
         previous_state: AssetState | None = None,
     ) -> AssetState:
@@ -2947,6 +2960,9 @@ class SignalService:
             action_opportunity_score=action_opportunity_score if action_opportunity_score is not None else previous_state.action_opportunity_score if previous_state is not None else None,
             setup_type=setup_type,
             execution=execution,
+            scenario_label=scenario_label if scenario_label is not None else "mixed_context",
+            scenario_score=scenario_score if scenario_score is not None else 0.0,
+            scenario_disposition=scenario_disposition if scenario_disposition is not None else "observe",
             exchange_count=exchange_count,
             tf_conflict=False,
             market_interpretation=market_interpretation

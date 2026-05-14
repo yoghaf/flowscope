@@ -124,7 +124,7 @@ class Settings(BaseSettings):
     medium_vol_threshold: float = 0.008  # 0.8% ATR/price
 
     exchange_timeout_seconds: float = 12.0
-    exchange_request_concurrency: int = 12
+    exchange_request_concurrency: int = 8
     websocket_ping_interval: int = 20
     realtime_price_stream_enabled: bool = True
     snapshot_interval_seconds: int = 300
@@ -302,7 +302,11 @@ class Settings(BaseSettings):
     entry_signal_candle_confirmed_only: bool = False
 
     # Staged collector settings
-    oi_batch_size: int = 100          # OI symbols per rotary cycle (weight 1 each)
+    oi_batch_size: int = 40          # OI symbols per rotary cycle (weight 1 each)
+    oi_poll_interval_seconds: int = 30
+    oi_request_concurrency: int = 4
+    oi_429_backoff_seconds: float = 60.0
+    oi_429_backoff_jitter_seconds: float = 15.0
     ratio_batch_size: int = 10       # L/S ratio symbols per cycle (weight 5 each)
     taker_batch_size: int = 10       # Taker ratio symbols per cycle (weight 5 each)
     volume_batch_size: int = 50      # Symbols per live kline-volume refresh cycle

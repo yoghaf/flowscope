@@ -14,6 +14,8 @@ from backend.database import DatabaseManager
 from backend.models import LatestAssetState, MarketDataBucket
 from sqlalchemy import select, func
 
+ACTIVE_STATE_WINDOW_MINUTES = 10
+
 async def run_forward_monitor():
     settings = get_settings()
     db_manager = DatabaseManager(settings)
@@ -33,6 +35,8 @@ async def run_forward_monitor():
     v2_count = 0
     v2_symbols = 0
     latest_v2 = None
+    active_states_scanned = 0
+    stale_states_ignored = 0
 
     try:
         async with db_manager.session_factory() as session:
@@ -60,31 +64,38 @@ async def run_forward_monitor():
             if v2_count > 0:
                 # 2. Collect Continuation Candidates from Latest States
                 print("\nPolling latest asset states for Continuation candidates...")
-                
-                stmt = select(LatestAssetState)
+
+                active_cutoff = datetime.now(UTC) - timedelta(minutes=ACTIVE_STATE_WINDOW_MINUTES)
+                foundation_expr = LatestAssetState.snapshot["flow_metrics"]["foundation_version_15m"].as_string()
+
+                base_stmt = select(LatestAssetState).where(
+                    LatestAssetState.timeframe == "15m",
+                    foundation_expr == "v2_option_a",
+                )
+                base_count_res = await session.execute(
+                    select(func.count()).select_from(base_stmt.subquery())
+                )
+                eligible_state_count = base_count_res.scalar() or 0
+
+                stmt = base_stmt.where(LatestAssetState.updated_at > active_cutoff)
                 res = await session.execute(stmt)
                 snapshots = res.scalars().all()
+                active_states_scanned = len(snapshots)
+                stale_states_ignored = max(eligible_state_count - active_states_scanned, 0)
                 
                 for snap in snapshots:
                     data = snap.snapshot
                     if data.get("timeframe") != "15m": continue
+
+                    fm = data.get("flow_metrics", {})
+                    found_ver = fm.get(f"foundation_version_{snap.timeframe}", "unknown")
+                    if found_ver != "v2_option_a": continue
                     
                     # Filter for Continuation
                     setup = data.get("setup_type")
                     if setup != "Continuation": continue
                     
-                    # Check foundation version from latest bucket for this symbol
-                    bucket_stmt = select(MarketDataBucket.foundation_version).where(
-                        MarketDataBucket.symbol == snap.symbol,
-                        MarketDataBucket.timeframe == snap.timeframe
-                    ).order_by(MarketDataBucket.bucket_start.desc()).limit(1)
-                    b_res = await session.execute(bucket_stmt)
-                    found_ver = b_res.scalar() or "unknown"
-                    
-                    if found_ver != "v2_option_a": continue
-                    
                     # Extract fields
-                    fm = data.get("flow_metrics", {})
                     mi = data.get("market_interpretation", {})
                     ef = mi.get("entry_filters", {})
                     scenario_obj = data.get("scenario", {})
@@ -109,7 +120,8 @@ async def run_forward_monitor():
                         "symbol": snap.symbol,
                         "timeframe": snap.timeframe,
                         "foundation_version": found_ver,
-                      "oi_delta_reliable": fm.get(f"oi_delta_reliable_{snap.timeframe}", False),
+                        "data_quality_status": fm.get(f"data_quality_status_{snap.timeframe}"),
+                        "oi_delta_reliable": fm.get(f"oi_delta_reliable_{snap.timeframe}", False),
                         "zscore_baseline_status": fm.get(f"zscore_baseline_status_{snap.timeframe}", "NORMAL"),
                         "scenario_label": scenario_label,
                         "scenario_disposition": scenario_disposition,
@@ -144,7 +156,7 @@ async def run_forward_monitor():
 
     # 3. Export CSV (Always)
     df_cols = [
-        "timestamp", "symbol", "timeframe", "foundation_version", "oi_delta_reliable", 
+        "timestamp", "symbol", "timeframe", "foundation_version", "data_quality_status", "oi_delta_reliable", 
         "zscore_baseline_status", "scenario_label", "scenario_disposition", "setup_type", 
         "efficient_build_quality", "efficient_build_quality_reason", "scenario_reasons",
         "mode_c_risks", "mode_a_reasons", "block_reasons", "hard_filter_reasons",
@@ -189,6 +201,8 @@ async def run_forward_monitor():
     
     print(f"Current Run Observations: {current_count}")
     print(f"Total Logged Observations: {total_logged}")
+    print(f"Active States Scanned: {active_states_scanned}")
+    print(f"Stale States Ignored: {stale_states_ignored}")
     print(f"Output CSV Path:      {csv_path.absolute()}")
 
     # 4. Generate Summary (Always)
@@ -206,6 +220,9 @@ async def run_forward_monitor():
         f.write(f"- **v2 Buckets in DB**: {v2_count}\n")
         f.write(f"- **v2 Symbols Tracked**: {v2_symbols}\n")
         f.write(f"- **Latest Data Timestamp**: {latest_v2 if latest_v2 else 'None'}\n")
+        f.write(f"- **Active State Window**: {ACTIVE_STATE_WINDOW_MINUTES} minutes\n")
+        f.write(f"- **Active States Scanned**: {active_states_scanned}\n")
+        f.write(f"- **Stale States Ignored**: {stale_states_ignored}\n")
         f.write(f"- **Current Run Observations**: {current_count}\n")
         f.write(f"- **Total Logged Observations**: {total_logged}\n\n")
 

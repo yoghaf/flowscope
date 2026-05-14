@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from collections import defaultdict, deque
 from datetime import datetime, timezone, timedelta
 UTC = timezone.utc
@@ -112,6 +113,11 @@ class BinanceCollector(BaseCollector):
 
         # ── rotary state ──────────────────────────────────────────────
         self._oi_batch_size = getattr(settings, "oi_batch_size", 40)
+        self._oi_poll_interval_seconds = getattr(settings, "oi_poll_interval_seconds", 30)
+        self._oi_request_concurrency = getattr(settings, "oi_request_concurrency", 4)
+        self._oi_429_backoff_seconds = getattr(settings, "oi_429_backoff_seconds", 60.0)
+        self._oi_429_backoff_jitter_seconds = getattr(settings, "oi_429_backoff_jitter_seconds", 15.0)
+        self._oi_backoff_until: datetime | None = None
         self._ratio_batch_size = getattr(settings, "ratio_batch_size", 10)
         self._taker_batch_size = getattr(settings, "taker_batch_size", 10)
         self._volume_batch_size = getattr(settings, "volume_batch_size", 50)
@@ -285,7 +291,7 @@ class BinanceCollector(BaseCollector):
                 logger.debug("OI batch done: %d symbols", len(batch))
             except Exception as exc:
                 logger.error("OI rotary error: %s", exc)
-            await asyncio.sleep(15)  # 100 calls/15s = 400 calls/min
+            await asyncio.sleep(self._oi_poll_interval_seconds)
 
     async def _rotary_ratio_loop(self) -> None:
         """Fetch long/short ratio for a batch of symbols every ~60 seconds."""
@@ -368,15 +374,57 @@ class BinanceCollector(BaseCollector):
 
     async def _fetch_oi_batch(self, symbols: list[str]) -> None:
         """Fetch OI for a small batch (weight 1 per symbol)."""
-        semaphore = asyncio.Semaphore(self.settings.exchange_request_concurrency)
+        now = self.utcnow()
+        if self._oi_backoff_until and now < self._oi_backoff_until:
+            remaining = (self._oi_backoff_until - now).total_seconds()
+            logger.info(
+                "OI batch backoff active seconds=%.1f symbols=%d",
+                remaining,
+                len(symbols),
+            )
+            logger.info(
+                "OI batch success=0 fail=0 rate_limited=0 symbols=%d",
+                len(symbols),
+            )
+            return
+
+        semaphore = asyncio.Semaphore(self._oi_request_concurrency)
+        success = 0
+        fail = 0
+        rate_limited = 0
 
         async def fetch_one(symbol: str) -> None:
+            nonlocal success, fail, rate_limited
             async with semaphore:
+                current = self.utcnow()
+                if self._oi_backoff_until and current < self._oi_backoff_until:
+                    return
+
                 try:
                     response = await self.client.get(
                         f"{self.rest_url}{_FAPI_OPEN_INTEREST}",
                         params={"symbol": symbol},
                     )
+                    if response.status_code == 429:
+                        rate_limited += 1
+                        jitter = random.uniform(
+                            0.0,
+                            max(self._oi_429_backoff_jitter_seconds, 0.0),
+                        )
+                        backoff_seconds = max(self._oi_429_backoff_seconds, 0.0) + jitter
+                        backoff_until = self.utcnow() + timedelta(seconds=backoff_seconds)
+                        if (
+                            self._oi_backoff_until is None
+                            or backoff_until > self._oi_backoff_until
+                        ):
+                            self._oi_backoff_until = backoff_until
+                        logger.debug(
+                            "OI fetch rate limited %s; backing off until %s",
+                            symbol,
+                            self._oi_backoff_until.isoformat(),
+                        )
+                        return
+
                     response.raise_for_status()
                     data = response.json()
                     now = self.utcnow()
@@ -385,12 +433,21 @@ class BinanceCollector(BaseCollector):
                     self._oi_updated_at[symbol] = now
                     self._oi_source[symbol] = "open_interest_endpoint"
                     self._oi_history[symbol].append((now, val))
+                    success += 1
                     if len(self._oi_history[symbol]) % 100 == 0:
-                        logger.info("OI FETCH SUCCESS [%s]: val=%.2f", symbol, val)
+                        logger.debug("OI FETCH SUCCESS [%s]: val=%.2f", symbol, val)
                 except Exception as exc:
-                    logger.warning("OI fetch failed %s: %s", symbol, exc)
+                    fail += 1
+                    logger.debug("OI fetch failed %s: %s", symbol, exc)
 
         await asyncio.gather(*(fetch_one(s) for s in symbols))
+        logger.info(
+            "OI batch success=%d fail=%d rate_limited=%d symbols=%d",
+            success,
+            fail,
+            rate_limited,
+            len(symbols),
+        )
 
     async def _fetch_ratio_batch(self, symbols: list[str]) -> None:
         """Fetch global long/short ratio (weight 5 per symbol)."""
@@ -587,6 +644,7 @@ class BinanceCollector(BaseCollector):
                 open_interest=open_interest,
                 funding_rate=funding_rate,
                 long_short_ratio=long_short_ratio,
+                taker_buy_sell_ratio=taker_ratio,
                 long_liquidations=long_liq_delta,
                 short_liquidations=short_liq_delta,
                 
