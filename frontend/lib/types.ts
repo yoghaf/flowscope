@@ -190,6 +190,9 @@ export interface FlowMetrics {
   scenario_disposition?: string;
   final_entry_permission?: string;
   final_structural_permission?: string;
+  final_structural_permission_15m?: string;
+  structural_block_reason_15m?: string | null;
+  structural_warning_reason_15m?: string | null;
   efficient_build_quality?: string;
   efficient_build_quality_reason?: string;
 }
@@ -285,6 +288,8 @@ export interface AssetSnapshot {
   scenario_label?: string;
   scenario_disposition?: string;
   final_structural_permission?: string;
+  structural_block_reason?: string | null;
+  structural_warning_reason?: string | null;
   efficient_build_quality?: string;
   efficient_build_quality_reason?: string;
   signal: SignalType;

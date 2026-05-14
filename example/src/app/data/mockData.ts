@@ -12,6 +12,20 @@ export interface CoinData {
   longShortRatio: number;
   score: number;
   signal: SignalType;
+  bias?: 'Long' | 'Short' | 'Neutral' | 'Mixed';
+  setup?: string;
+  action?: string;
+  final_entry_permission?: 'ALLOW' | 'BLOCK' | 'WAIT';
+  scenario_disposition?: 'allow' | 'wait' | 'observe' | 'mixed_context';
+  dqStatus?: 'FRESH' | 'STALE' | 'FALLBACK' | 'DEGRADED';
+  dqCritical?: boolean;
+  requiredReliability?: boolean;
+  hard_filter_reasons?: string[];
+  structure?: string;
+  classifierTrace?: string[];
+  provenance?: string[];
+  interpretation?: string;
+  execution?: string;
 }
 
 export const coinData: CoinData[] = [
@@ -26,7 +40,7 @@ export const coinData: CoinData[] = [
     fundingRate: 0.01,
     longShortRatio: 1.2,
     score: 87,
-    signal: 'Accumulation'
+    signal: 'Accumulation', bias: 'Long', setup: 'Efficient build continuation', action: 'Prepare entry', final_entry_permission: 'ALLOW', scenario_disposition: 'allow', dqStatus: 'FRESH', requiredReliability: true, hard_filter_reasons: [], structure: 'Higher low with OI build', classifierTrace: ['Trend aligned', 'Flow supportive'], provenance: ['OI OK', 'Funding OK', 'Liq OK'], interpretation: 'Constructive long setup with acceptable execution conditions.', execution: 'Trade only on planned pullback/trigger.'
   },
   {
     symbol: 'ETH',
@@ -39,7 +53,7 @@ export const coinData: CoinData[] = [
     fundingRate: 0.015,
     longShortRatio: 1.4,
     score: 92,
-    signal: 'Breakout'
+    signal: 'Breakout', bias: 'Long', setup: 'Breakout continuation', action: 'Prepare entry', final_entry_permission: 'ALLOW', scenario_disposition: 'allow', dqStatus: 'FRESH', requiredReliability: true, hard_filter_reasons: [], structure: 'Range break with follow-through', classifierTrace: ['Breakout confirmed', 'Volume expansion'], provenance: ['OI OK', 'Funding OK', 'Ratio OK'], interpretation: 'Breakout is actionable while structure remains intact.', execution: 'Avoid chasing extended candle; use invalidation.'
   },
   {
     symbol: 'SOL',
@@ -52,7 +66,7 @@ export const coinData: CoinData[] = [
     fundingRate: -0.02,
     longShortRatio: 0.75,
     score: 68,
-    signal: 'Short Squeeze'
+    signal: 'Short Squeeze', bias: 'Mixed', setup: 'Mixed context squeeze', action: 'Wait', final_entry_permission: 'ALLOW', scenario_disposition: 'observe', dqStatus: 'FRESH', requiredReliability: true, hard_filter_reasons: ['mixed_context_blocked'], structure: 'Compression without clean direction', classifierTrace: ['Squeeze detected', 'Context mixed'], provenance: ['OI OK', 'Funding OK'], interpretation: 'Potential squeeze, but context is mixed.', execution: 'Wait for directional confirmation.'
   },
   {
     symbol: 'ARB',
@@ -65,7 +79,7 @@ export const coinData: CoinData[] = [
     fundingRate: 0.008,
     longShortRatio: 1.1,
     score: 78,
-    signal: 'Accumulation'
+    signal: 'Accumulation', bias: 'Long', setup: 'Structural watchlist', action: 'Watchlist', final_entry_permission: 'WAIT', scenario_disposition: 'wait', dqStatus: 'FRESH', requiredReliability: true, hard_filter_reasons: [], structure: 'Base forming', classifierTrace: ['Accumulation present', 'Trigger incomplete'], provenance: ['OI OK', 'Volume OK'], interpretation: 'Interesting structure but no entry trigger yet.', execution: 'Set alert near confirmation level.'
   },
   {
     symbol: 'AVAX',
@@ -78,7 +92,7 @@ export const coinData: CoinData[] = [
     fundingRate: 0.005,
     longShortRatio: 1.0,
     score: 52,
-    signal: 'Neutral'
+    signal: 'Neutral', bias: 'Neutral', setup: 'No clear edge', action: 'Ignore', final_entry_permission: 'ALLOW', scenario_disposition: 'allow', dqStatus: 'FRESH', requiredReliability: true, hard_filter_reasons: [], structure: 'Choppy range', classifierTrace: ['No setup detected'], provenance: ['Market data OK'], interpretation: 'No tradable edge is present.', execution: 'Ignore until structure changes.'
   },
   {
     symbol: 'MATIC',
@@ -91,7 +105,7 @@ export const coinData: CoinData[] = [
     fundingRate: 0.012,
     longShortRatio: 1.3,
     score: 81,
-    signal: 'Watch'
+    signal: 'Watch', bias: 'Long', setup: 'Watchlist continuation', action: 'Watchlist', final_entry_permission: 'WAIT', scenario_disposition: 'wait', dqStatus: 'FRESH', requiredReliability: true, hard_filter_reasons: [], structure: 'Constructive but early', classifierTrace: ['Flow building', 'Trigger missing'], provenance: ['OI OK', 'Funding OK'], interpretation: 'Candidate for later, not tradable now.', execution: 'Wait for trigger.'
   },
   {
     symbol: 'LINK',
@@ -104,7 +118,7 @@ export const coinData: CoinData[] = [
     fundingRate: -0.015,
     longShortRatio: 0.85,
     score: 45,
-    signal: 'Neutral'
+    signal: 'Neutral', bias: 'Neutral', setup: 'No-Trade', action: 'Ignore', final_entry_permission: 'BLOCK', scenario_disposition: 'wait', dqStatus: 'STALE', dqCritical: true, requiredReliability: false, hard_filter_reasons: ['oi_delta_unreliable'], structure: 'No structure', classifierTrace: ['Data stale', 'No edge'], provenance: ['OI degraded'], interpretation: 'Data quality prevents a reliable decision.', execution: 'Do not trade.'
   },
   {
     symbol: 'UNI',
@@ -117,7 +131,7 @@ export const coinData: CoinData[] = [
     fundingRate: 0.018,
     longShortRatio: 1.6,
     score: 88,
-    signal: 'Breakout'
+    signal: 'Breakout', bias: 'Long', setup: 'Continuation pullback', action: 'Wait', final_entry_permission: 'BLOCK', scenario_disposition: 'wait', dqStatus: 'FRESH', requiredReliability: true, hard_filter_reasons: ['chasing_pump_candle'], structure: 'Extended impulse', classifierTrace: ['Breakout late', 'Pump risk'], provenance: ['OI OK', 'Liq OK'], interpretation: 'Move is extended; entry would be chasing.', execution: 'Wait for reset.'
   },
   {
     symbol: 'DOGE',
@@ -130,7 +144,7 @@ export const coinData: CoinData[] = [
     fundingRate: 0.007,
     longShortRatio: 1.15,
     score: 64,
-    signal: 'Watch'
+    signal: 'Watch', bias: 'Mixed', setup: 'Structural watchlist', action: 'Watchlist', final_entry_permission: 'WAIT', scenario_disposition: 'observe', dqStatus: 'DEGRADED', requiredReliability: true, hard_filter_reasons: [], structure: 'Meme flow unstable', classifierTrace: ['Watch only', 'Confirmation missing'], provenance: ['Funding degraded'], interpretation: 'Watch only because confirmation is incomplete.', execution: 'No entry until confirmation.'
   },
   {
     symbol: 'ADA',
@@ -143,7 +157,7 @@ export const coinData: CoinData[] = [
     fundingRate: -0.025,
     longShortRatio: 0.68,
     score: 72,
-    signal: 'Long Squeeze'
+    signal: 'Long Squeeze', bias: 'Short', setup: 'Squeeze reversal candidate', action: 'Wait', final_entry_permission: 'BLOCK', scenario_disposition: 'observe', dqStatus: 'FRESH', requiredReliability: true, hard_filter_reasons: ['exhaustion_oi_climax'], structure: 'Crowded downside risk', classifierTrace: ['Squeeze risk', 'OI climax'], provenance: ['OI OK', 'Funding extreme'], interpretation: 'Reversal risk is elevated, but exhaustion makes entry unsafe.', execution: 'Avoid until risk cools.'
   }
 ];
 
