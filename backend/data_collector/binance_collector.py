@@ -882,21 +882,33 @@ class BinanceCollector(BaseCollector):
                     key=lambda item: item[0],
                 )
 
-                def latest_series_value(series: list[tuple[int, float]], timestamp_ms: int, default: float) -> float:
-                    value = default
+                def latest_series_sample(
+                    series: list[tuple[int, float]],
+                    timestamp_ms: int,
+                ) -> tuple[int | None, float | None]:
+                    sample_ts: int | None = None
+                    value: float | None = None
                     for series_ts, series_value in series:
                         if series_ts <= timestamp_ms:
+                            sample_ts = series_ts
                             value = series_value
                         else:
                             break
-                    return value
+                    return sample_ts, value
+
+                def latest_series_value(series: list[tuple[int, float]], timestamp_ms: int, default: float) -> float:
+                    _, value = latest_series_sample(series, timestamp_ms)
+                    return value if value is not None else default
 
                 buckets: list[Any] = []
                 previous_oi_close = 0.0
+                previous_oi_close_ts: int | None = None
                 for item in futures_klines:
                     ts = datetime.fromtimestamp(item[0] / 1000, tz=UTC)
+                    bucket_end = ts + TIMEFRAME_DELTAS[tf]
                     close_ts = datetime.fromtimestamp(item[6] / 1000, tz=UTC)
                     timestamp_ms = int(item[0])
+                    close_timestamp_ms = int(item[6])
                     total_vol = float(item[5])
                     taker_buy_vol = float(item[9]) if len(item) > 9 else 0.0
                     taker_sell_vol = total_vol - taker_buy_vol
@@ -908,8 +920,31 @@ class BinanceCollector(BaseCollector):
 
                     spot_quote_volume = spot_volume_map.get(timestamp_ms, 0.0)
                     futures_quote_volume = float(item[7]) if len(item) > 7 else total_vol
-                    oi_close = latest_series_value(oi_series, timestamp_ms, previous_oi_close)
-                    oi_open = previous_oi_close if previous_oi_close > 0.0 else oi_close
+                    open_oi_ts, open_oi_value = latest_series_sample(oi_series, timestamp_ms)
+                    close_oi_ts, close_oi_value = latest_series_sample(oi_series, close_timestamp_ms)
+                    oi_close = close_oi_value if close_oi_value is not None else previous_oi_close
+                    oi_open = (
+                        previous_oi_close
+                        if previous_oi_close > 0.0
+                        else open_oi_value
+                        if open_oi_value is not None
+                        else oi_close
+                    )
+                    open_boundary_present = oi_open > 0.0 and (
+                        previous_oi_close_ts is not None or open_oi_ts is not None or close_oi_ts is not None
+                    )
+                    close_boundary_present = oi_close > 0.0 and close_oi_ts is not None
+                    oi_open_timestamp = ts if open_boundary_present else None
+                    oi_close_timestamp = bucket_end if close_boundary_present else None
+                    if open_boundary_present and close_boundary_present:
+                        oi_alignment_status = "ALIGNED"
+                        oi_delta_reliable = True
+                    elif open_boundary_present or close_boundary_present:
+                        oi_alignment_status = "PARTIAL"
+                        oi_delta_reliable = False
+                    else:
+                        oi_alignment_status = "MISSING"
+                        oi_delta_reliable = False
                     funding_rate = latest_series_value(funding_series, int(item[6]), 0.0)
                     long_short_ratio = latest_series_value(ls_series, timestamp_ms, 1.0)
 
@@ -917,7 +952,7 @@ class BinanceCollector(BaseCollector):
                         symbol=symbol,
                         timeframe=tf,
                         bucket_start=ts,
-                        bucket_end=ts + TIMEFRAME_DELTAS[tf],
+                        bucket_end=bucket_end,
                         last_timestamp=close_ts,
                         open_price=float(item[1]),
                         high_price=float(item[2]),
@@ -945,9 +980,18 @@ class BinanceCollector(BaseCollector):
                         short_liquidations_total=0.0,
                         exchange_count_sum=1,
                         sample_count=1,
+                        bucket_is_closed=True,
+                        bucket_completion_pct=1.0,
+                        oi_open_timestamp=oi_open_timestamp,
+                        oi_close_timestamp=oi_close_timestamp,
+                        oi_open_age=0.0 if oi_open_timestamp is not None else None,
+                        oi_close_age=0.0 if oi_close_timestamp is not None else None,
+                        oi_alignment_status=oi_alignment_status,
+                        oi_delta_reliable=oi_delta_reliable,
                     )
                     buckets.append(bucket)
                     previous_oi_close = oi_close
+                    previous_oi_close_ts = close_timestamp_ms if close_boundary_present else previous_oi_close_ts
 
                 return buckets
 

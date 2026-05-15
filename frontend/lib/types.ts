@@ -198,6 +198,14 @@ export interface FlowMetrics {
   layer5_candidate_tier?: string | null;
   layer5_direction_bias?: string;
   layer5_direction_reason?: string;
+  v2_action_bias?: string | null;
+  v2_action_status?: string | null;
+  direction_alignment_status?: string;
+  direction_alignment_reason?: string;
+  v2balanced_candidate_stage?: string;
+  v2balanced_stage_reason?: string;
+  v2balanced_semantic_readiness?: string;
+  v2balanced_readiness_reason?: string;
   efficient_build_quality?: string;
   efficient_build_quality_reason?: string;
 }
@@ -300,6 +308,14 @@ export interface AssetSnapshot {
   layer5_candidate_tier?: string | null;
   layer5_direction_bias?: string;
   layer5_direction_reason?: string;
+  v2_action_bias?: string | null;
+  v2_action_status?: string | null;
+  direction_alignment_status?: string;
+  direction_alignment_reason?: string;
+  v2balanced_candidate_stage?: string;
+  v2balanced_stage_reason?: string;
+  v2balanced_semantic_readiness?: string;
+  v2balanced_readiness_reason?: string;
   efficient_build_quality?: string;
   efficient_build_quality_reason?: string;
   signal: SignalType;

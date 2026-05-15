@@ -86,6 +86,7 @@ DEFAULT_SIGNAL_TYPES: tuple[SignalType, ...] = (
 MAX_ALERTS_PER_USER = 1000
 FEATURE_CONSISTENCY_TOLERANCE = 1e-9
 VALUE_EPSILON = 1e-12
+MISSING_PROVENANCE_SOURCES = {"", "missing", "missing_at_startup", "MISSING_TIMESTAMP", "carry_forward"}
 LAYER5_HARD_RISK_REASONS = {
     "oi_delta_unreliable",
     "exhaustion_oi_climax",
@@ -1128,6 +1129,110 @@ class SignalService:
             liquidation_is_reset_suspected=point.liquidation_is_reset_suspected,
         )
 
+    @staticmethod
+    def _resolved_live_provenance(
+        point: HistoryPoint | None,
+        bucket: TimeframeBucket | None,
+    ) -> dict[str, Any]:
+        if point is None:
+            return {}
+
+        resolved: dict[str, Any] = {
+            "price_updated_at": point.price_updated_at,
+            "spot_volume_updated_at": point.spot_volume_updated_at,
+            "futures_volume_updated_at": point.futures_volume_updated_at,
+            "open_interest_updated_at": point.open_interest_updated_at,
+            "funding_rate_updated_at": point.funding_rate_updated_at,
+            "long_short_ratio_updated_at": point.long_short_ratio_updated_at,
+            "taker_buy_sell_ratio_updated_at": point.taker_buy_sell_ratio_updated_at,
+            "liquidation_updated_at": point.liquidation_updated_at,
+            "price_source": point.price_source,
+            "volume_source": point.volume_source,
+            "open_interest_source": point.open_interest_source,
+            "funding_source": point.funding_source,
+            "long_short_ratio_source": point.long_short_ratio_source,
+            "taker_ratio_source": point.taker_ratio_source,
+            "liquidation_source": point.liquidation_source,
+        }
+
+        if bucket is None or getattr(bucket, "foundation_version", None) != "v2_option_a":
+            return resolved
+
+        def source_missing(value: str | None) -> bool:
+            return str(value or "").strip() in MISSING_PROVENANCE_SOURCES
+
+        def apply_bucket_provenance(
+            source_key: str,
+            updated_key: str,
+            *,
+            value_present: bool,
+            bucket_source: str | None = None,
+            bucket_updated_at: datetime | None = None,
+            fallback_source: str = "bucket_rehydrated",
+        ) -> None:
+            if not value_present:
+                return
+            if not source_missing(resolved.get(source_key)) or resolved.get(updated_key) is not None:
+                return
+            resolved[updated_key] = bucket_updated_at or bucket.last_timestamp
+            resolved[source_key] = (
+                bucket_source
+                if bucket_source is not None and not source_missing(bucket_source)
+                else fallback_source
+            )
+
+        apply_bucket_provenance(
+            "price_source",
+            "price_updated_at",
+            value_present=bucket.close_price > VALUE_EPSILON,
+            bucket_source=getattr(bucket, "price_source", None),
+        )
+        apply_bucket_provenance(
+            "volume_source",
+            "futures_volume_updated_at",
+            value_present=(
+                bucket.futures_volume_close > VALUE_EPSILON
+                or bucket.futures_volume_delta > VALUE_EPSILON
+                or bucket.spot_volume_close > VALUE_EPSILON
+                or bucket.spot_volume_delta > VALUE_EPSILON
+            ),
+            bucket_source=getattr(bucket, "volume_source", None),
+        )
+        if resolved.get("spot_volume_updated_at") is None and resolved.get("futures_volume_updated_at") is not None:
+            resolved["spot_volume_updated_at"] = resolved["futures_volume_updated_at"]
+        apply_bucket_provenance(
+            "open_interest_source",
+            "open_interest_updated_at",
+            value_present=bucket.open_interest_close > VALUE_EPSILON,
+            bucket_source=getattr(bucket, "oi_source", None),
+            bucket_updated_at=getattr(bucket, "oi_close_timestamp", None),
+            fallback_source="bucket_oi_boundary",
+        )
+        apply_bucket_provenance(
+            "funding_source",
+            "funding_rate_updated_at",
+            value_present=True,
+            bucket_source=getattr(bucket, "funding_source", None),
+            bucket_updated_at=getattr(bucket, "funding_rate_updated_at", None),
+        )
+        apply_bucket_provenance(
+            "long_short_ratio_source",
+            "long_short_ratio_updated_at",
+            value_present=bucket.long_short_ratio_close > VALUE_EPSILON,
+        )
+        apply_bucket_provenance(
+            "taker_ratio_source",
+            "taker_buy_sell_ratio_updated_at",
+            value_present=bucket.taker_buy_sell_ratio_close > VALUE_EPSILON,
+        )
+        apply_bucket_provenance(
+            "liquidation_source",
+            "liquidation_updated_at",
+            value_present=True,
+            bucket_source=getattr(bucket, "liq_source", None),
+        )
+        return resolved
+
     async def _update_state(self, symbol: str, persist_alerts: bool = True) -> AlertEntry | None:
         now = datetime.now(UTC)
         flow_metrics = self.aggregate_store.build_flow_metrics(
@@ -1152,6 +1257,7 @@ class SignalService:
         for tf in TIMEFRAME_ORDER:
             # For each timeframe, calculate DQ based on the latest available data
             bucket = self.aggregate_store.latest_bucket(symbol, tf, closed_only=False, now=now)
+            provenance = self._resolved_live_provenance(latest_point, bucket)
             
             dq_score = 1.0
             stale_fields = []
@@ -1181,46 +1287,46 @@ class SignalService:
                     return src in invalid_sources or (src == "carry_forward" and age_seconds is None)
 
                 # Check price age
-                p_age = self.freshness_age(now, latest_point.price_updated_at)
+                p_age = self.freshness_age(now, provenance.get("price_updated_at"))
                 if not self.is_fresh(p_age, self.settings.dq_sla_price):
                     dq_score -= 0.3
                     stale_fields.append("price")
                 
                 # Check volume age
-                v_age = self.freshness_age(now, latest_point.futures_volume_updated_at)
+                v_age = self.freshness_age(now, provenance.get("futures_volume_updated_at"))
                 if not self.is_fresh(v_age, self.settings.dq_sla_volume):
                     dq_score -= 0.2
                     stale_fields.append("volume")
                 
                 # Check OI age (TF-aware)
-                oi_age = self.freshness_age(now, latest_point.open_interest_updated_at)
+                oi_age = self.freshness_age(now, provenance.get("open_interest_updated_at"))
                 oi_sla = oi_sla_map.get(tf, self.settings.dq_sla_oi)
                 if not self.is_fresh(oi_age, oi_sla):
                     dq_score -= 0.15
                     stale_fields.append("open_interest")
                 
                 # Check funding age
-                f_age = self.freshness_age(now, latest_point.funding_rate_updated_at)
+                f_age = self.freshness_age(now, provenance.get("funding_rate_updated_at"))
                 if not self.is_fresh(f_age, self.settings.dq_sla_funding):
                     dq_score -= 0.1
                     stale_fields.append("funding")
                 
                 # Check ratio provenance
                 taker_ratio_age = get_age(
-                    latest_point.taker_buy_sell_ratio_updated_at,
-                    latest_point.taker_ratio_source,
+                    provenance.get("taker_buy_sell_ratio_updated_at"),
+                    str(provenance.get("taker_ratio_source") or "missing"),
                 )
                 taker_ratio_source = get_src(
-                    latest_point.taker_buy_sell_ratio_updated_at,
-                    latest_point.taker_ratio_source,
+                    provenance.get("taker_buy_sell_ratio_updated_at"),
+                    str(provenance.get("taker_ratio_source") or "missing"),
                 )
                 long_short_ratio_age = get_age(
-                    latest_point.long_short_ratio_updated_at,
-                    latest_point.long_short_ratio_source,
+                    provenance.get("long_short_ratio_updated_at"),
+                    str(provenance.get("long_short_ratio_source") or "missing"),
                 )
                 long_short_ratio_source = get_src(
-                    latest_point.long_short_ratio_updated_at,
-                    latest_point.long_short_ratio_source,
+                    provenance.get("long_short_ratio_updated_at"),
+                    str(provenance.get("long_short_ratio_source") or "missing"),
                 )
                 if invalid_ratio_provenance(taker_ratio_source, taker_ratio_age):
                     dq_score -= 0.05
@@ -1250,18 +1356,39 @@ class SignalService:
             if latest_point:
                 # Populate detailed metadata for trade auditing (April vs May analysis)
                 # DO NOT use point timestamp as fallback for carry_forward (Priority 1)
-                p_age = get_age(latest_point.price_updated_at, latest_point.price_source)
-                fv_age = get_age(latest_point.futures_volume_updated_at, latest_point.volume_source)
-                oi_age = get_age(latest_point.open_interest_updated_at, latest_point.open_interest_source)
+                p_age = get_age(
+                    provenance.get("price_updated_at"),
+                    str(provenance.get("price_source") or "missing"),
+                )
+                fv_age = get_age(
+                    provenance.get("futures_volume_updated_at"),
+                    str(provenance.get("volume_source") or "missing"),
+                )
+                oi_age = get_age(
+                    provenance.get("open_interest_updated_at"),
+                    str(provenance.get("open_interest_source") or "missing"),
+                )
                 bucket_funding_timestamp = getattr(flow_metrics, f"funding_timestamp_{tf}", None)
                 f_age = (
                     getattr(flow_metrics, f"funding_age_seconds_{tf}", None)
                     if bucket_funding_timestamp is not None
-                    else get_age(latest_point.funding_rate_updated_at, latest_point.funding_source)
+                    else get_age(
+                        provenance.get("funding_rate_updated_at"),
+                        str(provenance.get("funding_source") or "missing"),
+                    )
                 )
-                ls_age = get_age(latest_point.long_short_ratio_updated_at, latest_point.long_short_ratio_source)
-                t_age = get_age(latest_point.taker_buy_sell_ratio_updated_at, latest_point.taker_ratio_source)
-                l_age = get_age(latest_point.liquidation_updated_at, latest_point.liquidation_source)
+                ls_age = get_age(
+                    provenance.get("long_short_ratio_updated_at"),
+                    str(provenance.get("long_short_ratio_source") or "missing"),
+                )
+                t_age = get_age(
+                    provenance.get("taker_buy_sell_ratio_updated_at"),
+                    str(provenance.get("taker_ratio_source") or "missing"),
+                )
+                l_age = get_age(
+                    provenance.get("liquidation_updated_at"),
+                    str(provenance.get("liquidation_source") or "missing"),
+                )
 
                 setattr(flow_metrics, f"price_age_seconds_{tf}", p_age)
                 setattr(flow_metrics, f"futures_volume_age_seconds_{tf}", fv_age)
@@ -1271,17 +1398,17 @@ class SignalService:
                 setattr(flow_metrics, f"taker_ratio_age_seconds_{tf}", t_age)
                 setattr(flow_metrics, f"liquidation_age_seconds_{tf}", l_age)
                 
-                setattr(flow_metrics, f"price_source_{tf}", get_src(latest_point.price_updated_at, latest_point.price_source))
-                setattr(flow_metrics, f"volume_source_{tf}", get_src(latest_point.futures_volume_updated_at, latest_point.volume_source))
-                setattr(flow_metrics, f"open_interest_source_{tf}", get_src(latest_point.open_interest_updated_at, latest_point.open_interest_source))
+                setattr(flow_metrics, f"price_source_{tf}", get_src(provenance.get("price_updated_at"), str(provenance.get("price_source") or "missing")))
+                setattr(flow_metrics, f"volume_source_{tf}", get_src(provenance.get("futures_volume_updated_at"), str(provenance.get("volume_source") or "missing")))
+                setattr(flow_metrics, f"open_interest_source_{tf}", get_src(provenance.get("open_interest_updated_at"), str(provenance.get("open_interest_source") or "missing")))
                 if bucket_funding_timestamp is None:
-                    setattr(flow_metrics, f"funding_source_{tf}", get_src(latest_point.funding_rate_updated_at, latest_point.funding_source))
-                setattr(flow_metrics, f"long_short_ratio_source_{tf}", get_src(latest_point.long_short_ratio_updated_at, latest_point.long_short_ratio_source))
-                setattr(flow_metrics, f"taker_ratio_source_{tf}", get_src(latest_point.taker_buy_sell_ratio_updated_at, latest_point.taker_ratio_source))
-                setattr(flow_metrics, f"liquidation_source_{tf}", get_src(latest_point.liquidation_updated_at, latest_point.liquidation_source))
+                    setattr(flow_metrics, f"funding_source_{tf}", get_src(provenance.get("funding_rate_updated_at"), str(provenance.get("funding_source") or "missing")))
+                setattr(flow_metrics, f"long_short_ratio_source_{tf}", get_src(provenance.get("long_short_ratio_updated_at"), str(provenance.get("long_short_ratio_source") or "missing")))
+                setattr(flow_metrics, f"taker_ratio_source_{tf}", get_src(provenance.get("taker_buy_sell_ratio_updated_at"), str(provenance.get("taker_ratio_source") or "missing")))
+                setattr(flow_metrics, f"liquidation_source_{tf}", get_src(provenance.get("liquidation_updated_at"), str(provenance.get("liquidation_source") or "missing")))
                 
-                setattr(flow_metrics, f"taker_ratio_is_default_{tf}", (latest_point.taker_ratio_source == "default_neutral"))
-                setattr(flow_metrics, f"long_short_ratio_is_default_{tf}", (latest_point.long_short_ratio_source == "default_neutral"))
+                setattr(flow_metrics, f"taker_ratio_is_default_{tf}", (provenance.get("taker_ratio_source") == "default_neutral"))
+                setattr(flow_metrics, f"long_short_ratio_is_default_{tf}", (provenance.get("long_short_ratio_source") == "default_neutral"))
                 setattr(flow_metrics, f"data_was_coalesced_{tf}", latest_point.data_was_coalesced)
                 setattr(flow_metrics, f"liquidation_is_reset_suspected_{tf}", latest_point.liquidation_is_reset_suspected)
 
@@ -3509,12 +3636,13 @@ class SignalService:
         
         hist = self.history.get(symbol)
         latest_pt = hist[-1] if hist else None
+        provenance = self._resolved_live_provenance(latest_pt, bucket)
         
         missing_f = []
         if latest_pt:
-            if latest_pt.price_source == "missing": missing_f.append("price")
-            if latest_pt.open_interest_source == "missing": missing_f.append("open_interest")
-            if latest_pt.volume_source == "missing": missing_f.append("volume")
+            if provenance.get("price_source") == "missing": missing_f.append("price")
+            if provenance.get("open_interest_source") == "missing": missing_f.append("open_interest")
+            if provenance.get("volume_source") == "missing": missing_f.append("volume")
 
         entry_filters_passed, entry_filter_reasons = self._entry_filters_from_interpretation(market_interpretation)
         efficient_build_quality = getattr(flow_metrics, f"efficient_build_quality_{timeframe}", "UNKNOWN")
@@ -3720,22 +3848,22 @@ class SignalService:
             stale_fields=stale_f,
             missing_fields=missing_f,
             fallback_fields=fallback_f,
-            price_age_seconds=self.freshness_age(now, latest_pt.price_updated_at) if latest_pt else None,
-            futures_volume_age_seconds=self.freshness_age(now, latest_pt.futures_volume_updated_at) if latest_pt else None,
-            open_interest_age_seconds=self.freshness_age(now, latest_pt.open_interest_updated_at) if latest_pt else None,
-            funding_age_seconds=self.freshness_age(now, latest_pt.funding_rate_updated_at) if latest_pt else None,
-            long_short_ratio_age_seconds=self.freshness_age(now, latest_pt.long_short_ratio_updated_at) if latest_pt else None,
-            taker_ratio_age_seconds=self.freshness_age(now, latest_pt.taker_buy_sell_ratio_updated_at) if latest_pt else None,
-            liquidation_age_seconds=self.freshness_age(now, latest_pt.liquidation_updated_at) if latest_pt else None,
-            price_source=latest_pt.price_source if latest_pt else "missing",
-            volume_source=latest_pt.volume_source if latest_pt else "missing",
-            open_interest_source=latest_pt.open_interest_source if latest_pt else "missing",
-            funding_source=latest_pt.funding_source if latest_pt else "missing",
-            long_short_ratio_source=latest_pt.long_short_ratio_source if latest_pt else "missing",
-            taker_ratio_source=latest_pt.taker_ratio_source if latest_pt else "missing",
-            liquidation_source=latest_pt.liquidation_source if latest_pt else "missing",
-            taker_ratio_is_default=(latest_pt.taker_ratio_source == "default_neutral") if latest_pt else False,
-            long_short_ratio_is_default=(latest_pt.long_short_ratio_source == "default_neutral") if latest_pt else False,
+            price_age_seconds=self.freshness_age(now, provenance.get("price_updated_at")) if latest_pt else None,
+            futures_volume_age_seconds=self.freshness_age(now, provenance.get("futures_volume_updated_at")) if latest_pt else None,
+            open_interest_age_seconds=self.freshness_age(now, provenance.get("open_interest_updated_at")) if latest_pt else None,
+            funding_age_seconds=self.freshness_age(now, provenance.get("funding_rate_updated_at")) if latest_pt else None,
+            long_short_ratio_age_seconds=self.freshness_age(now, provenance.get("long_short_ratio_updated_at")) if latest_pt else None,
+            taker_ratio_age_seconds=self.freshness_age(now, provenance.get("taker_buy_sell_ratio_updated_at")) if latest_pt else None,
+            liquidation_age_seconds=self.freshness_age(now, provenance.get("liquidation_updated_at")) if latest_pt else None,
+            price_source=str(provenance.get("price_source") or "missing") if latest_pt else "missing",
+            volume_source=str(provenance.get("volume_source") or "missing") if latest_pt else "missing",
+            open_interest_source=str(provenance.get("open_interest_source") or "missing") if latest_pt else "missing",
+            funding_source=str(provenance.get("funding_source") or "missing") if latest_pt else "missing",
+            long_short_ratio_source=str(provenance.get("long_short_ratio_source") or "missing") if latest_pt else "missing",
+            taker_ratio_source=str(provenance.get("taker_ratio_source") or "missing") if latest_pt else "missing",
+            liquidation_source=str(provenance.get("liquidation_source") or "missing") if latest_pt else "missing",
+            taker_ratio_is_default=(provenance.get("taker_ratio_source") == "default_neutral") if latest_pt else False,
+            long_short_ratio_is_default=(provenance.get("long_short_ratio_source") == "default_neutral") if latest_pt else False,
             liquidation_is_reset_suspected=latest_pt.liquidation_is_reset_suspected if latest_pt else False,
             data_was_coalesced=latest_pt.data_was_coalesced if latest_pt else False,
             bucket_is_closed=bucket_closed,

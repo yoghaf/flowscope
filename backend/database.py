@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from datetime import datetime, timezone, timedelta
 UTC = timezone.utc
 
-from sqlalchemy import func, insert, select, text, update
+from sqlalchemy import and_, case, func, insert, not_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
@@ -332,6 +332,19 @@ class DatabaseManager:
                 chunk = payload[start:start + chunk_size]
                 statement = pg_insert(MarketDataBucket).values(chunk)
                 excluded = statement.excluded
+                existing_oi_strong = and_(
+                    MarketDataBucket.oi_alignment_status == "ALIGNED",
+                    MarketDataBucket.oi_delta_reliable.is_(True),
+                    MarketDataBucket.oi_open_timestamp.is_not(None),
+                    MarketDataBucket.oi_close_timestamp.is_not(None),
+                )
+                incoming_oi_strong = and_(
+                    excluded.oi_alignment_status == "ALIGNED",
+                    excluded.oi_delta_reliable.is_(True),
+                    excluded.oi_open_timestamp.is_not(None),
+                    excluded.oi_close_timestamp.is_not(None),
+                )
+                preserve_existing_oi = and_(existing_oi_strong, not_(incoming_oi_strong))
                 upsert = statement.on_conflict_do_update(
                     index_elements=["symbol", "timeframe", "bucket_start"],
                     set_={
@@ -369,14 +382,38 @@ class DatabaseManager:
                         "breakdown_volume": excluded.breakdown_volume,
                         "breakdown_compression": excluded.breakdown_compression,
                         "breakdown_funding": excluded.breakdown_funding,
-                        "bucket_is_closed": excluded.bucket_is_closed,
-                        "bucket_completion_pct": excluded.bucket_completion_pct,
-                        "oi_open_timestamp": excluded.oi_open_timestamp,
-                        "oi_close_timestamp": excluded.oi_close_timestamp,
-                        "oi_open_age": excluded.oi_open_age,
-                        "oi_close_age": excluded.oi_close_age,
-                        "oi_alignment_status": excluded.oi_alignment_status,
-                        "oi_delta_reliable": excluded.oi_delta_reliable,
+                        "bucket_is_closed": case(
+                            (MarketDataBucket.bucket_is_closed.is_(True), True),
+                            else_=excluded.bucket_is_closed,
+                        ),
+                        "bucket_completion_pct": func.greatest(
+                            MarketDataBucket.bucket_completion_pct,
+                            excluded.bucket_completion_pct,
+                        ),
+                        "oi_open_timestamp": case(
+                            (preserve_existing_oi, MarketDataBucket.oi_open_timestamp),
+                            else_=func.coalesce(excluded.oi_open_timestamp, MarketDataBucket.oi_open_timestamp),
+                        ),
+                        "oi_close_timestamp": case(
+                            (preserve_existing_oi, MarketDataBucket.oi_close_timestamp),
+                            else_=func.coalesce(excluded.oi_close_timestamp, MarketDataBucket.oi_close_timestamp),
+                        ),
+                        "oi_open_age": case(
+                            (preserve_existing_oi, MarketDataBucket.oi_open_age),
+                            else_=func.coalesce(excluded.oi_open_age, MarketDataBucket.oi_open_age),
+                        ),
+                        "oi_close_age": case(
+                            (preserve_existing_oi, MarketDataBucket.oi_close_age),
+                            else_=func.coalesce(excluded.oi_close_age, MarketDataBucket.oi_close_age),
+                        ),
+                        "oi_alignment_status": case(
+                            (preserve_existing_oi, MarketDataBucket.oi_alignment_status),
+                            else_=func.coalesce(excluded.oi_alignment_status, MarketDataBucket.oi_alignment_status),
+                        ),
+                        "oi_delta_reliable": case(
+                            (preserve_existing_oi, MarketDataBucket.oi_delta_reliable),
+                            else_=excluded.oi_delta_reliable,
+                        ),
                     },
                 )
                 await session.execute(upsert)

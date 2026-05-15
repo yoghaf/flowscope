@@ -389,6 +389,13 @@ class TimeframeBucket:
         self.breakdown_funding = breakdown.get("funding", 0.0)
 
     def to_history_point(self) -> HistoryPoint:
+        price_updated_at = self.last_timestamp if self.price_source != "missing" else None
+        volume_updated_at = self.last_timestamp if self.volume_source != "missing" else None
+        oi_updated_at = (
+            self.oi_close_timestamp
+            or (self.last_timestamp if self.oi_source != "missing" else None)
+        )
+        liquidation_updated_at = self.last_timestamp if self.liq_source != "missing" else None
         return HistoryPoint(
             timestamp=self.last_timestamp,
             price=self.close_price,
@@ -402,9 +409,35 @@ class TimeframeBucket:
             long_liquidations=self.long_liquidations_total,
             short_liquidations=self.short_liquidations_total,
             exchange_count=self.avg_exchange_count,
+            price_updated_at=price_updated_at,
+            spot_volume_updated_at=volume_updated_at,
+            futures_volume_updated_at=volume_updated_at,
+            open_interest_updated_at=oi_updated_at,
+            funding_rate_updated_at=self.funding_rate_updated_at,
+            liquidation_updated_at=liquidation_updated_at,
+            price_source=self.price_source,
+            volume_source=self.volume_source,
+            open_interest_source=self.oi_source,
+            funding_source=self.funding_source,
+            liquidation_source=self.liq_source,
+            data_was_coalesced=self.coalesced_sample_count > 0,
+            liquidation_is_reset_suspected=self.liquidation_reset_suspected,
+            oi_open_timestamp=self.oi_open_timestamp,
+            oi_close_timestamp=self.oi_close_timestamp,
+            oi_open_age=self.oi_open_age,
+            oi_close_age=self.oi_close_age,
+            oi_alignment_status=self.oi_alignment_status,
+            oi_delta_reliable=self.oi_delta_reliable,
         )
 
     def to_snapshot_point(self) -> HistoryPoint:
+        price_updated_at = self.last_timestamp if self.price_source != "missing" else None
+        volume_updated_at = self.last_timestamp if self.volume_source != "missing" else None
+        oi_updated_at = (
+            self.oi_close_timestamp
+            or (self.last_timestamp if self.oi_source != "missing" else None)
+        )
+        liquidation_updated_at = self.last_timestamp if self.liq_source != "missing" else None
         return HistoryPoint(
             timestamp=self.last_timestamp,
             price=self.close_price,
@@ -418,6 +451,25 @@ class TimeframeBucket:
             long_liquidations=self.long_liquidations_close,
             short_liquidations=self.short_liquidations_close,
             exchange_count=self.avg_exchange_count,
+            price_updated_at=price_updated_at,
+            spot_volume_updated_at=volume_updated_at,
+            futures_volume_updated_at=volume_updated_at,
+            open_interest_updated_at=oi_updated_at,
+            funding_rate_updated_at=self.funding_rate_updated_at,
+            liquidation_updated_at=liquidation_updated_at,
+            price_source=self.price_source,
+            volume_source=self.volume_source,
+            open_interest_source=self.oi_source,
+            funding_source=self.funding_source,
+            liquidation_source=self.liq_source,
+            data_was_coalesced=self.coalesced_sample_count > 0,
+            liquidation_is_reset_suspected=self.liquidation_reset_suspected,
+            oi_open_timestamp=self.oi_open_timestamp,
+            oi_close_timestamp=self.oi_close_timestamp,
+            oi_open_age=self.oi_open_age,
+            oi_close_age=self.oi_close_age,
+            oi_alignment_status=self.oi_alignment_status,
+            oi_delta_reliable=self.oi_delta_reliable,
         )
 
     def to_record(self) -> dict[str, object]:
