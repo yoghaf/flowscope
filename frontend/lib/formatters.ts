@@ -618,6 +618,57 @@ export function isRiskEntryLocationPhase(value: string | null | undefined): bool
   return ["exhaustion_risk", "distribution_risk", "accumulation_risk", "late_chase"].includes(normalizeDecisionText(value));
 }
 
+export function isScannerBlockedEntryLocationPhase(value: string | null | undefined): boolean {
+  return ["range_no_edge", "exhaustion_risk", "distribution_risk", "accumulation_risk", "late_chase"].includes(normalizeDecisionText(value));
+}
+
+export function getEntryLocationGuidance(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string | null {
+  const phase = normalizeDecisionText(getEntryLocationPhase(asset, timeframe));
+  if (phase === "late_chase") {
+    return "Do not chase current direction.";
+  }
+  if (phase === "distribution_risk") {
+    return "Avoid current long; monitor short confirmation only.";
+  }
+  if (phase === "accumulation_risk") {
+    return "Avoid current short; monitor long confirmation only.";
+  }
+  if (phase === "exhaustion_risk") {
+    return "Avoid chase; monitor reversal only if confirmed.";
+  }
+  if (phase === "range_no_edge") {
+    return "No clean edge; wait for range break or clearer setup.";
+  }
+  if (phase === "wait_pullback") {
+    return "Wait for pullback/confirmation; not an entry yet.";
+  }
+  return null;
+}
+
+export function getOriginalWatchLabel(asset: AssetSnapshot): string | null {
+  const direction = normalizeDecisionText(getLayer5DirectionBias(asset));
+  if (direction === "long_watch") {
+    return "Original watch: Long Watch";
+  }
+  if (direction === "short_watch") {
+    return "Original watch: Short Watch";
+  }
+  if (direction === "long_trap_watch") {
+    return "Original watch: Long Trap Watch";
+  }
+  if (direction === "short_squeeze_watch") {
+    return "Original watch: Short Squeeze Watch";
+  }
+  return null;
+}
+
+export function getEntryLocationPipelineDecision(asset: AssetSnapshot, timeframe: Timeframe = "15m"): DisplayDecision | null {
+  if (isScannerBlockedEntryLocationPhase(getEntryLocationPhase(asset, timeframe))) {
+    return "AVOID";
+  }
+  return null;
+}
+
 export function getEntryLocationWarning(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string | null {
   const phase = getEntryLocationPhase(asset, timeframe);
   if (!isRiskEntryLocationPhase(phase)) {
@@ -635,12 +686,18 @@ export function getObservabilityDecisionLabel(asset: AssetSnapshot, timeframe: T
   if (warning) {
     return "Do Not Chase";
   }
+  if (normalizeDecisionText(getEntryLocationPhase(asset, timeframe)) === "range_no_edge") {
+    return "Range No Edge";
+  }
   return formatSemanticGateDecision(getDisplayDecision(asset, timeframe));
 }
 
 export function getObservabilityDecisionTone(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string {
   if (getEntryLocationWarning(asset, timeframe)) {
     return "border-red-500/30 bg-red-500/10 text-red-300";
+  }
+  if (normalizeDecisionText(getEntryLocationPhase(asset, timeframe)) === "range_no_edge") {
+    return "border-white/10 bg-white/5 text-slate-300";
   }
   return getDecisionTone(getDisplayDecision(asset, timeframe));
 }

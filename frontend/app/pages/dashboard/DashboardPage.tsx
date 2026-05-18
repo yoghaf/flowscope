@@ -33,6 +33,7 @@ import {
   getDisplayDecision,
   getDqLabel,
   getDqStatus,
+  getEntryLocationGuidance,
   getEntryLocationPhase,
   getEntryLocationQuality,
   getEntryLocationReason,
@@ -48,6 +49,7 @@ import {
   getMarketRelativeStatus,
   getObservabilityDecisionLabel,
   getObservabilityDecisionTone,
+  getOriginalWatchLabel,
   getProvenanceValue,
   getReadinessTone,
   getReasonLabel,
@@ -706,6 +708,10 @@ function CandidateSection({ bucket, title, rows }: { bucket: CandidateBucket; ti
     dataBlocked: "No data-blocked rows. Data foundation is not the main blocker here.",
     noSetup: "No no-setup rows in the current feed.",
   }[bucket];
+  const sectionNote =
+    bucket === "strategyBlocked"
+      ? "Avoid/Risk rows are not entries. They are blocked setups or reversal-monitor candidates."
+      : null;
 
   return (
     <section className="overflow-hidden rounded-lg border border-white/10 bg-card/50 backdrop-blur-xl">
@@ -718,6 +724,7 @@ function CandidateSection({ bucket, title, rows }: { bucket: CandidateBucket; ti
               Full list in Scanner
             </Link>
           </p>
+          {sectionNote ? <p className="mt-1 text-xs font-medium text-red-200/80">{sectionNote}</p> : null}
         </div>
         <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusTone(title.toUpperCase())}`}>{rows.length}</span>
       </div>
@@ -865,12 +872,16 @@ function CandidateRow({ bucket, asset }: { bucket: CandidateBucket; asset: Asset
 
   if (bucket === "strategyBlocked") {
     const avoidLabel = getAvoidLabel(asset);
+    const locationGuidance = getEntryLocationGuidance(asset, DASHBOARD_TIMEFRAME);
+    const originalWatch = getOriginalWatchLabel(asset);
     return (
       <tr className={rowClass}>
         <td className="px-5 py-3">{symbol}</td>
         <td className={cellClass}>
           <p className="font-medium text-foreground">{formatSemanticGateDecision(avoidLabel)}</p>
           <p className="mt-1 font-mono text-[11px] text-muted-foreground">{avoidLabel}</p>
+          {locationGuidance ? <p className="mt-2 max-w-[240px] text-xs font-medium text-red-200/90">{locationGuidance}</p> : null}
+          {originalWatch ? <p className="mt-1 text-[11px] text-muted-foreground">{originalWatch}</p> : null}
         </td>
         <td className={cellClass}><MarketRelativeCell asset={asset} /></td>
         <td className={cellClass}><EntryLocationCell asset={asset} /></td>

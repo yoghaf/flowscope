@@ -22,6 +22,7 @@ import {
   getDisplayDecision,
   getDqLabel,
   getDqStatus,
+  getEntryLocationPipelineDecision,
   getEntryLocationWarning,
   getEntryLocationPhase,
   getEntryLocationQuality,
@@ -31,10 +32,12 @@ import {
   getHumanDecisionSubtitle,
   getHumanLabel,
   getHumanReason,
+  getLayer5DirectionBias,
   getMarketIndependenceScore,
   getMarketRelativeStatus,
   getObservabilityDecisionLabel,
   getObservabilityDecisionTone,
+  getOriginalWatchLabel,
   getOppositeSignalWatch,
   getProvenanceValue,
   getReadinessTone,
@@ -114,6 +117,10 @@ function isWaitingDecision(decision: DisplayDecision): boolean {
 
 function isBlockedDecision(decision: DisplayDecision): boolean {
   return decision === "BLOCKED" || decision === "AVOID";
+}
+
+function getScannerPipelineDecision(asset: AssetSnapshot, timeframe: Timeframe): DisplayDecision {
+  return getEntryLocationPipelineDecision(asset, timeframe) ?? getDisplayDecision(asset, timeframe);
 }
 
 function semanticStatusTone(value: string | null | undefined): string {
@@ -234,7 +241,7 @@ export default function ScannerPage() {
 
   const sortedAssets = useMemo(() => {
     return [...(data?.items ?? [])].sort((a, b) => {
-      const decisionDelta = DECISION_ORDER[getDisplayDecision(a, timeframe)] - DECISION_ORDER[getDisplayDecision(b, timeframe)];
+      const decisionDelta = DECISION_ORDER[getScannerPipelineDecision(a, timeframe)] - DECISION_ORDER[getScannerPipelineDecision(b, timeframe)];
       if (decisionDelta !== 0) {
         return decisionDelta;
       }
@@ -256,7 +263,7 @@ export default function ScannerPage() {
     } satisfies Record<PipelineFilter, number>;
 
     sortedAssets.forEach((asset) => {
-      const decision = getDisplayDecision(asset, timeframe);
+      const decision = getScannerPipelineDecision(asset, timeframe);
       if (decision === "TRADE READY") {
         base["Trade Ready"] += 1;
       } else if (isWatchlistDecision(decision)) {
@@ -278,7 +285,7 @@ export default function ScannerPage() {
   const filteredAssets = useMemo(() => {
     return sortedAssets.filter((asset) => {
       const decision = FILTER_TO_DECISION[pipelineFilter];
-      const displayDecision = getDisplayDecision(asset, timeframe);
+      const displayDecision = getScannerPipelineDecision(asset, timeframe);
       if (pipelineFilter === "Watchlist") {
         return isWatchlistDecision(displayDecision);
       }
@@ -542,6 +549,7 @@ export default function ScannerPage() {
                   const locationWarning = getEntryLocationWarning(asset, timeframe);
                   const decisionLabel = getObservabilityDecisionLabel(asset, timeframe);
                   const decisionTone = getObservabilityDecisionTone(asset, timeframe);
+                  const originalWatch = getOriginalWatchLabel(asset);
                   const showRelativeScore = shouldShowRelativeScore(marketRelativeStatus, relativeScore);
                   const confidence = Math.round(getOpportunityScore(asset, timeframe) * 100);
                   const setupStats = setupMap.get(setupTypeFromDecision(asset.decision_type, asset.position_quality) ?? "");
@@ -568,6 +576,7 @@ export default function ScannerPage() {
                             {decisionLabel}
                           </span>
                           <p className="mt-1 max-w-[180px] text-xs text-muted-foreground">{locationWarning ?? subtitle}</p>
+                          {originalWatch && locationWarning ? <p className="mt-1 text-[11px] text-muted-foreground">{originalWatch}</p> : null}
                         </td>
                         <td className="min-w-[150px] px-4 py-3">
                           {!isUnknownMarketRelativeStatus(marketRelativeStatus) ? (
@@ -792,6 +801,7 @@ function ScannerDetails({
         items={detailItems([
           `Decision: ${formatSemanticGateDecision(semanticGateDecision ?? getDisplayDecision(asset, timeframe))}`,
           `Live effect: ${formatSemanticGateDecision(semanticGateEffect)}`,
+          `Layer5 direction: ${getLayer5DirectionBias(asset)}`,
           `Market: ${formatMarketRelativeStatus(marketRelativeStatus)} (RS ${formatRelativeScore(relativeStrength)}, RW ${formatRelativeScore(relativeWeakness)}, independence ${formatRelativeScore(marketIndependence)})`,
           `Entry location: ${formatEntryLocationPhase(entryPhase)} / ${formatEntryLocationQuality(entryQuality)}`,
           `Setup stats: ${setupStats?.validated ? "validated" : "experimental"}`,
