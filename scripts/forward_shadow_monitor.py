@@ -13,6 +13,10 @@ if str(REPO_ROOT) not in sys.path:
 from backend.config import get_settings
 from backend.database import DatabaseManager
 from backend.models import LatestAssetState, MarketDataBucket
+from backend.services.entry_location_semantics import (
+    ENTRY_LOCATION_TIMEFRAMES,
+    classify_entry_location,
+)
 from sqlalchemy import select, func
 
 ACTIVE_STATE_WINDOW_MINUTES = 10
@@ -31,6 +35,44 @@ LAYER5_HARD_RISK_REASONS = {
 LAYER5_RISK_SCENARIOS = {"reversal_watch", "range_context", "late_expansion", "climax_event"}
 LAYER5_MIXED_SOFT_REASONS = {"mixed_context_blocked", "scenario_not_allow"}
 LAYER5_WEAK_SOFT_REASONS = {"scenario_not_allow"}
+PHASE8_TIMEFRAMES = ("15m", "1h", "4h")
+PHASE8_LOCATION_PRIMITIVES = (
+    "range_position",
+    "distance_from_range_high_pct",
+    "distance_from_range_low_pct",
+    "distance_from_range_mid_pct",
+    "atr_extension",
+    "recent_move_atr",
+    "candle_body_atr",
+    "breakout_age_candles",
+    "breakdown_age_candles",
+    "consecutive_green_candles",
+    "consecutive_red_candles",
+    "volume_climax_score",
+    "oi_climax_score",
+    "wick_rejection_score",
+    "is_near_range_high",
+    "is_near_range_low",
+    "is_extended_from_range_mid",
+    "is_late_breakout",
+    "is_late_breakdown",
+)
+PHASE8_LOCATION_COLUMNS = [
+    f"{primitive}_{timeframe}"
+    for primitive in PHASE8_LOCATION_PRIMITIVES
+    for timeframe in PHASE8_TIMEFRAMES
+]
+PHASE8_ENTRY_LOCATION_FIELDS = (
+    "entry_location_phase",
+    "entry_location_quality",
+    "entry_location_reason",
+    "opposite_signal_watch",
+)
+PHASE8_ENTRY_LOCATION_COLUMNS = [
+    f"{field}_{timeframe}"
+    for field in PHASE8_ENTRY_LOCATION_FIELDS
+    for timeframe in ENTRY_LOCATION_TIMEFRAMES
+]
 
 
 def _split_reasons(value) -> list[str]:
@@ -67,6 +109,14 @@ def _populated_count(df: pd.DataFrame, column: str) -> int:
     return int(series.notna().sum())
 
 
+def _open_utf8_writer(path: Path):
+    return open(path, "w", encoding="utf-8")
+
+
+def _write_csv_utf8(df: pd.DataFrame, path: Path) -> None:
+    df.to_csv(path, index=False, encoding="utf-8")
+
+
 def _float_or_none(value) -> float | None:
     value = _clean_value(value)
     if value is None:
@@ -78,6 +128,21 @@ def _float_or_none(value) -> float | None:
     if pd.isna(numeric):
         return None
     return numeric
+
+
+def _is_false_like(value) -> bool:
+    value = _clean_value(value)
+    return value is False or str(value).strip().lower() == "false"
+
+
+def _is_empty_fallback(value) -> bool:
+    value = _clean_value(value)
+    if value is None:
+        return True
+    if isinstance(value, list):
+        return len(value) == 0
+    text = str(value).strip()
+    return text in {"", "NONE", "[]", "nan"}
 
 
 def _layer5_from_candidate(row: dict) -> tuple[str, str, str | None]:
@@ -448,6 +513,45 @@ def _semantic_readiness_from_candidate(row: dict) -> tuple[str, str]:
     return "NO_SETUP", "no_setup"
 
 
+def _semantic_gate_shadow_from_candidate(row: dict) -> tuple[bool, str, str, str]:
+    semantic_readiness = str(
+        _clean_value(row.get("v2balanced_semantic_readiness"), "NO_SETUP") or "NO_SETUP"
+    ).strip()
+    readiness_reason = str(
+        _clean_value(row.get("v2balanced_readiness_reason"), "no_setup") or "no_setup"
+    ).strip()
+    decision_by_readiness = {
+        "DATA_BLOCKED": "would_block_data",
+        "AVOID_LAYER5_RISK": "would_block_risk",
+        "WAIT_SCENARIO": "would_wait_scenario",
+        "WAIT_DIRECTION": "would_wait_direction",
+        "READY_CANDIDATE": "would_allow_candidate",
+        "NO_SETUP": "would_no_setup",
+    }
+    enabled_value = _clean_value(row.get("semantic_gate_enabled"), False)
+    enabled = enabled_value is True or str(enabled_value).lower() == "true"
+    live_effect = "shadow_only_enabled_no_live_effect" if enabled else "none_when_disabled"
+    return (
+        enabled,
+        decision_by_readiness.get(semantic_readiness, "would_no_setup"),
+        f"semantic_readiness_{readiness_reason}",
+        live_effect,
+    )
+
+
+def _entry_location_from_candidate(row: dict, timeframe: str) -> tuple[str, str, str, str]:
+    return classify_entry_location(
+        metrics=row,
+        timeframe=timeframe,
+        layer5_direction_bias=_clean_value(row.get("layer5_direction_bias")),
+        market_relative_status=_clean_value(row.get(f"market_relative_status_{timeframe}")),
+        v2balanced_semantic_readiness=_clean_value(row.get("v2balanced_semantic_readiness")),
+        scenario_label=_clean_value(row.get("scenario_label")),
+        scenario_disposition=_clean_value(row.get("scenario_disposition")),
+        hard_filter_reasons=row.get("hard_filter_reasons"),
+    )
+
+
 async def run_forward_monitor():
     settings = get_settings()
     db_manager = DatabaseManager(settings)
@@ -469,6 +573,8 @@ async def run_forward_monitor():
     latest_v2 = None
     active_states_scanned = 0
     stale_states_ignored = 0
+    active_oi_rows: list[dict] = []
+    closed_bucket_oi_summary: dict = {}
 
     try:
         async with db_manager.session_factory() as session:
@@ -514,6 +620,7 @@ async def run_forward_monitor():
                 snapshots = res.scalars().all()
                 active_states_scanned = len(snapshots)
                 stale_states_ignored = max(eligible_state_count - active_states_scanned, 0)
+                active_symbols: list[str] = []
                 
                 for snap in snapshots:
                     data = snap.snapshot
@@ -522,6 +629,22 @@ async def run_forward_monitor():
                     fm = data.get("flow_metrics", {})
                     found_ver = fm.get(f"foundation_version_{snap.timeframe}", "unknown")
                     if found_ver != "v2_option_a": continue
+
+                    active_symbols.append(snap.symbol)
+                    fallback_fields = fm.get("fallback_fields_15m", [])
+                    active_oi_rows.append({
+                        "symbol": snap.symbol,
+                        "latest_state_updated_at": snap.updated_at,
+                        "data_quality_status_15m": fm.get("data_quality_status_15m"),
+                        "fallback_fields_15m": "|".join(fallback_fields) if isinstance(fallback_fields, list) else fallback_fields,
+                        "oi_alignment_status_15m": fm.get("oi_alignment_status_15m"),
+                        "oi_delta_reliable_15m": fm.get("oi_delta_reliable_15m"),
+                        "oi_open_timestamp_15m": fm.get("oi_open_timestamp_15m"),
+                        "oi_close_timestamp_15m": fm.get("oi_close_timestamp_15m"),
+                        "oi_open_age_seconds_15m": fm.get("oi_open_age_seconds_15m"),
+                        "oi_close_age_seconds_15m": fm.get("oi_close_age_seconds_15m"),
+                        "bucket_completion_pct_15m": fm.get("bucket_completion_pct_15m"),
+                    })
                     
                     # Filter for Continuation
                     setup = data.get("setup_type")
@@ -552,6 +675,7 @@ async def run_forward_monitor():
                         "timestamp": data.get("timestamp"),
                         "symbol": snap.symbol,
                         "timeframe": snap.timeframe,
+                        "latest_state_updated_at": snap.updated_at,
                         "foundation_version": found_ver,
                         "action_bias": data.get("action_bias"),
                         "action_status": data.get("action_status"),
@@ -560,9 +684,68 @@ async def run_forward_monitor():
                         "price_change_15m": fm.get("price_change_15m"),
                         "price_change_1h": fm.get("price_change_1h"),
                         "price_change_4h": fm.get("price_change_4h"),
+                        **{col: fm.get(col) for col in PHASE8_LOCATION_COLUMNS},
+                        **{col: fm.get(col) for col in PHASE8_ENTRY_LOCATION_COLUMNS},
+                        "btc_return_15m": fm.get("btc_return_15m"),
+                        "btc_return_1h": fm.get("btc_return_1h"),
+                        "btc_return_4h": fm.get("btc_return_4h"),
+                        "eth_return_15m": fm.get("eth_return_15m"),
+                        "eth_return_1h": fm.get("eth_return_1h"),
+                        "eth_return_4h": fm.get("eth_return_4h"),
+                        "top120_median_return_15m": fm.get("top120_median_return_15m"),
+                        "top120_median_return_1h": fm.get("top120_median_return_1h"),
+                        "top120_median_return_4h": fm.get("top120_median_return_4h"),
+                        "top120_breadth_positive_15m": fm.get("top120_breadth_positive_15m"),
+                        "top120_breadth_positive_1h": fm.get("top120_breadth_positive_1h"),
+                        "top120_breadth_positive_4h": fm.get("top120_breadth_positive_4h"),
+                        "top120_breadth_negative_15m": fm.get("top120_breadth_negative_15m"),
+                        "top120_breadth_negative_1h": fm.get("top120_breadth_negative_1h"),
+                        "top120_breadth_negative_4h": fm.get("top120_breadth_negative_4h"),
+                        "top120_breadth_net_15m": fm.get("top120_breadth_net_15m"),
+                        "top120_breadth_net_1h": fm.get("top120_breadth_net_1h"),
+                        "top120_breadth_net_4h": fm.get("top120_breadth_net_4h"),
+                        "market_return_sample_size_15m": fm.get("market_return_sample_size_15m"),
+                        "market_return_sample_size_1h": fm.get("market_return_sample_size_1h"),
+                        "market_return_sample_size_4h": fm.get("market_return_sample_size_4h"),
+                        "token_vs_btc_return_15m": fm.get("token_vs_btc_return_15m"),
+                        "token_vs_btc_return_1h": fm.get("token_vs_btc_return_1h"),
+                        "token_vs_btc_return_4h": fm.get("token_vs_btc_return_4h"),
+                        "token_vs_eth_return_15m": fm.get("token_vs_eth_return_15m"),
+                        "token_vs_eth_return_1h": fm.get("token_vs_eth_return_1h"),
+                        "token_vs_eth_return_4h": fm.get("token_vs_eth_return_4h"),
+                        "token_vs_market_return_15m": fm.get("token_vs_market_return_15m"),
+                        "token_vs_market_return_1h": fm.get("token_vs_market_return_1h"),
+                        "token_vs_market_return_4h": fm.get("token_vs_market_return_4h"),
+                        "return_percentile_15m": fm.get("return_percentile_15m"),
+                        "return_percentile_1h": fm.get("return_percentile_1h"),
+                        "return_percentile_4h": fm.get("return_percentile_4h"),
+                        "return_rank_15m": fm.get("return_rank_15m"),
+                        "return_rank_1h": fm.get("return_rank_1h"),
+                        "return_rank_4h": fm.get("return_rank_4h"),
+                        "market_relative_status_15m": fm.get("market_relative_status_15m"),
+                        "market_relative_status_1h": fm.get("market_relative_status_1h"),
+                        "market_relative_status_4h": fm.get("market_relative_status_4h"),
+                        "market_relative_reason_15m": fm.get("market_relative_reason_15m"),
+                        "market_relative_reason_1h": fm.get("market_relative_reason_1h"),
+                        "market_relative_reason_4h": fm.get("market_relative_reason_4h"),
+                        "relative_strength_score_15m": fm.get("relative_strength_score_15m"),
+                        "relative_strength_score_1h": fm.get("relative_strength_score_1h"),
+                        "relative_strength_score_4h": fm.get("relative_strength_score_4h"),
+                        "relative_weakness_score_15m": fm.get("relative_weakness_score_15m"),
+                        "relative_weakness_score_1h": fm.get("relative_weakness_score_1h"),
+                        "relative_weakness_score_4h": fm.get("relative_weakness_score_4h"),
+                        "market_independence_score_15m": fm.get("market_independence_score_15m"),
+                        "market_independence_score_1h": fm.get("market_independence_score_1h"),
+                        "market_independence_score_4h": fm.get("market_independence_score_4h"),
                         "oi_delta_15m": fm.get("oi_delta_15m"),
                         "oi_delta_z_15m": fm.get("oi_delta_z_15m"),
                         "oi_delta_reliable_15m": fm.get("oi_delta_reliable_15m"),
+                        "oi_alignment_status_15m": fm.get("oi_alignment_status_15m"),
+                        "oi_open_timestamp_15m": fm.get("oi_open_timestamp_15m"),
+                        "oi_close_timestamp_15m": fm.get("oi_close_timestamp_15m"),
+                        "oi_open_age_seconds_15m": fm.get("oi_open_age_seconds_15m"),
+                        "oi_close_age_seconds_15m": fm.get("oi_close_age_seconds_15m"),
+                        "bucket_completion_pct_15m": fm.get("bucket_completion_pct_15m"),
                         "taker_buy_sell_ratio_delta_15m": fm.get("taker_buy_sell_ratio_delta_15m"),
                         "taker_buy_sell_ratio_delta_4h": fm.get("taker_buy_sell_ratio_delta_4h"),
                         "taker_buy_sell_ratio_level_15m": fm.get("taker_buy_sell_ratio_level_15m"),
@@ -629,16 +812,99 @@ async def run_forward_monitor():
                     fallback_readiness, fallback_readiness_reason = _semantic_readiness_from_candidate(candidate)
                     candidate["v2balanced_semantic_readiness"] = data.get("v2balanced_semantic_readiness") or fallback_readiness
                     candidate["v2balanced_readiness_reason"] = data.get("v2balanced_readiness_reason") or fallback_readiness_reason
+                    (
+                        fallback_gate_enabled,
+                        fallback_gate_decision,
+                        fallback_gate_reason,
+                        fallback_gate_effect,
+                    ) = _semantic_gate_shadow_from_candidate(candidate)
+                    candidate["semantic_gate_enabled"] = data.get("semantic_gate_enabled", fallback_gate_enabled)
+                    candidate["semantic_gate_shadow_decision"] = data.get("semantic_gate_shadow_decision") or fallback_gate_decision
+                    candidate["semantic_gate_shadow_reason"] = data.get("semantic_gate_shadow_reason") or fallback_gate_reason
+                    candidate["semantic_gate_live_effect"] = data.get("semantic_gate_live_effect") or fallback_gate_effect
+                    for entry_tf in ENTRY_LOCATION_TIMEFRAMES:
+                        phase, quality, reason, opposite_watch = _entry_location_from_candidate(candidate, entry_tf)
+                        candidate[f"entry_location_phase_{entry_tf}"] = (
+                            candidate.get(f"entry_location_phase_{entry_tf}") or phase
+                        )
+                        candidate[f"entry_location_quality_{entry_tf}"] = (
+                            candidate.get(f"entry_location_quality_{entry_tf}") or quality
+                        )
+                        candidate[f"entry_location_reason_{entry_tf}"] = (
+                            candidate.get(f"entry_location_reason_{entry_tf}") or reason
+                        )
+                        candidate[f"opposite_signal_watch_{entry_tf}"] = (
+                            candidate.get(f"opposite_signal_watch_{entry_tf}") or opposite_watch
+                        )
                     candidates.append(candidate)
+
+                if active_symbols:
+                    latest_closed_start_res = await session.execute(
+                        select(func.max(MarketDataBucket.bucket_start)).where(
+                            MarketDataBucket.timeframe == "15m",
+                            MarketDataBucket.foundation_version == "v2_option_a",
+                            MarketDataBucket.bucket_end <= datetime.now(UTC),
+                        )
+                    )
+                    latest_closed_start = latest_closed_start_res.scalar()
+                    if latest_closed_start:
+                        closed_bucket_res = await session.execute(
+                            select(
+                                MarketDataBucket.oi_alignment_status,
+                                MarketDataBucket.oi_delta_reliable,
+                                func.count(),
+                            )
+                            .where(
+                                MarketDataBucket.timeframe == "15m",
+                                MarketDataBucket.foundation_version == "v2_option_a",
+                                MarketDataBucket.bucket_start == latest_closed_start,
+                            )
+                            .group_by(
+                                MarketDataBucket.oi_alignment_status,
+                                MarketDataBucket.oi_delta_reliable,
+                            )
+                        )
+                        closed_bucket_oi_summary = {
+                            "bucket_start": latest_closed_start,
+                            "distribution": [
+                                {
+                                    "oi_alignment_status_15m": row[0],
+                                    "oi_delta_reliable_15m": row[1],
+                                    "count": row[2],
+                                }
+                                for row in closed_bucket_res.all()
+                            ],
+                        }
     except Exception as e:
         print(f"\n[ERROR] Database error: {e}")
 
     # 3. Export CSV (Always)
     df_cols = [
-        "timestamp", "symbol", "timeframe", "foundation_version",
+        "timestamp", "latest_state_updated_at", "symbol", "timeframe", "foundation_version",
         "action_bias", "action_status", "v2_action_bias", "v2_action_status",
         "price_change_15m", "price_change_1h", "price_change_4h",
+        *PHASE8_LOCATION_COLUMNS,
+        *PHASE8_ENTRY_LOCATION_COLUMNS,
+        "btc_return_15m", "btc_return_1h", "btc_return_4h",
+        "eth_return_15m", "eth_return_1h", "eth_return_4h",
+        "top120_median_return_15m", "top120_median_return_1h", "top120_median_return_4h",
+        "top120_breadth_positive_15m", "top120_breadth_positive_1h", "top120_breadth_positive_4h",
+        "top120_breadth_negative_15m", "top120_breadth_negative_1h", "top120_breadth_negative_4h",
+        "top120_breadth_net_15m", "top120_breadth_net_1h", "top120_breadth_net_4h",
+        "market_return_sample_size_15m", "market_return_sample_size_1h", "market_return_sample_size_4h",
+        "token_vs_btc_return_15m", "token_vs_btc_return_1h", "token_vs_btc_return_4h",
+        "token_vs_eth_return_15m", "token_vs_eth_return_1h", "token_vs_eth_return_4h",
+        "token_vs_market_return_15m", "token_vs_market_return_1h", "token_vs_market_return_4h",
+        "return_percentile_15m", "return_percentile_1h", "return_percentile_4h",
+        "return_rank_15m", "return_rank_1h", "return_rank_4h",
+        "market_relative_status_15m", "market_relative_status_1h", "market_relative_status_4h",
+        "market_relative_reason_15m", "market_relative_reason_1h", "market_relative_reason_4h",
+        "relative_strength_score_15m", "relative_strength_score_1h", "relative_strength_score_4h",
+        "relative_weakness_score_15m", "relative_weakness_score_1h", "relative_weakness_score_4h",
+        "market_independence_score_15m", "market_independence_score_1h", "market_independence_score_4h",
         "oi_delta_15m", "oi_delta_z_15m", "oi_delta_reliable_15m",
+        "oi_alignment_status_15m", "oi_open_timestamp_15m", "oi_close_timestamp_15m",
+        "oi_open_age_seconds_15m", "oi_close_age_seconds_15m", "bucket_completion_pct_15m",
         "taker_buy_sell_ratio_delta_15m", "taker_buy_sell_ratio_delta_4h",
         "taker_buy_sell_ratio_level_15m", "taker_price_divergence",
         "market_trend", "market_control", "htf_trend", "htf_alignment",
@@ -659,6 +925,8 @@ async def run_forward_monitor():
         "direction_alignment_status", "direction_alignment_reason",
         "v2balanced_candidate_stage", "v2balanced_stage_reason",
         "v2balanced_semantic_readiness", "v2balanced_readiness_reason",
+        "semantic_gate_enabled", "semantic_gate_shadow_decision",
+        "semantic_gate_shadow_reason", "semantic_gate_live_effect",
         "bucket_is_closed", "bucket_completion_pct", "volume_z_reliable", "oi_delta_z_reliable"
     ]
     
@@ -703,6 +971,11 @@ async def run_forward_monitor():
         "v2balanced_stage_reason",
         "v2balanced_semantic_readiness",
         "v2balanced_readiness_reason",
+        "semantic_gate_enabled",
+        "semantic_gate_shadow_decision",
+        "semantic_gate_shadow_reason",
+        "semantic_gate_live_effect",
+        *PHASE8_ENTRY_LOCATION_COLUMNS,
     ]:
         df[layer5_col] = df[layer5_col].astype("object")
     for idx, row in df.iterrows():
@@ -726,7 +999,18 @@ async def run_forward_monitor():
         semantic_readiness, readiness_reason = _semantic_readiness_from_candidate(df.loc[idx].to_dict())
         df.at[idx, "v2balanced_semantic_readiness"] = semantic_readiness
         df.at[idx, "v2balanced_readiness_reason"] = readiness_reason
-    df.to_csv(csv_path, index=False)
+        gate_enabled, gate_decision, gate_reason, gate_effect = _semantic_gate_shadow_from_candidate(df.loc[idx].to_dict())
+        df.at[idx, "semantic_gate_enabled"] = gate_enabled
+        df.at[idx, "semantic_gate_shadow_decision"] = gate_decision
+        df.at[idx, "semantic_gate_shadow_reason"] = gate_reason
+        df.at[idx, "semantic_gate_live_effect"] = gate_effect
+        for entry_tf in ENTRY_LOCATION_TIMEFRAMES:
+            phase, quality, reason, opposite_watch = _entry_location_from_candidate(df.loc[idx].to_dict(), entry_tf)
+            df.at[idx, f"entry_location_phase_{entry_tf}"] = phase
+            df.at[idx, f"entry_location_quality_{entry_tf}"] = quality
+            df.at[idx, f"entry_location_reason_{entry_tf}"] = reason
+            df.at[idx, f"opposite_signal_watch_{entry_tf}"] = opposite_watch
+    _write_csv_utf8(df, csv_path)
     
     current_count = len(candidates)
     total_logged = len(df)
@@ -738,7 +1022,7 @@ async def run_forward_monitor():
     print(f"Output CSV Path:      {csv_path.absolute()}")
 
     # 4. Generate Summary (Always)
-    with open(summary_path, "w") as f:
+    with _open_utf8_writer(summary_path) as f:
         f.write("# Forward Shadow Daily Summary\n\n")
         f.write(f"**Report Generated**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n")
         
@@ -757,6 +1041,116 @@ async def run_forward_monitor():
         f.write(f"- **Stale States Ignored**: {stale_states_ignored}\n")
         f.write(f"- **Current Run Observations**: {current_count}\n")
         f.write(f"- **Total Logged Observations**: {total_logged}\n\n")
+
+        active_oi_df = pd.DataFrame(active_oi_rows)
+        f.write("## OI Boundary Distribution\n")
+        if active_oi_df.empty:
+            f.write("No active OI boundary rows available for this run.\n\n")
+        else:
+            oi_boundary_distribution = (
+                active_oi_df
+                .assign(
+                    oi_alignment_status_15m=active_oi_df["oi_alignment_status_15m"].fillna("UNKNOWN").replace("", "UNKNOWN"),
+                    oi_delta_reliable_15m=active_oi_df["oi_delta_reliable_15m"].fillna("UNKNOWN").replace("", "UNKNOWN"),
+                )
+                .groupby(["oi_alignment_status_15m", "oi_delta_reliable_15m"], dropna=False)
+                .size()
+                .reset_index(name="count")
+                .sort_values("count", ascending=False)
+            )
+            f.write(oi_boundary_distribution.to_markdown(index=False))
+            f.write("\n\n")
+
+            if closed_bucket_oi_summary:
+                f.write("### Last Closed DB Bucket OI Reliability\n")
+                closed_distribution = pd.DataFrame(closed_bucket_oi_summary.get("distribution", []))
+                f.write(f"- **Bucket Start**: {closed_bucket_oi_summary.get('bucket_start')}\n\n")
+                f.write(closed_distribution.to_markdown(index=False) if not closed_distribution.empty else "No closed bucket OI rows available.")
+                f.write("\n\n")
+
+        f.write("## OI Reliability by bucket_completion_pct\n")
+        if active_oi_df.empty:
+            f.write("No active OI rows available for bucket completion diagnostics.\n\n")
+        else:
+            completion_df = active_oi_df.copy()
+            completion_df["bucket_completion_pct_15m"] = pd.to_numeric(
+                completion_df["bucket_completion_pct_15m"],
+                errors="coerce",
+            )
+            completion_df["completion_bucket"] = pd.cut(
+                completion_df["bucket_completion_pct_15m"],
+                bins=[-0.001, 0.25, 0.50, 0.75, 0.90, 0.999, 1.001],
+                labels=["0-25%", "25-50%", "50-75%", "75-90%", "90-99.9%", "closed"],
+                include_lowest=True,
+            ).astype("object").fillna("unknown")
+            completion_crosstab = pd.crosstab(
+                completion_df["completion_bucket"],
+                completion_df["oi_delta_reliable_15m"].fillna("UNKNOWN").replace("", "UNKNOWN"),
+            )
+            f.write(completion_crosstab.to_markdown() if not completion_crosstab.empty else "No bucket completion cross-tab available.")
+            f.write("\n\n")
+
+        f.write("## OI Reliability by latest_state_updated_at age\n")
+        if active_oi_df.empty:
+            f.write("No active OI rows available for latest-state age diagnostics.\n\n")
+        else:
+            age_df = active_oi_df.copy()
+            updated_at = pd.to_datetime(age_df["latest_state_updated_at"], utc=True, errors="coerce")
+            now_ts = pd.Timestamp(datetime.now(UTC))
+            age_df["latest_state_age_seconds"] = (now_ts - updated_at).dt.total_seconds()
+            age_df["latest_state_age_bucket"] = pd.cut(
+                age_df["latest_state_age_seconds"],
+                bins=[-1, 60, 180, 300, 600, float("inf")],
+                labels=["0-60s", "1-3m", "3-5m", "5-10m", ">10m"],
+                include_lowest=True,
+            ).astype("object").fillna("unknown")
+            age_crosstab = pd.crosstab(
+                age_df["latest_state_age_bucket"],
+                age_df["oi_delta_reliable_15m"].fillna("UNKNOWN").replace("", "UNKNOWN"),
+            )
+            f.write(age_crosstab.to_markdown() if not age_crosstab.empty else "No latest-state age cross-tab available.")
+            f.write("\n\n")
+
+        f.write("## OI Reliability Warnings\n")
+        oi_warning_rows = []
+        if not active_oi_df.empty:
+            candidate_mask = active_oi_df.apply(
+                lambda row: (
+                    row.get("data_quality_status_15m") == "FRESH"
+                    and _is_empty_fallback(row.get("fallback_fields_15m"))
+                    and _is_false_like(row.get("oi_delta_reliable_15m"))
+                ),
+                axis=1,
+            )
+            warning_count = int(candidate_mask.sum())
+            active_oi_count = len(active_oi_df)
+            if active_oi_count and warning_count > active_oi_count / 2:
+                oi_warning_rows.append({
+                    "warning": "latest_state_oi_export_lag_possible",
+                    "affected_rows": warning_count,
+                    "active_rows": active_oi_count,
+                    "reason": "majority_fresh_no_fallback_but_oi_unreliable",
+                })
+                if closed_bucket_oi_summary:
+                    closed_distribution = closed_bucket_oi_summary.get("distribution", [])
+                    closed_aligned_count = sum(
+                        int(item.get("count", 0))
+                        for item in closed_distribution
+                        if item.get("oi_alignment_status_15m") == "ALIGNED"
+                        and item.get("oi_delta_reliable_15m") is True
+                    )
+                    if closed_aligned_count > active_oi_count / 2:
+                        oi_warning_rows.append({
+                            "warning": "closed_bucket_oi_reliable_latest_state_unreliable",
+                            "affected_rows": closed_aligned_count,
+                            "active_rows": active_oi_count,
+                            "reason": "last_closed_db_bucket_majority_aligned",
+                        })
+        if oi_warning_rows:
+            f.write(pd.DataFrame(oi_warning_rows).to_markdown(index=False))
+        else:
+            f.write("No OI reliability forensic warnings observed.")
+        f.write("\n\n")
 
         if total_logged == 0:
             f.write("> [!NOTE]\n")
@@ -839,6 +1233,66 @@ async def run_forward_monitor():
                 df["v2balanced_candidate_stage"].fillna("NO_SETUP").replace("", "NO_SETUP"),
                 df["v2balanced_semantic_readiness"].fillna("NO_SETUP").replace("", "NO_SETUP"),
             )
+            semantic_gate_decision_counts = (
+                df["semantic_gate_shadow_decision"]
+                .fillna("would_no_setup")
+                .replace("", "would_no_setup")
+                .value_counts()
+            )
+            semantic_gate_by_readiness = pd.crosstab(
+                df["v2balanced_semantic_readiness"].fillna("NO_SETUP").replace("", "NO_SETUP"),
+                df["semantic_gate_shadow_decision"].fillna("would_no_setup").replace("", "would_no_setup"),
+            )
+            semantic_gate_effect_counts = (
+                df["semantic_gate_live_effect"]
+                .fillna("none_when_disabled")
+                .replace("", "none_when_disabled")
+                .value_counts()
+            )
+            market_relative_status_counts = (
+                df["market_relative_status_15m"]
+                .fillna("UNKNOWN_MARKET_CONTEXT")
+                .replace("", "UNKNOWN_MARKET_CONTEXT")
+                .value_counts()
+            )
+            market_relative_by_layer5_direction = pd.crosstab(
+                df["layer5_direction_bias"].fillna("NO_DIRECTION").replace("", "NO_DIRECTION"),
+                df["market_relative_status_15m"].fillna("UNKNOWN_MARKET_CONTEXT").replace("", "UNKNOWN_MARKET_CONTEXT"),
+            )
+            market_relative_by_semantic = pd.crosstab(
+                df["v2balanced_semantic_readiness"].fillna("NO_SETUP").replace("", "NO_SETUP"),
+                df["market_relative_status_15m"].fillna("UNKNOWN_MARKET_CONTEXT").replace("", "UNKNOWN_MARKET_CONTEXT"),
+            )
+            top_relative_strength = df.sort_values(
+                by=["relative_strength_score_15m", "return_percentile_15m"],
+                ascending=False,
+            )[
+                [
+                    "symbol",
+                    "market_relative_status_15m",
+                    "relative_strength_score_15m",
+                    "token_vs_btc_return_15m",
+                    "token_vs_market_return_15m",
+                    "return_percentile_15m",
+                    "layer5_direction_bias",
+                    "v2balanced_semantic_readiness",
+                ]
+            ].head(10)
+            top_relative_weakness = df.sort_values(
+                by=["relative_weakness_score_15m", "return_percentile_15m"],
+                ascending=[False, True],
+            )[
+                [
+                    "symbol",
+                    "market_relative_status_15m",
+                    "relative_weakness_score_15m",
+                    "token_vs_btc_return_15m",
+                    "token_vs_market_return_15m",
+                    "return_percentile_15m",
+                    "layer5_direction_bias",
+                    "v2balanced_semantic_readiness",
+                ]
+            ].head(10)
             directional_coverage = {
                 "price_change_15m": _populated_count(df, "price_change_15m"),
                 "oi_delta_15m": _populated_count(df, "oi_delta_15m"),
@@ -846,6 +1300,203 @@ async def run_forward_monitor():
                 "flow_alignment": _populated_count(df, "flow_alignment"),
                 "action_bias": _populated_count(df, "action_bias"),
             }
+            market_relative_coverage = {
+                "btc_return_15m": _populated_count(df, "btc_return_15m"),
+                "eth_return_15m": _populated_count(df, "eth_return_15m"),
+                "top120_median_return_15m": _populated_count(df, "top120_median_return_15m"),
+                "token_vs_btc_return_15m": _populated_count(df, "token_vs_btc_return_15m"),
+                "token_vs_eth_return_15m": _populated_count(df, "token_vs_eth_return_15m"),
+                "token_vs_market_return_15m": _populated_count(df, "token_vs_market_return_15m"),
+                "return_percentile_15m": _populated_count(df, "return_percentile_15m"),
+                "return_rank_15m": _populated_count(df, "return_rank_15m"),
+                "market_relative_status_15m": _populated_count(df, "market_relative_status_15m"),
+                "relative_strength_score_15m": _populated_count(df, "relative_strength_score_15m"),
+                "relative_weakness_score_15m": _populated_count(df, "relative_weakness_score_15m"),
+            }
+            location_coverage = {
+                "range_position_15m": _populated_count(df, "range_position_15m"),
+                "distance_from_range_high_pct_15m": _populated_count(df, "distance_from_range_high_pct_15m"),
+                "distance_from_range_low_pct_15m": _populated_count(df, "distance_from_range_low_pct_15m"),
+                "atr_extension_15m": _populated_count(df, "atr_extension_15m"),
+                "recent_move_atr_15m": _populated_count(df, "recent_move_atr_15m"),
+                "candle_body_atr_15m": _populated_count(df, "candle_body_atr_15m"),
+                "breakout_age_candles_15m": _populated_count(df, "breakout_age_candles_15m"),
+                "breakdown_age_candles_15m": _populated_count(df, "breakdown_age_candles_15m"),
+                "volume_climax_score_15m": _populated_count(df, "volume_climax_score_15m"),
+                "oi_climax_score_15m": _populated_count(df, "oi_climax_score_15m"),
+                "wick_rejection_score_15m": _populated_count(df, "wick_rejection_score_15m"),
+            }
+            location_df = df.copy()
+            location_numeric_cols = [
+                "range_position_15m",
+                "atr_extension_15m",
+                "recent_move_atr_15m",
+                "breakout_age_candles_15m",
+                "breakdown_age_candles_15m",
+                "volume_climax_score_15m",
+                "oi_climax_score_15m",
+                "wick_rejection_score_15m",
+            ]
+            for col in location_numeric_cols:
+                location_df[col] = pd.to_numeric(location_df[col], errors="coerce")
+            for col in ["is_late_breakout_15m", "is_late_breakdown_15m", "is_extended_from_range_mid_15m"]:
+                location_df[col] = location_df[col].apply(
+                    lambda value: str(_clean_value(value, "")).strip().lower() in {"true", "1", "yes"}
+                )
+            range_position_distribution = (
+                pd.cut(
+                    location_df["range_position_15m"],
+                    bins=[-0.001, 0.20, 0.40, 0.60, 0.80, 1.001],
+                    labels=["0-20%", "20-40%", "40-60%", "60-80%", "80-100%"],
+                    include_lowest=True,
+                )
+                .value_counts(sort=False)
+                .rename_axis("range_position_bucket")
+                .reset_index(name="count")
+            )
+            atr_extension_distribution = (
+                pd.cut(
+                    location_df["atr_extension_15m"],
+                    bins=[-0.001, 0.50, 1.00, 1.50, 2.00, float("inf")],
+                    labels=["0-0.5 ATR", "0.5-1 ATR", "1-1.5 ATR", "1.5-2 ATR", ">2 ATR"],
+                    include_lowest=True,
+                )
+                .value_counts(sort=False)
+                .rename_axis("atr_extension_bucket")
+                .reset_index(name="count")
+            )
+            breakout_age_distribution = (
+                pd.cut(
+                    location_df["breakout_age_candles_15m"],
+                    bins=[-1, 1, 3, 6, float("inf")],
+                    labels=["1 candle", "2-3 candles", "4-6 candles", ">6 candles"],
+                    include_lowest=True,
+                )
+                .value_counts(sort=False)
+                .rename_axis("breakout_age_bucket")
+                .reset_index(name="count")
+            )
+            breakdown_age_distribution = (
+                pd.cut(
+                    location_df["breakdown_age_candles_15m"],
+                    bins=[-1, 1, 3, 6, float("inf")],
+                    labels=["1 candle", "2-3 candles", "4-6 candles", ">6 candles"],
+                    include_lowest=True,
+                )
+                .value_counts(sort=False)
+                .rename_axis("breakdown_age_bucket")
+                .reset_index(name="count")
+            )
+            location_candidate_cols = [
+                "symbol",
+                "layer5_watch_status",
+                "layer5_direction_bias",
+                "range_position_15m",
+                "atr_extension_15m",
+                "recent_move_atr_15m",
+                "breakout_age_candles_15m",
+                "breakdown_age_candles_15m",
+                "volume_climax_score_15m",
+                "oi_climax_score_15m",
+                "wick_rejection_score_15m",
+                "hard_filter_reasons",
+            ]
+            location_df["late_chase_score"] = (
+                location_df["is_late_breakout_15m"].astype(int)
+                + location_df["is_late_breakdown_15m"].astype(int)
+                + location_df["is_extended_from_range_mid_15m"].astype(int)
+                + location_df["atr_extension_15m"].fillna(0.0)
+                + location_df["recent_move_atr_15m"].fillna(0.0)
+                + location_df["volume_climax_score_15m"].fillna(0.0)
+                + location_df["oi_climax_score_15m"].fillna(0.0)
+            )
+            top_late_chase = (
+                location_df[location_df["late_chase_score"] > 0]
+                .sort_values("late_chase_score", ascending=False)
+                [location_candidate_cols]
+                .head(10)
+            )
+            entry_phase_counts = (
+                location_df["entry_location_phase_15m"]
+                .fillna("UNKNOWN_LOCATION")
+                .replace("", "UNKNOWN_LOCATION")
+                .value_counts()
+            )
+            entry_quality_counts = (
+                location_df["entry_location_quality_15m"]
+                .fillna("UNKNOWN")
+                .replace("", "UNKNOWN")
+                .value_counts()
+            )
+            entry_phase_by_layer5_direction = pd.crosstab(
+                location_df["layer5_direction_bias"].fillna("NO_DIRECTION").replace("", "NO_DIRECTION"),
+                location_df["entry_location_phase_15m"].fillna("UNKNOWN_LOCATION").replace("", "UNKNOWN_LOCATION"),
+            )
+            entry_phase_by_market_relative = pd.crosstab(
+                location_df["market_relative_status_15m"]
+                .fillna("UNKNOWN_MARKET_CONTEXT")
+                .replace("", "UNKNOWN_MARKET_CONTEXT"),
+                location_df["entry_location_phase_15m"].fillna("UNKNOWN_LOCATION").replace("", "UNKNOWN_LOCATION"),
+            )
+            entry_phase_by_readiness = pd.crosstab(
+                location_df["v2balanced_semantic_readiness"].fillna("NO_SETUP").replace("", "NO_SETUP"),
+                location_df["entry_location_phase_15m"].fillna("UNKNOWN_LOCATION").replace("", "UNKNOWN_LOCATION"),
+            )
+            entry_location_cols = [
+                "symbol",
+                "layer5_direction_bias",
+                "market_relative_status_15m",
+                "v2balanced_semantic_readiness",
+                "entry_location_phase_15m",
+                "entry_location_quality_15m",
+                "opposite_signal_watch_15m",
+                "range_position_15m",
+                "atr_extension_15m",
+                "recent_move_atr_15m",
+                "volume_climax_score_15m",
+                "oi_climax_score_15m",
+                "wick_rejection_score_15m",
+                "entry_location_reason_15m",
+                "hard_filter_reasons",
+            ]
+            top_late_chase_semantic = (
+                location_df[location_df["entry_location_phase_15m"].isin(["LATE_CHASE", "WAIT_PULLBACK"])]
+                .sort_values(["atr_extension_15m", "recent_move_atr_15m"], ascending=[False, False], na_position="last")
+                [entry_location_cols]
+                .head(10)
+            )
+            top_exhaustion_risk = (
+                location_df[location_df["entry_location_phase_15m"].isin(["EXHAUSTION_RISK", "DISTRIBUTION_RISK", "ACCUMULATION_RISK"])]
+                .assign(
+                    exhaustion_score=lambda item: (
+                        item["volume_climax_score_15m"].fillna(0.0)
+                        + item["oi_climax_score_15m"].fillna(0.0)
+                        + item["wick_rejection_score_15m"].fillna(0.0)
+                        + item["atr_extension_15m"].fillna(0.0)
+                    )
+                )
+                .sort_values("exhaustion_score", ascending=False)
+                [entry_location_cols]
+                .head(10)
+            )
+            healthy_location_mask = (
+                location_df["range_position_15m"].between(0.20, 0.80, inclusive="both")
+                & ~location_df["is_extended_from_range_mid_15m"]
+                & ~location_df["is_late_breakout_15m"]
+                & ~location_df["is_late_breakdown_15m"]
+            )
+            top_healthy_location = (
+                location_df[healthy_location_mask]
+                .sort_values(["atr_extension_15m", "recent_move_atr_15m"], ascending=[True, True], na_position="last")
+                [location_candidate_cols]
+                .head(10)
+            )
+            top_healthy_location_semantic = (
+                location_df[location_df["entry_location_phase_15m"].isin(["HEALTHY_CONTINUATION", "EARLY_BUILD"])]
+                .sort_values(["entry_location_quality_15m", "atr_extension_15m"], ascending=[True, True], na_position="last")
+                [entry_location_cols]
+                .head(10)
+            )
             watchlist_df = df[df["layer5_watch_status"].fillna("").astype(str).str.startswith("WATCHLIST_")]
             watch_action_bias_counts = watchlist_df["action_bias"].fillna("UNKNOWN").replace("", "UNKNOWN").value_counts()
             watch_market_control_counts = watchlist_df["market_control"].fillna("UNKNOWN").replace("", "UNKNOWN").value_counts()
@@ -958,6 +1609,30 @@ async def run_forward_monitor():
             f.write("### Ready Legacy vs Semantic Readiness\n")
             f.write(ready_legacy_vs_semantic.to_markdown() if not ready_legacy_vs_semantic.empty else "No legacy/readiness cross-tab yet.")
             f.write("\n\n")
+            f.write("### Semantic Gate Shadow Decision Distribution\n")
+            f.write(semantic_gate_decision_counts.to_markdown() if not semantic_gate_decision_counts.empty else "No semantic gate shadow decisions yet.")
+            f.write("\n\n")
+            f.write("### Semantic Gate by Readiness\n")
+            f.write(semantic_gate_by_readiness.to_markdown() if not semantic_gate_by_readiness.empty else "No semantic gate/readiness cross-tab yet.")
+            f.write("\n\n")
+            f.write("### Semantic Gate Live Effect\n")
+            f.write(semantic_gate_effect_counts.to_markdown() if not semantic_gate_effect_counts.empty else "No semantic gate live effect labels yet.")
+            f.write("\n\n")
+            f.write("### Market-Relative Status Distribution\n")
+            f.write(market_relative_status_counts.to_markdown() if not market_relative_status_counts.empty else "No market-relative status labels yet.")
+            f.write("\n\n")
+            f.write("### Market-Relative Status by Layer 5 Direction\n")
+            f.write(market_relative_by_layer5_direction.to_markdown() if not market_relative_by_layer5_direction.empty else "No market-relative/direction cross-tab yet.")
+            f.write("\n\n")
+            f.write("### Market-Relative Status by Semantic Readiness\n")
+            f.write(market_relative_by_semantic.to_markdown() if not market_relative_by_semantic.empty else "No market-relative/readiness cross-tab yet.")
+            f.write("\n\n")
+            f.write("### Top Relative Strength Candidates\n")
+            f.write(top_relative_strength.to_markdown(index=False) if not top_relative_strength.empty else "No relative strength candidates yet.")
+            f.write("\n\n")
+            f.write("### Top Relative Weakness Candidates\n")
+            f.write(top_relative_weakness.to_markdown(index=False) if not top_relative_weakness.empty else "No relative weakness candidates yet.")
+            f.write("\n\n")
 
             f.write("## 10. Directional Primitive Coverage\n")
             f.write("| primitive | populated_count |\n")
@@ -966,7 +1641,64 @@ async def run_forward_monitor():
                 f.write(f"| {primitive} | {count} |\n")
             f.write("\n")
 
-            f.write("## 11. Watchlist Directional Raw Breakdown\n")
+            f.write("### Market-Relative Context Coverage\n")
+            f.write("| primitive | populated_count |\n")
+            f.write("|:----------|----------------:|\n")
+            for primitive, count in market_relative_coverage.items():
+                f.write(f"| {primitive} | {count} |\n")
+            f.write("\n")
+
+            f.write("## 11. Location / Phase Primitive Diagnostics\n")
+            f.write("### Location Primitive Coverage\n")
+            f.write("| primitive | populated_count |\n")
+            f.write("|:----------|----------------:|\n")
+            for primitive, count in location_coverage.items():
+                f.write(f"| {primitive} | {count} |\n")
+            f.write("\n")
+            f.write("### 15m Range Position Distribution\n")
+            f.write(range_position_distribution.to_markdown(index=False) if not range_position_distribution.empty else "No range position values yet.")
+            f.write("\n\n")
+            f.write("### 15m ATR Extension Distribution\n")
+            f.write(atr_extension_distribution.to_markdown(index=False) if not atr_extension_distribution.empty else "No ATR extension values yet.")
+            f.write("\n\n")
+            f.write("### 15m Breakout Age Distribution\n")
+            f.write(breakout_age_distribution.to_markdown(index=False) if not breakout_age_distribution.empty else "No breakout age values yet.")
+            f.write("\n\n")
+            f.write("### 15m Breakdown Age Distribution\n")
+            f.write(breakdown_age_distribution.to_markdown(index=False) if not breakdown_age_distribution.empty else "No breakdown age values yet.")
+            f.write("\n\n")
+            f.write("### Entry Location Phase Distribution\n")
+            f.write(entry_phase_counts.to_markdown() if not entry_phase_counts.empty else "No entry-location phase labels yet.")
+            f.write("\n\n")
+            f.write("### Entry Location Quality Distribution\n")
+            f.write(entry_quality_counts.to_markdown() if not entry_quality_counts.empty else "No entry-location quality labels yet.")
+            f.write("\n\n")
+            f.write("### Entry Location Phase by Layer 5 Direction\n")
+            f.write(entry_phase_by_layer5_direction.to_markdown() if not entry_phase_by_layer5_direction.empty else "No phase/direction cross-tab yet.")
+            f.write("\n\n")
+            f.write("### Entry Location Phase by Market-Relative Status\n")
+            f.write(entry_phase_by_market_relative.to_markdown() if not entry_phase_by_market_relative.empty else "No phase/market-relative cross-tab yet.")
+            f.write("\n\n")
+            f.write("### Entry Location Phase by Semantic Readiness\n")
+            f.write(entry_phase_by_readiness.to_markdown() if not entry_phase_by_readiness.empty else "No phase/readiness cross-tab yet.")
+            f.write("\n\n")
+            f.write("### Top Late / Chase Candidates\n")
+            f.write(top_late_chase.to_markdown(index=False) if not top_late_chase.empty else "No late/chase candidates yet.")
+            f.write("\n\n")
+            f.write("### Top Late / Chase Rows\n")
+            f.write(top_late_chase_semantic.to_markdown(index=False) if not top_late_chase_semantic.empty else "No late/chase semantic rows yet.")
+            f.write("\n\n")
+            f.write("### Top Exhaustion Risk Rows\n")
+            f.write(top_exhaustion_risk.to_markdown(index=False) if not top_exhaustion_risk.empty else "No exhaustion risk rows yet.")
+            f.write("\n\n")
+            f.write("### Top Early / Healthy-Location Candidates\n")
+            f.write(top_healthy_location.to_markdown(index=False) if not top_healthy_location.empty else "No early/healthy-location candidates yet.")
+            f.write("\n\n")
+            f.write("### Top Healthy-Location Rows\n")
+            f.write(top_healthy_location_semantic.to_markdown(index=False) if not top_healthy_location_semantic.empty else "No healthy-location semantic rows yet.")
+            f.write("\n\n")
+
+            f.write("## 12. Watchlist Directional Raw Breakdown\n")
             f.write("### Watchlist Rows by Action Bias\n")
             f.write(watch_action_bias_counts.to_markdown() if not watch_action_bias_counts.empty else "No watchlist rows yet.")
             f.write("\n\n")
@@ -989,22 +1721,22 @@ async def run_forward_monitor():
             f.write(watch_direction_by_control.to_markdown() if not watch_direction_by_control.empty else "No watchlist direction/control data yet.")
             f.write("\n\n")
             
-            f.write("## 12. Data Integrity Metrics\n")
+            f.write("## 13. Data Integrity Metrics\n")
             f.write(f"- **Foundation Versions**: {foundation_counts.to_dict()}\n")
             f.write(f"- **OI Reliability**: {oi_reliable_counts.to_dict()}\n")
             f.write(f"- **Z-Score Status**: {zscore_counts.to_dict()}\n\n")
             
-            f.write("## 13. Crowding & Sentiment Status\n")
+            f.write("## 14. Crowding & Sentiment Status\n")
             f.write(crowding_counts.to_markdown() + "\n\n")
             
-            f.write("## 14. Regime & Expansion Diagnostics\n")
+            f.write("## 15. Regime & Expansion Diagnostics\n")
             f.write("### Expansion Subtypes\n")
             f.write(expansion_counts.to_markdown() + "\n\n")
             f.write("### Regime Warnings\n")
             f.write(regime_warn_counts.to_markdown() if not regime_warn_counts.empty else "No regime warnings.")
             f.write("\n\n")
             
-            f.write("## 15. Compression Status\n")
+            f.write("## 16. Compression Status\n")
             f.write(compression_counts.to_markdown() + "\n")
 
 

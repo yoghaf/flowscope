@@ -139,6 +139,7 @@ class Settings(BaseSettings):
     trade_signals_active_tag: str | None = "v2_balanced"
     continuation_feedback_source_tag: str | None = None
     strategy_version: str = "v2_balanced"
+    v2balanced_use_semantic_readiness_gate: bool = False
     v2_qmid_quality_min: float = 0.35
     v2_qmid_quality_max: float = 0.55
     v2_qmid_market_pressure_4h_max_p06: float = 0.60

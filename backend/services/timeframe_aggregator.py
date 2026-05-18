@@ -906,6 +906,174 @@ class TimeframeAggregateStore:
             return
         bucket.apply_signal(score, signal_type, breakdown)
 
+    @staticmethod
+    def _clamp_unit(value: float | None) -> float | None:
+        if value is None or not math.isfinite(value):
+            return None
+        return max(0.0, min(1.0, value))
+
+    @staticmethod
+    def _signed_pct_distance(value: float, reference: float) -> float | None:
+        if reference <= ROBUST_EPSILON:
+            return None
+        return (value - reference) / reference
+
+    @staticmethod
+    def _streak_count(history: list[TimeframeBucket], direction: str) -> int:
+        count = 0
+        for item in reversed(history):
+            if direction == "green" and item.close_price > item.open_price:
+                count += 1
+            elif direction == "red" and item.close_price < item.open_price:
+                count += 1
+            else:
+                break
+        return count
+
+    @staticmethod
+    def _range_break_age(history: list[TimeframeBucket], direction: str, lookback: int = 20) -> int | None:
+        recent = history[-min(len(history), lookback):]
+        if len(recent) < 3:
+            return None
+        current_close = recent[-1].close_price
+        event: tuple[int, float] | None = None
+        for idx in range(1, len(recent)):
+            prior = recent[:idx]
+            if direction == "breakout":
+                boundary = max(item.high_price for item in prior)
+                if boundary > ROBUST_EPSILON and recent[idx].close_price > boundary:
+                    event = (idx, boundary)
+            else:
+                prior_lows = [item.low_price for item in prior if item.low_price > ROBUST_EPSILON]
+                if not prior_lows:
+                    continue
+                boundary = min(prior_lows)
+                if boundary > ROBUST_EPSILON and recent[idx].close_price < boundary:
+                    event = (idx, boundary)
+        if event is None:
+            return None
+        event_idx, boundary = event
+        if direction == "breakout" and current_close <= boundary:
+            return None
+        if direction == "breakdown" and current_close >= boundary:
+            return None
+        return len(recent) - event_idx
+
+    @classmethod
+    def _entry_location_primitives(
+        cls,
+        history: list[TimeframeBucket],
+        *,
+        atr_percent: float | None,
+        volume_z: float | None,
+        oi_delta_z: float | None,
+        upper_wick_ratio: float | None,
+        lower_wick_ratio: float | None,
+    ) -> dict[str, Any]:
+        if len(history) < 2:
+            return {
+                "range_position": None,
+                "distance_from_range_high_pct": None,
+                "distance_from_range_low_pct": None,
+                "distance_from_range_mid_pct": None,
+                "atr_extension": None,
+                "recent_move_atr": None,
+                "candle_body_atr": None,
+                "breakout_age_candles": None,
+                "breakdown_age_candles": None,
+                "consecutive_green_candles": 0,
+                "consecutive_red_candles": 0,
+                "volume_climax_score": None,
+                "oi_climax_score": None,
+                "wick_rejection_score": None,
+                "is_near_range_high": False,
+                "is_near_range_low": False,
+                "is_extended_from_range_mid": False,
+                "is_late_breakout": False,
+                "is_late_breakdown": False,
+            }
+
+        current = history[-1]
+        recent = history[-min(len(history), DEFAULT_STRUCTURE_WINDOW):]
+        highs = [item.high_price for item in recent if item.high_price > ROBUST_EPSILON]
+        lows = [item.low_price for item in recent if item.low_price > ROBUST_EPSILON]
+        close = current.close_price
+        if not highs or not lows or close <= ROBUST_EPSILON:
+            return cls._entry_location_primitives(
+                [],
+                atr_percent=atr_percent,
+                volume_z=volume_z,
+                oi_delta_z=oi_delta_z,
+                upper_wick_ratio=upper_wick_ratio,
+                lower_wick_ratio=lower_wick_ratio,
+            )
+
+        recent_high = max(highs)
+        recent_low = min(lows)
+        range_width = recent_high - recent_low
+        range_mid = (recent_high + recent_low) / 2.0
+        range_position = (
+            cls._clamp_unit((close - recent_low) / range_width)
+            if range_width > ROBUST_EPSILON
+            else None
+        )
+        distance_high = cls._signed_pct_distance(close, recent_high)
+        distance_low = cls._signed_pct_distance(close, recent_low)
+        distance_mid = cls._signed_pct_distance(close, range_mid)
+
+        atr_value = atr_percent if atr_percent and atr_percent > ROBUST_EPSILON else None
+        atr_extension = (
+            abs(distance_mid) / atr_value
+            if distance_mid is not None and atr_value is not None
+            else None
+        )
+        lookback_idx = max(0, len(history) - 4)
+        lookback_close = history[lookback_idx].close_price
+        recent_move_pct = (
+            abs(close - lookback_close) / close
+            if lookback_close > ROBUST_EPSILON and close > ROBUST_EPSILON
+            else None
+        )
+        recent_move_atr = (
+            recent_move_pct / atr_value
+            if recent_move_pct is not None and atr_value is not None
+            else None
+        )
+        candle_body_pct = abs(current.close_price - current.open_price) / close
+        candle_body_atr = candle_body_pct / atr_value if atr_value is not None else None
+
+        breakout_age = cls._range_break_age(history, "breakout")
+        breakdown_age = cls._range_break_age(history, "breakdown")
+        volume_climax_score = cls._clamp_unit(max(float(volume_z or 0.0), 0.0) / 5.0)
+        oi_climax_score = cls._clamp_unit(max(float(oi_delta_z or 0.0), 0.0) / 5.0)
+        wick_rejection_score = cls._clamp_unit(max(float(upper_wick_ratio or 0.0), float(lower_wick_ratio or 0.0)))
+
+        is_near_high = range_position is not None and range_position >= 0.80
+        is_near_low = range_position is not None and range_position <= 0.20
+        is_extended = atr_extension is not None and atr_extension >= 1.5
+
+        return {
+            "range_position": range_position,
+            "distance_from_range_high_pct": distance_high,
+            "distance_from_range_low_pct": distance_low,
+            "distance_from_range_mid_pct": distance_mid,
+            "atr_extension": atr_extension,
+            "recent_move_atr": recent_move_atr,
+            "candle_body_atr": candle_body_atr,
+            "breakout_age_candles": breakout_age,
+            "breakdown_age_candles": breakdown_age,
+            "consecutive_green_candles": cls._streak_count(history, "green"),
+            "consecutive_red_candles": cls._streak_count(history, "red"),
+            "volume_climax_score": volume_climax_score,
+            "oi_climax_score": oi_climax_score,
+            "wick_rejection_score": wick_rejection_score,
+            "is_near_range_high": is_near_high,
+            "is_near_range_low": is_near_low,
+            "is_extended_from_range_mid": is_extended,
+            "is_late_breakout": breakout_age is not None and breakout_age >= 4,
+            "is_late_breakdown": breakdown_age is not None and breakdown_age >= 4,
+        }
+
     def build_flow_metrics(
         self,
         symbol: str,
@@ -1159,6 +1327,18 @@ class TimeframeAggregateStore:
                 
                 for diag in [er_diag, oi_diag, taker_diag, crowd_diag, liq_diag]:
                     for k, v in diag.items():
+                        values[f"{k}_{timeframe}"] = v
+
+                if timeframe in {"15m", "1h", "4h"}:
+                    location_diag = self._entry_location_primitives(
+                        history,
+                        atr_percent=atr,
+                        volume_z=volume_z,
+                        oi_delta_z=oi_delta_z,
+                        upper_wick_ratio=upper_wick,
+                        lower_wick_ratio=lower_wick,
+                    )
+                    for k, v in location_diag.items():
                         values[f"{k}_{timeframe}"] = v
 
                 values.update({

@@ -8,11 +8,14 @@ import {
   formatPrice,
   formatRatio,
   getBlockReasons,
+  getDecisionTone,
+  getDisplayDecision,
   getDqStatus,
   getEntryPermission,
   getFallbackFields,
   getHardFilterReasons,
-  getMainBlockReason,
+  getHumanDecisionSubtitle,
+  getHumanReason,
   getProvenanceValue,
   getScenarioDisposition,
   getScenarioLabel,
@@ -72,7 +75,9 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
   const structuralPermission = getStructuralPermission(asset, timeframe);
   const hardFilterReasons = getHardFilterReasons(asset);
   const blockReasons = getBlockReasons(asset);
-  const mainBlockReason = getMainBlockReason(asset);
+  const displayDecision = getDisplayDecision(asset, timeframe);
+  const decisionSubtitle = getHumanDecisionSubtitle(asset);
+  const humanReason = getHumanReason(asset, timeframe);
 
   const oiAlignment = source(getProvenanceValue(asset, "oi_alignment_status", timeframe)).toUpperCase();
   const oiReliabilityRaw = getProvenanceValue(asset, "oi_delta_reliable", timeframe);
@@ -123,9 +128,12 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
               </div>
             </div>
           </Link>
-          <span className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-bold uppercase tracking-wide ${tone(entryPermission)}`}>
-            {formatPipelineLabel(entryPermission)}
-          </span>
+          <div className="shrink-0 text-right">
+            <span className={`inline-flex rounded-lg border px-3 py-1.5 text-xs font-bold uppercase tracking-wide ${getDecisionTone(displayDecision)}`}>
+              {displayDecision}
+            </span>
+            <p className="mt-1 max-w-[220px] text-xs text-muted-foreground">{decisionSubtitle}</p>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-3 xl:grid-cols-6">
@@ -151,7 +159,7 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Reason</p>
-            <p className="mt-1 truncate font-semibold text-amber-300" title={mainBlockReason}>{mainBlockReason}</p>
+            <p className="mt-1 truncate font-semibold text-amber-300" title={humanReason}>{humanReason}</p>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Confidence</p>
@@ -202,6 +210,7 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
               <p>Taker: {formatRatio(takerRatio)} - {takerSource} - {formatAge(takerAge)}</p>
               <p>L/S: {formatRatio(longShortRatio)} - {longShortSource} - {formatAge(longShortAge)}</p>
               <p>Fallbacks: {fallbackFields.length > 0 ? fallbackFields.join(", ") : "none"}</p>
+              <p>Final permission: {formatPipelineLabel(entryPermission)}</p>
               <p>Hard filters: {firstText(hardFilterReasons)}</p>
               <p>Blocks: {firstText(blockReasons)}</p>
               <p>Price: {formatPercent(toNumberOrNull(getProvenanceValue(asset, "price_change", timeframe)))} - OI Z {toNumberOrNull(getProvenanceValue(asset, "oi_delta_z", timeframe))?.toFixed(2) ?? "--"}</p>

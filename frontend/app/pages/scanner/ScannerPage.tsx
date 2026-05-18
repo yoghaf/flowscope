@@ -20,6 +20,7 @@ import {
   getDqStatus,
   getFallbackFields,
   getHardFilterReasons,
+  getHumanDecisionSubtitle,
   getHumanLabel,
   getHumanReason,
   getProvenanceValue,
@@ -59,21 +60,44 @@ type PipelineFilter = (typeof PIPELINE_FILTERS)[number];
 
 const FILTER_TO_DECISION: Partial<Record<PipelineFilter, DisplayDecision>> = {
   "Trade Ready": "TRADE READY",
-  Watchlist: "WATCHLIST",
-  Waiting: "WAIT",
-  Blocked: "BLOCKED",
   "Data Issues": "DATA ISSUE",
   "No Setup": "NO SETUP",
 };
 
 const DECISION_ORDER: Record<DisplayDecision, number> = {
   "TRADE READY": 0,
+  "LONG WATCH": 1,
+  "SHORT WATCH": 1,
+  "LONG TRAP WATCH": 1,
+  "SHORT SQUEEZE WATCH": 1,
   WATCHLIST: 1,
+  "WAITING CONFIRMATION": 2,
+  "WAITING DIRECTION": 2,
+  "LEGACY READY / WAIT": 2,
   WAIT: 2,
+  AVOID: 3,
   BLOCKED: 3,
   "DATA ISSUE": 4,
   "NO SETUP": 5,
 };
+
+function isWatchlistDecision(decision: DisplayDecision): boolean {
+  return (
+    decision === "WATCHLIST" ||
+    decision === "LONG WATCH" ||
+    decision === "SHORT WATCH" ||
+    decision === "LONG TRAP WATCH" ||
+    decision === "SHORT SQUEEZE WATCH"
+  );
+}
+
+function isWaitingDecision(decision: DisplayDecision): boolean {
+  return decision === "WAIT" || decision === "WAITING CONFIRMATION" || decision === "WAITING DIRECTION" || decision === "LEGACY READY / WAIT";
+}
+
+function isBlockedDecision(decision: DisplayDecision): boolean {
+  return decision === "BLOCKED" || decision === "AVOID";
+}
 
 function getScannerStaleTime(timeframe: Timeframe): number {
   if (timeframe === "15m") {
@@ -198,11 +222,11 @@ export default function ScannerPage() {
       const decision = getDisplayDecision(asset, timeframe);
       if (decision === "TRADE READY") {
         base["Trade Ready"] += 1;
-      } else if (decision === "WATCHLIST") {
+      } else if (isWatchlistDecision(decision)) {
         base.Watchlist += 1;
-      } else if (decision === "WAIT") {
+      } else if (isWaitingDecision(decision)) {
         base.Waiting += 1;
-      } else if (decision === "BLOCKED") {
+      } else if (isBlockedDecision(decision)) {
         base.Blocked += 1;
       } else if (decision === "DATA ISSUE") {
         base["Data Issues"] += 1;
@@ -217,7 +241,17 @@ export default function ScannerPage() {
   const filteredAssets = useMemo(() => {
     return sortedAssets.filter((asset) => {
       const decision = FILTER_TO_DECISION[pipelineFilter];
-      return decision ? getDisplayDecision(asset, timeframe) === decision : true;
+      const displayDecision = getDisplayDecision(asset, timeframe);
+      if (pipelineFilter === "Watchlist") {
+        return isWatchlistDecision(displayDecision);
+      }
+      if (pipelineFilter === "Waiting") {
+        return isWaitingDecision(displayDecision);
+      }
+      if (pipelineFilter === "Blocked") {
+        return isBlockedDecision(displayDecision);
+      }
+      return decision ? displayDecision === decision : true;
     });
   }, [pipelineFilter, sortedAssets, timeframe]);
   const latestAssetTimestamp = useMemo(() => {
@@ -462,6 +496,7 @@ export default function ScannerPage() {
                   const scenario = getScenarioDisplay(asset);
                   const structure = getStructureDisplay(asset, timeframe);
                   const reason = getHumanReason(asset, timeframe);
+                  const subtitle = getHumanDecisionSubtitle(asset);
                   const confidence = Math.round(getOpportunityScore(asset, timeframe) * 100);
                   const setupStats = setupMap.get(setupTypeFromDecision(asset.decision_type, asset.position_quality) ?? "");
                   const degradedBadges = getDegradedBadges(asset, timeframe);
@@ -486,6 +521,7 @@ export default function ScannerPage() {
                           <span title={getHelpText(decision)} className={`inline-flex rounded-lg border px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide ${getDecisionTone(decision)}`}>
                             {decision}
                           </span>
+                          <p className="mt-1 max-w-[180px] text-xs text-muted-foreground">{subtitle}</p>
                         </td>
                         <td className="px-4 py-3">
                           <span title={dqStatus.toUpperCase() === "STALE" ? "Data stale: wait for a fresh snapshot before trusting the setup." : undefined} className={`inline-flex rounded-lg border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${dqStatus.toUpperCase() === "FRESH" ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300" : "border-orange-500/25 bg-orange-500/10 text-orange-300"}`}>
@@ -622,8 +658,8 @@ function DetailBlock({ title, items }: { title: string; items: string[] }) {
       <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h4>
       <div className="space-y-1.5">
         {items.length > 0 ? (
-          items.map((item) => (
-            <p key={item} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-foreground">
+          items.map((item, index) => (
+            <p key={`${title}-${index}-${item}`} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-foreground">
               {item}
             </p>
           ))

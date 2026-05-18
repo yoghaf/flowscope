@@ -76,6 +76,10 @@ from backend.services.timeframe_aggregator import (
     TimeframeAggregateStore,
     TimeframeBucket,
 )
+from backend.services.entry_location_semantics import (
+    ENTRY_LOCATION_TIMEFRAMES,
+    classify_entry_location,
+)
 
 logger = logging.getLogger(__name__)
 TIMEFRAME_RANK = {timeframe: index for index, timeframe in enumerate(TIMEFRAME_ORDER)}
@@ -171,6 +175,10 @@ class AssetState:
     v2balanced_stage_reason: str = "no_setup"
     v2balanced_semantic_readiness: str = "NO_SETUP"
     v2balanced_readiness_reason: str = "no_setup"
+    semantic_gate_enabled: bool = False
+    semantic_gate_shadow_decision: str = "would_no_setup"
+    semantic_gate_shadow_reason: str = "semantic_readiness_no_setup"
+    semantic_gate_live_effect: str = "none_when_disabled"
     debug_trace: dict[str, Any] = field(default_factory=dict)
     market_interpretation: dict[str, Any] = field(default_factory=dict)
 
@@ -895,6 +903,7 @@ class SignalService:
                 self._mark_symbol_no_data(symbol, reason="missing_snapshot_cycle_data", now=datetime.now(UTC))
                 changed_symbols.append(symbol)
 
+            self._apply_market_relative_context()
             assets_to_persist = [self._to_asset_snapshot(asset, "1h") for asset in self.state.values()]
             latest_state_snapshots = [
                 self._to_asset_snapshot(state, timeframe)
@@ -2178,6 +2187,23 @@ class SignalService:
                 final_structural_permission=direct_structural_permission,
                 data_quality_status=getattr(flow_metrics, f"data_quality_status_{timeframe}", None),
             )
+            (
+                direct_semantic_gate_shadow_decision,
+                direct_semantic_gate_shadow_reason,
+                direct_semantic_gate_live_effect,
+            ) = self._semantic_gate_shadow_classification(
+                semantic_readiness=direct_semantic_readiness,
+                readiness_reason=direct_readiness_reason,
+            )
+            self._apply_entry_location_semantics(
+                flow_metrics=flow_metrics,
+                timeframe=timeframe,
+                layer5_direction_bias=direct_layer5_direction_bias,
+                v2balanced_semantic_readiness=direct_semantic_readiness,
+                scenario_label=scenario.label,
+                scenario_disposition=scenario.disposition,
+                hard_filter_reasons=direct_hard_filter_reasons,
+            )
             
             self.aggregate_store.apply_signal(
                 symbol,
@@ -2267,6 +2293,10 @@ class SignalService:
                 v2balanced_stage_reason=direct_v2balanced_stage_reason,
                 v2balanced_semantic_readiness=direct_semantic_readiness,
                 v2balanced_readiness_reason=direct_readiness_reason,
+                semantic_gate_enabled=self.settings.v2balanced_use_semantic_readiness_gate,
+                semantic_gate_shadow_decision=direct_semantic_gate_shadow_decision,
+                semantic_gate_shadow_reason=direct_semantic_gate_shadow_reason,
+                semantic_gate_live_effect=direct_semantic_gate_live_effect,
                 market_interpretation=interpretation_payload,
             )
             self.last_timeframe_update[(symbol, timeframe)] = now
@@ -2578,6 +2608,7 @@ class SignalService:
                     changed_symbols.append(symbol)
                     if alert:
                         signal_events.append(alert)
+                self._apply_market_relative_context()
                 assets_to_persist = [self._to_asset_snapshot(asset, "1h") for asset in self.state.values()]
                 bucket_rows = [
                     bucket.to_record()
@@ -2725,6 +2756,10 @@ class SignalService:
             v2balanced_stage_reason=asset.v2balanced_stage_reason,
             v2balanced_semantic_readiness=asset.v2balanced_semantic_readiness,
             v2balanced_readiness_reason=asset.v2balanced_readiness_reason,
+            semantic_gate_enabled=asset.semantic_gate_enabled,
+            semantic_gate_shadow_decision=asset.semantic_gate_shadow_decision,
+            semantic_gate_shadow_reason=asset.semantic_gate_shadow_reason,
+            semantic_gate_live_effect=asset.semantic_gate_live_effect,
 
             scenario=ContextScenarioSnapshot(
                 label=asset.scenario_label,
@@ -2853,6 +2888,10 @@ class SignalService:
             v2balanced_stage_reason=snapshot.v2balanced_stage_reason,
             v2balanced_semantic_readiness=snapshot.v2balanced_semantic_readiness,
             v2balanced_readiness_reason=snapshot.v2balanced_readiness_reason,
+            semantic_gate_enabled=snapshot.semantic_gate_enabled,
+            semantic_gate_shadow_decision=snapshot.semantic_gate_shadow_decision,
+            semantic_gate_shadow_reason=snapshot.semantic_gate_shadow_reason,
+            semantic_gate_live_effect=snapshot.semantic_gate_live_effect,
             expansion_subtype=snapshot.expansion_subtype or "unknown_expansion",
             compression_type=snapshot.compression_type or "no_compression",
             regime_warning=snapshot.regime_warning,
@@ -3462,6 +3501,61 @@ class SignalService:
 
         return "NO_SETUP", "no_setup"
 
+    def _semantic_gate_shadow_classification(
+        self,
+        *,
+        semantic_readiness: str | None,
+        readiness_reason: str | None,
+    ) -> tuple[str, str, str]:
+        readiness = str(semantic_readiness or "NO_SETUP").strip() or "NO_SETUP"
+        reason = str(readiness_reason or "no_setup").strip() or "no_setup"
+        decision_by_readiness = {
+            "DATA_BLOCKED": "would_block_data",
+            "AVOID_LAYER5_RISK": "would_block_risk",
+            "WAIT_SCENARIO": "would_wait_scenario",
+            "WAIT_DIRECTION": "would_wait_direction",
+            "READY_CANDIDATE": "would_allow_candidate",
+            "NO_SETUP": "would_no_setup",
+        }
+        live_effect = (
+            "shadow_only_enabled_no_live_effect"
+            if self.settings.v2balanced_use_semantic_readiness_gate
+            else "none_when_disabled"
+        )
+        return (
+            decision_by_readiness.get(readiness, "would_no_setup"),
+            f"semantic_readiness_{reason}",
+            live_effect,
+        )
+
+    def _apply_entry_location_semantics(
+        self,
+        *,
+        flow_metrics: FlowMetrics,
+        timeframe: str,
+        layer5_direction_bias: str | None,
+        v2balanced_semantic_readiness: str | None,
+        scenario_label: str | None,
+        scenario_disposition: str | None,
+        hard_filter_reasons: list[str] | tuple[str, ...] | None,
+    ) -> tuple[str, str, str, str]:
+        phase, quality, reason, opposite_watch = classify_entry_location(
+            metrics=flow_metrics,
+            timeframe=timeframe,
+            layer5_direction_bias=layer5_direction_bias,
+            market_relative_status=getattr(flow_metrics, f"market_relative_status_{timeframe}", None),
+            v2balanced_semantic_readiness=v2balanced_semantic_readiness,
+            scenario_label=scenario_label,
+            scenario_disposition=scenario_disposition,
+            hard_filter_reasons=hard_filter_reasons,
+        )
+        if timeframe in ENTRY_LOCATION_TIMEFRAMES:
+            setattr(flow_metrics, f"entry_location_phase_{timeframe}", phase)
+            setattr(flow_metrics, f"entry_location_quality_{timeframe}", quality)
+            setattr(flow_metrics, f"entry_location_reason_{timeframe}", reason)
+            setattr(flow_metrics, f"opposite_signal_watch_{timeframe}", opposite_watch)
+        return phase, quality, reason, opposite_watch
+
     def _mark_state_with_status(
         self,
         *,
@@ -3711,6 +3805,23 @@ class SignalService:
             final_structural_permission=final_structural_permission,
             data_quality_status=dq_status,
         )
+        (
+            semantic_gate_shadow_decision,
+            semantic_gate_shadow_reason,
+            semantic_gate_live_effect,
+        ) = self._semantic_gate_shadow_classification(
+            semantic_readiness=v2balanced_semantic_readiness,
+            readiness_reason=v2balanced_readiness_reason,
+        )
+        self._apply_entry_location_semantics(
+            flow_metrics=flow_metrics,
+            timeframe=timeframe,
+            layer5_direction_bias=layer5_direction_bias,
+            v2balanced_semantic_readiness=v2balanced_semantic_readiness,
+            scenario_label=scenario_label,
+            scenario_disposition=scenario_disposition,
+            hard_filter_reasons=hard_filter_reasons,
+        )
 
         return AssetState(
             symbol=symbol,
@@ -3799,6 +3910,10 @@ class SignalService:
             v2balanced_stage_reason=v2balanced_stage_reason,
             v2balanced_semantic_readiness=v2balanced_semantic_readiness,
             v2balanced_readiness_reason=v2balanced_readiness_reason,
+            semantic_gate_enabled=self.settings.v2balanced_use_semantic_readiness_gate,
+            semantic_gate_shadow_decision=semantic_gate_shadow_decision,
+            semantic_gate_shadow_reason=semantic_gate_shadow_reason,
+            semantic_gate_live_effect=semantic_gate_live_effect,
 
             flow_metrics=flow_metrics,
             score=actual_score,
@@ -4169,6 +4284,7 @@ class SignalService:
 
             for symbol in seeded_symbols:
                 await self._update_state(symbol, persist_alerts=False)
+            self._apply_market_relative_context()
 
         return seeded_symbols
 
@@ -4192,6 +4308,7 @@ class SignalService:
                     self.state[snapshot.symbol] = state
                 self._register_snapshot(snapshot)
                 warmed += 1
+            self._apply_market_relative_context()
         return warmed
 
     def _generate_trade_insights(self, flow_metrics: FlowMetrics, bias: str) -> list[str]:
@@ -8766,6 +8883,260 @@ class SignalService:
     @staticmethod
     def _rank_score(score: float, priority_multiplier: float) -> float:
         return min(1.0, max(0.0, score * max(priority_multiplier, 0.1)))
+
+    @staticmethod
+    def _finite_float(value: object) -> float | None:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(numeric):
+            return None
+        return numeric
+
+    @staticmethod
+    def _median(values: list[float]) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        midpoint = len(ordered) // 2
+        if len(ordered) % 2:
+            return ordered[midpoint]
+        return (ordered[midpoint - 1] + ordered[midpoint]) / 2.0
+
+    @classmethod
+    def _market_relative_context_from_returns(cls, returns: dict[str, float | None]) -> dict[str, dict[str, Any]]:
+        valid_returns = {
+            symbol: numeric
+            for symbol, value in returns.items()
+            if (numeric := cls._finite_float(value)) is not None
+        }
+        if not valid_returns:
+            return {}
+
+        values = list(valid_returns.values())
+        sample_size = len(values)
+        median_return = cls._median(values)
+        positive_breadth = sum(1 for value in values if value > 0) / sample_size
+        negative_breadth = sum(1 for value in values if value < 0) / sample_size
+        btc_return = valid_returns.get("BTCUSDT")
+        eth_return = valid_returns.get("ETHUSDT")
+
+        context: dict[str, dict[str, Any]] = {}
+        for symbol, token_return in valid_returns.items():
+            less_count = sum(1 for value in values if value < token_return)
+            equal_count = sum(1 for value in values if value == token_return)
+            percentile = (
+                1.0
+                if sample_size == 1
+                else (less_count + (equal_count - 1) / 2.0) / (sample_size - 1)
+            )
+            context[symbol] = {
+                "btc_return": btc_return,
+                "eth_return": eth_return,
+                "top120_median_return": median_return,
+                "top120_breadth_positive": positive_breadth,
+                "top120_breadth_negative": negative_breadth,
+                "top120_breadth_net": positive_breadth - negative_breadth,
+                "market_return_sample_size": sample_size,
+                "token_vs_btc_return": (
+                    token_return - btc_return if btc_return is not None else None
+                ),
+                "token_vs_eth_return": (
+                    token_return - eth_return if eth_return is not None else None
+                ),
+                "token_vs_market_return": (
+                    token_return - median_return if median_return is not None else None
+                ),
+                "return_percentile": percentile,
+                "return_rank": 1 + sum(1 for value in values if value > token_return),
+            }
+        return context
+
+    @staticmethod
+    def _clamp_unit(value: float) -> float:
+        return max(0.0, min(1.0, value))
+
+    @classmethod
+    def _relative_component(cls, value: float | None, scale: float = 0.02) -> float:
+        numeric = cls._finite_float(value)
+        if numeric is None or scale <= 0:
+            return 0.0
+        return max(-1.0, min(1.0, numeric / scale))
+
+    @classmethod
+    def _market_relative_semantics_from_context(
+        cls,
+        *,
+        token_return: float | None,
+        context: dict[str, Any],
+    ) -> tuple[str, str, float, float, float]:
+        token = cls._finite_float(token_return)
+        btc_return = cls._finite_float(context.get("btc_return"))
+        eth_return = cls._finite_float(context.get("eth_return"))
+        market_median = cls._finite_float(context.get("top120_median_return"))
+        breadth_positive = cls._finite_float(context.get("top120_breadth_positive"))
+        breadth_negative = cls._finite_float(context.get("top120_breadth_negative"))
+        breadth_net = cls._finite_float(context.get("top120_breadth_net"))
+        token_vs_market = cls._finite_float(context.get("token_vs_market_return"))
+        token_vs_btc = cls._finite_float(context.get("token_vs_btc_return"))
+        token_vs_eth = cls._finite_float(context.get("token_vs_eth_return"))
+        percentile = cls._finite_float(context.get("return_percentile"))
+        sample_size_value = context.get("market_return_sample_size")
+        try:
+            sample_size = int(sample_size_value or 0)
+        except (TypeError, ValueError):
+            sample_size = 0
+
+        required = [token, btc_return, eth_return, market_median, breadth_net, token_vs_market, token_vs_btc, token_vs_eth, percentile]
+        if any(value is None for value in required) or sample_size < 3:
+            return (
+                "UNKNOWN_MARKET_CONTEXT",
+                "missing_comparator_or_small_sample",
+                0.0,
+                0.0,
+                0.0,
+            )
+
+        rel_market_component = cls._relative_component(token_vs_market)
+        rel_btc_component = cls._relative_component(token_vs_btc)
+        rel_eth_component = cls._relative_component(token_vs_eth)
+        relative_strength_score = cls._clamp_unit(
+            0.35 * max(rel_market_component, 0.0)
+            + 0.25 * max(rel_btc_component, 0.0)
+            + 0.15 * max(rel_eth_component, 0.0)
+            + 0.25 * percentile
+        )
+        relative_weakness_score = cls._clamp_unit(
+            0.35 * max(-rel_market_component, 0.0)
+            + 0.25 * max(-rel_btc_component, 0.0)
+            + 0.15 * max(-rel_eth_component, 0.0)
+            + 0.25 * (1.0 - percentile)
+        )
+        market_independence_score = cls._clamp_unit(
+            (
+                abs(rel_market_component)
+                + abs(rel_btc_component)
+                + abs(rel_eth_component)
+            )
+            / 3.0
+        )
+
+        near_flat = 0.001
+        strong_relative = 0.005
+        high_percentile = 0.70
+        low_percentile = 0.30
+        strong_positive_breadth = (breadth_positive or 0.0) >= 0.55 or breadth_net >= 0.20
+        strong_negative_breadth = (breadth_negative or 0.0) >= 0.55 or breadth_net <= -0.20
+        weak_market = market_median < -near_flat and btc_return < 0 and eth_return < 0 and strong_negative_breadth
+        strong_market = market_median > near_flat and btc_return > 0 and eth_return > 0 and strong_positive_breadth
+
+        if token >= -near_flat and weak_market and percentile >= high_percentile:
+            return (
+                "OUTPERFORMING_WEAK_MARKET",
+                "token_positive_market_negative_high_percentile",
+                round(relative_strength_score, 4),
+                round(relative_weakness_score, 4),
+                round(market_independence_score, 4),
+            )
+
+        if token <= near_flat and strong_market and percentile <= low_percentile:
+            return (
+                "UNDERPERFORMING_STRONG_MARKET",
+                "token_weak_market_positive_low_percentile",
+                round(relative_strength_score, 4),
+                round(relative_weakness_score, 4),
+                round(market_independence_score, 4),
+            )
+
+        if token > near_flat and market_median > near_flat and strong_positive_breadth:
+            return (
+                "MARKET_ALIGNED_BULLISH",
+                "token_and_market_positive",
+                round(relative_strength_score, 4),
+                round(relative_weakness_score, 4),
+                round(market_independence_score, 4),
+            )
+
+        if token < -near_flat and market_median < -near_flat and strong_negative_breadth:
+            return (
+                "MARKET_ALIGNED_BEARISH",
+                "token_and_market_negative",
+                round(relative_strength_score, 4),
+                round(relative_weakness_score, 4),
+                round(market_independence_score, 4),
+            )
+
+        if token_vs_market >= strong_relative and token_vs_btc >= strong_relative:
+            return (
+                "RELATIVE_STRENGTH",
+                "outperforming_btc_and_market",
+                round(relative_strength_score, 4),
+                round(relative_weakness_score, 4),
+                round(market_independence_score, 4),
+            )
+
+        if token_vs_market <= -strong_relative and token_vs_btc <= -strong_relative:
+            return (
+                "RELATIVE_WEAKNESS",
+                "underperforming_btc_and_market",
+                round(relative_strength_score, 4),
+                round(relative_weakness_score, 4),
+                round(market_independence_score, 4),
+            )
+
+        return (
+            "NO_INDEPENDENT_EDGE",
+            "tracks_market",
+            round(relative_strength_score, 4),
+            round(relative_weakness_score, 4),
+            round(market_independence_score, 4),
+        )
+
+    @classmethod
+    def _market_relative_return_for_state(cls, state: AssetState, timeframe: str) -> float | None:
+        for metric_name in (
+            f"close_to_close_change_{timeframe}",
+            f"rolling_change_{timeframe}",
+            f"price_change_{timeframe}",
+        ):
+            value = cls._finite_float(getattr(state.flow_metrics, metric_name, None))
+            if value is not None:
+                return value
+        return None
+
+    def _apply_market_relative_context(self) -> None:
+        for timeframe in TIMEFRAME_ORDER:
+            states = self.states_by_timeframe.get(timeframe, {})
+            returns = {
+                symbol: self._market_relative_return_for_state(state, timeframe)
+                for symbol, state in states.items()
+                if state is not None
+            }
+            context_by_symbol = self._market_relative_context_from_returns(returns)
+            for symbol, context in context_by_symbol.items():
+                state = states.get(symbol)
+                if state is None:
+                    continue
+                metrics = state.flow_metrics
+                for key, value in context.items():
+                    setattr(metrics, f"{key}_{timeframe}", value)
+                if timeframe in {"15m", "1h", "4h"}:
+                    (
+                        status,
+                        reason,
+                        strength_score,
+                        weakness_score,
+                        independence_score,
+                    ) = self._market_relative_semantics_from_context(
+                        token_return=returns.get(symbol),
+                        context=context,
+                    )
+                    setattr(metrics, f"market_relative_status_{timeframe}", status)
+                    setattr(metrics, f"market_relative_reason_{timeframe}", reason)
+                    setattr(metrics, f"relative_strength_score_{timeframe}", strength_score)
+                    setattr(metrics, f"relative_weakness_score_{timeframe}", weakness_score)
+                    setattr(metrics, f"market_independence_score_{timeframe}", independence_score)
 
     def _calculate_efficient_build_quality(
         self,

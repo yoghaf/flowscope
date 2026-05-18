@@ -2,8 +2,16 @@ import type { AssetSnapshot, Timeframe } from "@/lib/types";
 
 export type DisplayDecision =
   | "TRADE READY"
+  | "LONG WATCH"
+  | "SHORT WATCH"
+  | "LONG TRAP WATCH"
+  | "SHORT SQUEEZE WATCH"
   | "WATCHLIST"
+  | "WAITING CONFIRMATION"
+  | "WAITING DIRECTION"
+  | "LEGACY READY / WAIT"
   | "WAIT"
+  | "AVOID"
   | "BLOCKED"
   | "NO SETUP"
   | "DATA ISSUE";
@@ -70,6 +78,21 @@ const HUMAN_LABELS: Record<string, string> = {
   no_direction: "No direction",
   no_trade: "No setup",
   no_clear_edge: "No clear edge",
+  wait_scenario: "Waiting confirmation",
+  wait_direction: "Waiting direction",
+  ready_candidate: "Ready candidate",
+  avoid_layer5_risk: "Avoid",
+  data_blocked: "Data issue",
+  legacy_ready_but_scenario_not_allow: "Legacy ready, waiting",
+  legacy_ready_but_no_layer5_direction: "Legacy ready, no direction",
+  legacy_ready_but_layer5_avoid: "Legacy ready, avoid risk",
+  semantic_ready_candidate: "Semantically ready",
+  scenario_wait: "Scenario waiting",
+  scenario_observe: "Scenario observe",
+  neutral_watch_direction: "Neutral watch direction",
+  no_layer5_direction: "No Layer 5 direction",
+  direction_conflict: "Direction conflict",
+  trap_or_squeeze_unconsumed: "Trap/squeeze not consumed",
 };
 
 export function isFiniteNumber(value: unknown): value is number {
@@ -239,6 +262,37 @@ function assetText(asset: AssetSnapshot): string {
     .join(" ");
 }
 
+function humanControlLabel(value: string | null | undefined): string {
+  const normalized = normalizeDecisionText(value);
+  if (normalized.includes("buyer") || normalized === "bullish") {
+    return "Buyer control";
+  }
+  if (normalized.includes("seller") || normalized === "bearish") {
+    return "Seller control";
+  }
+  if (normalized === "neutral") {
+    return "Neutral control";
+  }
+  return getHumanLabel(value ?? "Flow");
+}
+
+function humanHtfLabel(value: string | null | undefined): string {
+  const normalized = normalizeDecisionText(value);
+  if (normalized.includes("aligned")) {
+    return "HTF aligned";
+  }
+  if (normalized.includes("bullish") || normalized.includes("buyer")) {
+    return "HTF bullish";
+  }
+  if (normalized.includes("bearish") || normalized.includes("seller")) {
+    return "HTF bearish";
+  }
+  if (normalized.includes("neutral")) {
+    return "HTF neutral";
+  }
+  return getHumanLabel(value ?? "HTF neutral");
+}
+
 export function normalizeReasonList(value: string[] | string | null | undefined): string[] {
   if (Array.isArray(value)) {
     return value.map(String).filter(Boolean);
@@ -316,6 +370,26 @@ export function getLayer5DirectionBias(asset: AssetSnapshot): string {
 
 export function getLayer5DirectionReason(asset: AssetSnapshot): string {
   return stringOrNull(asset.layer5_direction_reason) ?? stringOrNull(flowValue(asset, "layer5_direction_reason")) ?? "not_watchlist";
+}
+
+export function getV2BalancedSemanticReadiness(asset: AssetSnapshot): string {
+  return stringOrNull(asset.v2balanced_semantic_readiness) ?? stringOrNull(flowValue(asset, "v2balanced_semantic_readiness")) ?? "NO_SETUP";
+}
+
+export function getV2BalancedReadinessReason(asset: AssetSnapshot): string {
+  return stringOrNull(asset.v2balanced_readiness_reason) ?? stringOrNull(flowValue(asset, "v2balanced_readiness_reason")) ?? "no_setup";
+}
+
+export function getV2BalancedCandidateStage(asset: AssetSnapshot): string {
+  return stringOrNull(asset.v2balanced_candidate_stage) ?? stringOrNull(flowValue(asset, "v2balanced_candidate_stage")) ?? "NO_SETUP";
+}
+
+export function getV2BalancedStageReason(asset: AssetSnapshot): string {
+  return stringOrNull(asset.v2balanced_stage_reason) ?? stringOrNull(flowValue(asset, "v2balanced_stage_reason")) ?? "no_setup";
+}
+
+export function getDirectionAlignmentStatus(asset: AssetSnapshot): string {
+  return stringOrNull(asset.direction_alignment_status) ?? stringOrNull(flowValue(asset, "direction_alignment_status")) ?? "NO_DIRECTION";
 }
 
 export function getStructuralPermission(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string {
@@ -442,6 +516,8 @@ export function hasSomeSetup(asset: AssetSnapshot): boolean {
 
 function hasDisplayDataIssue(asset: AssetSnapshot, timeframe: Timeframe): boolean {
   const dqStatus = normalizeDecisionText(getDqStatus(asset, timeframe));
+  const semantic = normalizeDecisionText(getV2BalancedSemanticReadiness(asset));
+  const stage = normalizeDecisionText(getV2BalancedCandidateStage(asset));
   const dqCritical =
     dqStatus === "stale" ||
     dqStatus === "fallback" ||
@@ -454,39 +530,26 @@ function hasDisplayDataIssue(asset: AssetSnapshot, timeframe: Timeframe): boolea
     isExplicitFalse(getProvenanceValue(asset, "oi_delta_reliable", timeframe)) ||
     isExplicitFalse(getProvenanceValue(asset, "funding_reliable", timeframe));
 
-  return dqCritical || (activeSetup && requiredReliabilityFalse);
+  return semantic === "data_blocked" || stage === "data_blocked" || dqCritical || (activeSetup && requiredReliabilityFalse);
 }
 
-export function getDisplayDecision(asset: AssetSnapshot, timeframe: Timeframe = "15m"): DisplayDecision {
+export function getHumanDecisionState(asset: AssetSnapshot, timeframe: Timeframe = "15m"): DisplayDecision {
   const entry = normalizeDecisionText(getEntryPermission(asset));
   const scenario = normalizeDecisionText(getScenarioDisposition(asset));
   const structure = normalizeDecisionText(getStructuralPermission(asset, timeframe));
   const hardReasons = getHardFilterReasons(asset);
   const layer5 = normalizeDecisionText(getLayer5WatchStatus(asset));
+  const direction = normalizeDecisionText(getLayer5DirectionBias(asset));
+  const semantic = normalizeDecisionText(getV2BalancedSemanticReadiness(asset));
+  const stage = normalizeDecisionText(getV2BalancedCandidateStage(asset));
   const text = normalizeDecisionText(assetText(asset));
 
   if (hasDisplayDataIssue(asset, timeframe)) {
     return "DATA ISSUE";
   }
 
-  if (layer5 === "avoid_hard_risk") {
-    return "BLOCKED";
-  }
-
-  if (
-    layer5 === "watchlist_mixed_building" ||
-    layer5 === "watchlist_weak_propulsion" ||
-    layer5 === "watchlist_healthy_expansion"
-  ) {
-    return "WATCHLIST";
-  }
-
-  if (layer5 === "wait_risk") {
-    return "WAIT";
-  }
-
-  if (entry === "block" || hardReasons.length > 0 || structure === "block" || structure === "structural_block") {
-    return "BLOCKED";
+  if (semantic === "avoid_layer5_risk" || layer5 === "avoid_hard_risk") {
+    return "AVOID";
   }
 
   const forbiddenReady =
@@ -507,6 +570,47 @@ export function getDisplayDecision(asset: AssetSnapshot, timeframe: Timeframe = 
     return "TRADE READY";
   }
 
+  if (direction === "long_watch") {
+    return "LONG WATCH";
+  }
+  if (direction === "short_watch") {
+    return "SHORT WATCH";
+  }
+  if (direction === "long_trap_watch") {
+    return "LONG TRAP WATCH";
+  }
+  if (direction === "short_squeeze_watch") {
+    return "SHORT SQUEEZE WATCH";
+  }
+
+  if (
+    layer5 === "watchlist_mixed_building" ||
+    layer5 === "watchlist_weak_propulsion" ||
+    layer5 === "watchlist_healthy_expansion"
+  ) {
+    return "WATCHLIST";
+  }
+
+  if (semantic === "wait_scenario") {
+    return "WAITING CONFIRMATION";
+  }
+
+  if (semantic === "wait_direction") {
+    return "WAITING DIRECTION";
+  }
+
+  if (stage === "ready_legacy" && semantic !== "ready_candidate") {
+    return "LEGACY READY / WAIT";
+  }
+
+  if (layer5 === "wait_risk") {
+    return "WAIT";
+  }
+
+  if (entry === "block" || hardReasons.length > 0 || structure === "block" || structure === "structural_block") {
+    return "BLOCKED";
+  }
+
   if (isWatchlist(asset, timeframe) || structure === "structural_watchlist") {
     return "WATCHLIST";
   }
@@ -522,9 +626,47 @@ export function getDisplayDecision(asset: AssetSnapshot, timeframe: Timeframe = 
   return "WAIT";
 }
 
+export function getDisplayDecision(asset: AssetSnapshot, timeframe: Timeframe = "15m"): DisplayDecision {
+  return getHumanDecisionState(asset, timeframe);
+}
+
+export function getHumanDecisionSubtitle(asset: AssetSnapshot): string {
+  const semantic = normalizeDecisionText(getV2BalancedSemanticReadiness(asset));
+  const readinessReason = getV2BalancedReadinessReason(asset);
+  const layer5 = normalizeDecisionText(getLayer5WatchStatus(asset));
+  const direction = normalizeDecisionText(getLayer5DirectionBias(asset));
+
+  if (semantic === "wait_scenario") {
+    return "Setup is forming, but scenario is not confirmed yet.";
+  }
+  if (semantic === "wait_direction") {
+    return "Direction is not confirmed yet.";
+  }
+  if (semantic === "avoid_layer5_risk" || layer5 === "avoid_hard_risk") {
+    return "Layer 5 detected hard risk.";
+  }
+  if (semantic === "data_blocked") {
+    return "Data foundation is not reliable yet.";
+  }
+  if (semantic === "ready_candidate") {
+    return "Setup passed semantic readiness, still requires final permission.";
+  }
+  if (
+    direction === "long_watch" ||
+    direction === "short_watch" ||
+    direction === "long_trap_watch" ||
+    direction === "short_squeeze_watch"
+  ) {
+    return "Clean watchlist candidate, waiting for confirmation.";
+  }
+  return getHumanLabel(readinessReason);
+}
+
 export function getHumanReason(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string {
   const layer5 = normalizeDecisionText(getLayer5WatchStatus(asset));
   const layer5Reason = getLayer5WatchReason(asset);
+  const semantic = normalizeDecisionText(getV2BalancedSemanticReadiness(asset));
+  const readinessReason = getV2BalancedReadinessReason(asset);
   if (
     layer5 === "watchlist_mixed_building" ||
     layer5 === "watchlist_weak_propulsion" ||
@@ -538,7 +680,20 @@ export function getHumanReason(asset: AssetSnapshot, timeframe: Timeframe = "15m
       direction === "long_trap_watch" ||
       direction === "short_squeeze_watch"
     ) {
-      return getHumanLabel(direction);
+      const control =
+        stringOrNull(asset.market_interpretation?.control) ??
+        stringOrNull(flowValue(asset, "market_control")) ??
+        stringOrNull(asset.action_bias) ??
+        "Flow";
+      const htf =
+        stringOrNull(asset.market_interpretation?.higher_timeframe_alignment) ??
+        stringOrNull(flowValue(asset, "htf_alignment")) ??
+        "HTF neutral";
+      const scenarioText = getScenarioDisplay(asset);
+      if (semantic === "wait_scenario") {
+        return `${humanControlLabel(control)} + ${humanHtfLabel(htf)}, but scenario is still ${scenarioText}.`;
+      }
+      return `${getHumanLabel(direction)} - ${getHumanDecisionSubtitle(asset)}`;
     }
     return getHumanLabel(layer5Reason);
   }
@@ -560,6 +715,12 @@ export function getHumanReason(asset: AssetSnapshot, timeframe: Timeframe = "15m
   if (hasNoSetup(asset)) {
     return "No clear edge";
   }
+  if (semantic === "wait_scenario" || readinessReason === "scenario_not_allow") {
+    return "Waiting for confirmation";
+  }
+  if (semantic === "wait_direction") {
+    return "Direction is not confirmed yet";
+  }
   if (isWatchlist(asset, timeframe)) {
     return "Watchlist only";
   }
@@ -580,10 +741,18 @@ export function getDecisionTone(decision: DisplayDecision): string {
   switch (decision) {
     case "TRADE READY":
       return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    case "LONG WATCH":
+    case "SHORT WATCH":
+    case "LONG TRAP WATCH":
+    case "SHORT SQUEEZE WATCH":
     case "WATCHLIST":
       return "border-blue-500/30 bg-blue-500/10 text-blue-300";
+    case "WAITING CONFIRMATION":
+    case "WAITING DIRECTION":
+    case "LEGACY READY / WAIT":
     case "WAIT":
       return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+    case "AVOID":
     case "BLOCKED":
       return "border-red-500/30 bg-red-500/10 text-red-300";
     case "DATA ISSUE":

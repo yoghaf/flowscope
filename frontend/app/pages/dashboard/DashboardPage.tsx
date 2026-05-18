@@ -29,6 +29,7 @@ import {
   getDqLabel,
   getDqStatus,
   getFallbackFields,
+  getHumanDecisionSubtitle,
   getHumanLabel,
   getHumanReason,
   getLayer5DirectionBias,
@@ -136,6 +137,14 @@ function getCandidateStage(asset: AssetSnapshot): string {
   return optionalText(asset, "v2balanced_candidate_stage") ?? "NO_SETUP";
 }
 
+function isWatchDecision(decision: string): boolean {
+  return ["LONG WATCH", "SHORT WATCH", "LONG TRAP WATCH", "SHORT SQUEEZE WATCH", "WATCHLIST"].includes(decision);
+}
+
+function isWaitingDecision(decision: string): boolean {
+  return ["WAIT", "WAITING CONFIRMATION", "WAITING DIRECTION", "LEGACY READY / WAIT"].includes(decision);
+}
+
 function getDirectionLabel(asset: AssetSnapshot): string {
   const layer5Direction = getLayer5DirectionBias(asset);
   if (layer5Direction && layer5Direction !== "NO_DIRECTION") {
@@ -152,14 +161,6 @@ function getDirectionLabel(asset: AssetSnapshot): string {
 
 function getRiskLabel(asset: AssetSnapshot): string {
   return asset.execution?.risk_level ?? asset.action_confidence_label ?? "Not scored";
-}
-
-function getWatchType(asset: AssetSnapshot): string {
-  const watchStatus = getLayer5WatchStatus(asset);
-  if (watchStatus.startsWith("WATCHLIST")) {
-    return humanStatus(watchStatus);
-  }
-  return "Watchlist";
 }
 
 function getNeededConfirmation(asset: AssetSnapshot): string {
@@ -220,16 +221,19 @@ function bucketFor(asset: AssetSnapshot): CandidateBucket {
   const decision = getDisplayDecision(asset, DASHBOARD_TIMEFRAME);
   const stage = getCandidateStage(asset);
   const semantic = getSemanticReadiness(asset);
-  if (decision === "TRADE READY" || semantic === "READY_CANDIDATE") {
-    return "tradeReady";
-  }
   if (decision === "DATA ISSUE" || stage === "DATA_BLOCKED" || semantic === "DATA_BLOCKED") {
     return "dataBlocked";
   }
-  if (decision === "WATCHLIST") {
+  if (decision === "AVOID" || semantic === "AVOID_LAYER5_RISK" || getLayer5WatchStatus(asset) === "AVOID_HARD_RISK") {
+    return "strategyBlocked";
+  }
+  if (decision === "TRADE READY" || semantic === "READY_CANDIDATE") {
+    return "tradeReady";
+  }
+  if (isWatchDecision(decision) || getLayer5WatchStatus(asset).startsWith("WATCHLIST")) {
     return "watchlist";
   }
-  if (decision === "WAIT" || semantic === "WAIT_SCENARIO" || semantic === "WAIT_DIRECTION") {
+  if (isWaitingDecision(decision) || semantic === "WAIT_SCENARIO" || semantic === "WAIT_DIRECTION") {
     return "waiting";
   }
   if (decision === "NO SETUP") {
@@ -666,6 +670,8 @@ function CandidateRow({ bucket, asset }: { bucket: CandidateBucket; asset: Asset
   );
   const confidence = `${pipelineConfidence(asset)}%`;
   const reason = getHumanReason(asset, DASHBOARD_TIMEFRAME);
+  const decision = getDisplayDecision(asset, DASHBOARD_TIMEFRAME);
+  const subtitle = getHumanDecisionSubtitle(asset);
   const rowClass = "border-b border-white/5 text-sm hover:bg-white/5";
   const cellClass = "px-5 py-3 text-muted-foreground";
   const rightCell = "px-5 py-3 text-right font-semibold text-foreground";
@@ -688,10 +694,17 @@ function CandidateRow({ bucket, asset }: { bucket: CandidateBucket; asset: Asset
     return (
       <tr className={rowClass}>
         <td className="px-5 py-3">{symbol}</td>
-        <td className={cellClass}>{getWatchType(asset)}</td>
+        <td className={cellClass}>
+          <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${getDecisionTone(decision)}`}>
+            {decision}
+          </span>
+        </td>
         <td className={cellClass}>{getDirectionLabel(asset)}</td>
         <td className={cellClass}>{asset.layer5_candidate_tier ?? "B"}</td>
-        <td className={cellClass}>{reason}</td>
+        <td className={cellClass}>
+          <p className="text-foreground">{reason}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+        </td>
         <td className={rightCell}>{getNeededConfirmation(asset)}</td>
       </tr>
     );
@@ -781,6 +794,7 @@ function ClosestToAllow({ assets, allDataBlocked }: { assets: AssetSnapshot[]; a
                 </span>
               </div>
               <p className="mt-3 text-sm text-muted-foreground">{getHumanReason(asset, DASHBOARD_TIMEFRAME)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{getHumanDecisionSubtitle(asset)}</p>
               <p className="mt-2 text-xs text-muted-foreground">Confidence {pipelineConfidence(asset)}%</p>
             </div>
           ))}
