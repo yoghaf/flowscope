@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Iterable
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 UTC = timezone.utc
 
 from sqlalchemy import and_, case, func, insert, not_, select, text, update
@@ -15,6 +16,32 @@ from backend.models_demo import DemoSession, DemoTrade
 from backend.schemas import AssetSnapshot
 
 logger = logging.getLogger(__name__)
+
+TRADE_SIGNAL_JSON_FIELDS = frozenset({"entry_features", "exit_features", "history_logs"})
+
+
+def _json_safe(value: object) -> object:
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    return str(value)
+
+
+def _sanitize_trade_signal_json_payload(payload: dict[str, object]) -> dict[str, object]:
+    sanitized = dict(payload)
+    for field in TRADE_SIGNAL_JSON_FIELDS:
+        if field in sanitized:
+            sanitized[field] = _json_safe(sanitized[field])
+    return sanitized
 
 
 async def get_database() -> DatabaseManager:
@@ -477,7 +504,11 @@ class DatabaseManager:
                         logger.info("Skipping trade signal insert symbol=%s reason=active_position_exists", symbol)
                         return None
 
-                result = await session.execute(insert(TradeSignal).values(payload).returning(TradeSignal.id))
+                result = await session.execute(
+                    insert(TradeSignal)
+                    .values(_sanitize_trade_signal_json_payload(payload))
+                    .returning(TradeSignal.id)
+                )
                 row = result.first()
                 return row[0] if row else None
 
@@ -485,11 +516,12 @@ class DatabaseManager:
         if not self.enabled:
             return
 
+        sanitized_payload = _sanitize_trade_signal_json_payload(payload)
         async with self.session_factory() as session:
             await session.execute(
                 update(TradeSignal)
                 .where(TradeSignal.id == trade_id)
-                .values(**payload)
+                .values(**sanitized_payload)
             )
             await session.commit()
 
