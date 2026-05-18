@@ -769,17 +769,24 @@ class PositioningEngine:
         raw_volume_z = current_features["volume_z"]
         oi_mismatch = abs(raw_oi_delta_z - oi_delta_z) >= FEATURE_CONSISTENCY_TOLERANCE
         volume_mismatch = abs(raw_volume_z - volume_z) >= FEATURE_CONSISTENCY_TOLERANCE
-        oi_clamp_explained = (
-            oi_mismatch
-            and math.isclose(abs(oi_delta_z), 20.0, abs_tol=FEATURE_CONSISTENCY_TOLERANCE)
-            and raw_oi_delta_z != 0.0
-            and math.copysign(1.0, raw_oi_delta_z) == math.copysign(1.0, oi_delta_z)
-        )
         if not oi_mismatch and not volume_mismatch:
             return
 
-        log = logger.debug if oi_clamp_explained and not volume_mismatch else logger.error
-        log(
+        oi_cap_explained = (not oi_mismatch) or self._z_cap_explains_mismatch(raw_oi_delta_z, oi_delta_z)
+        volume_cap_explained = (not volume_mismatch) or self._z_cap_explains_mismatch(raw_volume_z, volume_z)
+        if oi_cap_explained and volume_cap_explained:
+            logger.debug(
+                "positioning_feature_capped symbol=%s timeframe=%s raw_oi_delta_z=%.12f engine_oi_delta_z=%.12f raw_volume_z=%.12f engine_volume_z=%.12f",
+                bucket.symbol,
+                timeframe,
+                raw_oi_delta_z,
+                oi_delta_z,
+                raw_volume_z,
+                volume_z,
+            )
+            return
+
+        logger.error(
             "positioning_feature_mismatch symbol=%s timeframe=%s raw_oi_delta_z=%.12f engine_oi_delta_z=%.12f raw_volume_z=%.12f engine_volume_z=%.12f",
             bucket.symbol,
             timeframe,
@@ -787,4 +794,14 @@ class PositioningEngine:
             oi_delta_z,
             raw_volume_z,
             volume_z,
+        )
+
+    @staticmethod
+    def _z_cap_explains_mismatch(raw_value: float, engine_value: float) -> bool:
+        return (
+            math.isfinite(raw_value)
+            and (
+                (raw_value > 20.0 and math.isclose(engine_value, 20.0, abs_tol=FEATURE_CONSISTENCY_TOLERANCE))
+                or (raw_value < -20.0 and math.isclose(engine_value, -20.0, abs_tol=FEATURE_CONSISTENCY_TOLERANCE))
+            )
         )
