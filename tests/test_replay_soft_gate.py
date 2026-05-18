@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
+pytest.skip(
+    "Archived replay script moved to scripts/archive; obsolete replay test is excluded from active suite.",
+    allow_module_level=True,
+)
+
 from scripts.replay_full_strategy import ReplaySoftGateConfig, _context_soft_gate_reasons
 
 

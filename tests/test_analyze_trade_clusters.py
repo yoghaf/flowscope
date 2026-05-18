@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
+pytest.skip(
+    "Archived evidence-analysis script moved to scripts/archive; obsolete script test is excluded from active suite.",
+    allow_module_level=True,
+)
+
 from scripts.analyze_trade_clusters import entry_type_for_trade, summarize_groups
 
 
