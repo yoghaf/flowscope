@@ -130,94 +130,89 @@ check_foundation_health() {
         return 0
     fi
 
-    # Fallback: direct DB health check via psql or Python
-    echo "[HEALTH] scratch/check_active_foundation.py not found — using DB fallback"
-
-    if command -v psql &>/dev/null; then
-        echo "[HEALTH] Using psql fallback"
-        local db_name="${FLOWSCOPE_DB_NAME:-flowscope}"
-        local db_user="${FLOWSCOPE_DB_USER:-flowdb_user}"
-
-        local health_row
-        health_row=$(psql -U "$db_user" -d "$db_name" -t -A -F '|' -c \
-            "WITH latest AS (
-                 SELECT updated_at, snapshot
-                 FROM latest_asset_states
-                 WHERE timeframe = '15m'
-                 ORDER BY updated_at DESC
-                 LIMIT 120
-             )
-             SELECT
-                 COUNT(*) AS state_count,
-                 COUNT(*) FILTER (
-                     WHERE COALESCE(
-                         snapshot->>'oi_alignment_status_15m',
-                         snapshot->'flow_metrics'->>'oi_alignment_status_15m'
-                     ) = 'ALIGNED'
-                 ) AS oi_aligned,
-                 COUNT(*) FILTER (
-                     WHERE COALESCE(
-                         snapshot->>'data_quality_status_15m',
-                         snapshot->'flow_metrics'->>'data_quality_status_15m'
-                     ) = 'FRESH'
-                 ) AS fresh,
-                 COUNT(*) AS total,
-                 EXTRACT(EPOCH FROM (NOW() - MAX(updated_at)))::INT AS newest_age_seconds,
-                 EXTRACT(EPOCH FROM (NOW() - MIN(updated_at)))::INT AS oldest_age_seconds
-             FROM latest;" 2>/dev/null || echo "0|0|0|0|0|0")
-
-        local state_count oi_aligned fresh_count total_count newest_age_seconds oldest_age_seconds
-        state_count=$(echo "$health_row" | cut -d'|' -f1 | tr -d '[:space:]')
-        oi_aligned=$(echo "$health_row" | cut -d'|' -f2 | tr -d '[:space:]')
-        fresh_count=$(echo "$health_row" | cut -d'|' -f3 | tr -d '[:space:]')
-        total_count=$(echo "$health_row" | cut -d'|' -f4 | tr -d '[:space:]')
-        newest_age_seconds=$(echo "$health_row" | cut -d'|' -f5 | tr -d '[:space:]')
-        oldest_age_seconds=$(echo "$health_row" | cut -d'|' -f6 | tr -d '[:space:]')
-
-        echo "[HEALTH] DB fallback: state_count=${state_count:-0} oi_aligned=${oi_aligned:-0} fresh=${fresh_count:-0} total=${total_count:-0} newest_age_seconds=${newest_age_seconds:-0} oldest_age_seconds=${oldest_age_seconds:-0}"
-
-        if [ "${state_count:-0}" -ge 100 ] 2>/dev/null; then
-            echo "[HEALTH] PASS — DB fallback sees latest 15m states"
-        else
-            echo "[HEALTH] WARN — DB fallback sees low latest 15m state count: ${state_count:-0}"
-            echo "[HEALTH] Running monitor anyway (observability mode)"
-        fi
-        return 0
-    fi
-
-    # Final fallback: Python inline DB check
-    echo "[HEALTH] No psql available — using Python inline DB check"
-    PYTHONUNBUFFERED=1 "$PY" -u -c "
+    # Fallback: use the backend app DB URL so VPS peer-auth rules do not affect health reporting.
+    echo "[HEALTH] scratch/check_active_foundation.py not found - using Python DB fallback"
+    FLOWSCOPE_REPO_ROOT="$REPO_ROOT" PYTHONUNBUFFERED=1 "$PY" -u <<'PYEOF' 2>&1 || true
+import asyncio
+import os
 import sys
-sys.path.insert(0, '$REPO_ROOT')
-try:
-    import asyncio
-    from datetime import datetime, timezone, timedelta
-    from sqlalchemy import select, func
-    from backend.config import get_settings
-    from backend.database import DatabaseManager
-    from backend.models import LatestAssetState
 
-    async def check():
-        db = DatabaseManager(get_settings())
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
-        async with db.session_factory() as session:
-            result = await session.execute(
-                select(func.count()).select_from(LatestAssetState)
-                .where(LatestAssetState.timeframe == '15m')
-                .where(LatestAssetState.updated_at > cutoff)
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+repo_root = os.environ.get("FLOWSCOPE_REPO_ROOT", ".")
+sys.path.insert(0, repo_root)
+
+
+async def check() -> None:
+    from backend.config import get_settings
+
+    engine = create_async_engine(get_settings().database_url, echo=False, pool_pre_ping=True)
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    """
+                    WITH latest AS (
+                        SELECT updated_at, snapshot
+                        FROM latest_asset_states
+                        WHERE timeframe = '15m'
+                        ORDER BY updated_at DESC
+                        LIMIT 120
+                    )
+                    SELECT
+                        COUNT(*) AS state_count,
+                        COUNT(*) FILTER (
+                            WHERE COALESCE(
+                                snapshot->>'oi_alignment_status_15m',
+                                snapshot->'flow_metrics'->>'oi_alignment_status_15m'
+                            ) = 'ALIGNED'
+                        ) AS oi_aligned,
+                        COUNT(*) FILTER (
+                            WHERE COALESCE(
+                                snapshot->>'data_quality_status_15m',
+                                snapshot->'flow_metrics'->>'data_quality_status_15m'
+                            ) = 'FRESH'
+                        ) AS fresh,
+                        COUNT(*) AS total,
+                        EXTRACT(EPOCH FROM (NOW() - MAX(updated_at)))::INT AS newest_age_seconds,
+                        EXTRACT(EPOCH FROM (NOW() - MIN(updated_at)))::INT AS oldest_age_seconds
+                    FROM latest;
+                    """
+                )
             )
-            count = result.scalar() or 0
-            print(f'[HEALTH] Active 15m states: {count}')
-            if count >= 100:
-                print('[HEALTH] PASS')
-            else:
-                print(f'[HEALTH] WARN — Low active state count: {count}')
+            row = result.one()
+    finally:
+        await engine.dispose()
+
+    state_count = int(row.state_count or 0)
+    oi_aligned = int(row.oi_aligned or 0)
+    fresh_count = int(row.fresh or 0)
+    total_count = int(row.total or 0)
+    newest_age_seconds = int(row.newest_age_seconds or 0)
+    oldest_age_seconds = int(row.oldest_age_seconds or 0)
+    print(
+        "[HEALTH] DB fallback: "
+        f"state_count={state_count} "
+        f"oi_aligned={oi_aligned} "
+        f"fresh={fresh_count} "
+        f"total={total_count} "
+        f"newest_age_seconds={newest_age_seconds} "
+        f"oldest_age_seconds={oldest_age_seconds}"
+    )
+    if state_count >= 100:
+        print("[HEALTH] PASS - DB fallback sees latest 15m states")
+    else:
+        print(f"[HEALTH] WARN - DB fallback sees low latest 15m state count: {state_count}")
+        print("[HEALTH] Running monitor anyway (observability mode)")
+
+
+try:
     asyncio.run(check())
-except Exception as e:
-    print(f'[HEALTH] ERROR — {e}')
-    print('[HEALTH] Running monitor anyway')
-" 2>&1 || true
+except Exception as exc:
+    print(f"[HEALTH] ERROR - DB fallback failed: {exc}")
+    print("[HEALTH] Running monitor anyway (observability mode)")
+PYEOF
     return 0
 }
 
