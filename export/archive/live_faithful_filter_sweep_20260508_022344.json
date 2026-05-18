@@ -1,0 +1,2108 @@
+{
+  "generated_at": "2026-05-08T02:23:44.971538+00:00",
+  "source": "export\\live_faithful_baseline_20260507_165249_trades.csv",
+  "candidates": {
+    "baseline_all": {
+      "overall": {
+        "signals": 168,
+        "closed": 155,
+        "open": 13,
+        "wins": 61,
+        "losses": 94,
+        "winrate_pct": 39.3548,
+        "total_r": -20.146678,
+        "allocated_r": -17.366821,
+        "avg_r": -0.129979,
+        "profit_factor_r": 0.746315,
+        "max_drawdown_r": -28.120558
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 70,
+          "closed": 70,
+          "open": 0,
+          "wins": 28,
+          "losses": 42,
+          "winrate_pct": 40.0,
+          "total_r": -10.193239,
+          "allocated_r": -4.935296,
+          "avg_r": -0.145618,
+          "profit_factor_r": 0.709907,
+          "max_drawdown_r": -11.257364
+        },
+        "1h": {
+          "signals": 9,
+          "closed": 9,
+          "open": 0,
+          "wins": 2,
+          "losses": 7,
+          "winrate_pct": 22.2222,
+          "total_r": -2.405051,
+          "allocated_r": -1.759657,
+          "avg_r": -0.267228,
+          "profit_factor_r": 0.460152,
+          "max_drawdown_r": -3.649007
+        },
+        "24h": {
+          "signals": 22,
+          "closed": 13,
+          "open": 9,
+          "wins": 7,
+          "losses": 6,
+          "winrate_pct": 53.8462,
+          "total_r": 3.086189,
+          "allocated_r": 2.603581,
+          "avg_r": 0.237399,
+          "profit_factor_r": 1.676972,
+          "max_drawdown_r": -2.558812
+        },
+        "4h": {
+          "signals": 67,
+          "closed": 63,
+          "open": 4,
+          "wins": 24,
+          "losses": 39,
+          "winrate_pct": 38.0952,
+          "total_r": -10.634577,
+          "allocated_r": -13.275449,
+          "avg_r": -0.168803,
+          "profit_factor_r": 0.698432,
+          "max_drawdown_r": -17.116734
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 67,
+          "closed": 66,
+          "open": 1,
+          "wins": 26,
+          "losses": 40,
+          "winrate_pct": 39.3939,
+          "total_r": -11.464545,
+          "allocated_r": -5.952695,
+          "avg_r": -0.173705,
+          "profit_factor_r": 0.651721,
+          "max_drawdown_r": -18.032246
+        },
+        "Ranging": {
+          "signals": 15,
+          "closed": 15,
+          "open": 0,
+          "wins": 6,
+          "losses": 9,
+          "winrate_pct": 40.0,
+          "total_r": -2.08406,
+          "allocated_r": -2.417812,
+          "avg_r": -0.138937,
+          "profit_factor_r": 0.730935,
+          "max_drawdown_r": -4.0
+        },
+        "Trending": {
+          "signals": 86,
+          "closed": 74,
+          "open": 12,
+          "wins": 29,
+          "losses": 45,
+          "winrate_pct": 39.1892,
+          "total_r": -6.598072,
+          "allocated_r": -8.996314,
+          "avg_r": -0.089163,
+          "profit_factor_r": 0.829739,
+          "max_drawdown_r": -19.508731
+        }
+      }
+    },
+    "baseline_no_1h": {
+      "overall": {
+        "signals": 159,
+        "closed": 146,
+        "open": 13,
+        "wins": 59,
+        "losses": 87,
+        "winrate_pct": 40.411,
+        "total_r": -17.741627,
+        "allocated_r": -15.607164,
+        "avg_r": -0.121518,
+        "profit_factor_r": 0.763322,
+        "max_drawdown_r": -26.966551
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 70,
+          "closed": 70,
+          "open": 0,
+          "wins": 28,
+          "losses": 42,
+          "winrate_pct": 40.0,
+          "total_r": -10.193239,
+          "allocated_r": -4.935296,
+          "avg_r": -0.145618,
+          "profit_factor_r": 0.709907,
+          "max_drawdown_r": -11.257364
+        },
+        "24h": {
+          "signals": 22,
+          "closed": 13,
+          "open": 9,
+          "wins": 7,
+          "losses": 6,
+          "winrate_pct": 53.8462,
+          "total_r": 3.086189,
+          "allocated_r": 2.603581,
+          "avg_r": 0.237399,
+          "profit_factor_r": 1.676972,
+          "max_drawdown_r": -2.558812
+        },
+        "4h": {
+          "signals": 67,
+          "closed": 63,
+          "open": 4,
+          "wins": 24,
+          "losses": 39,
+          "winrate_pct": 38.0952,
+          "total_r": -10.634577,
+          "allocated_r": -13.275449,
+          "avg_r": -0.168803,
+          "profit_factor_r": 0.698432,
+          "max_drawdown_r": -17.116734
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 61,
+          "closed": 60,
+          "open": 1,
+          "wins": 25,
+          "losses": 35,
+          "winrate_pct": 41.6667,
+          "total_r": -9.564494,
+          "allocated_r": -4.8176,
+          "avg_r": -0.159408,
+          "profit_factor_r": 0.686025,
+          "max_drawdown_r": -16.323238
+        },
+        "Ranging": {
+          "signals": 14,
+          "closed": 14,
+          "open": 0,
+          "wins": 6,
+          "losses": 8,
+          "winrate_pct": 42.8571,
+          "total_r": -1.08406,
+          "allocated_r": -1.155812,
+          "avg_r": -0.077433,
+          "profit_factor_r": 0.839293,
+          "max_drawdown_r": -3.0
+        },
+        "Trending": {
+          "signals": 84,
+          "closed": 72,
+          "open": 12,
+          "wins": 28,
+          "losses": 44,
+          "winrate_pct": 38.8889,
+          "total_r": -7.093072,
+          "allocated_r": -9.633752,
+          "avg_r": -0.098515,
+          "profit_factor_r": 0.812118,
+          "max_drawdown_r": -19.508731
+        }
+      }
+    },
+    "baseline_no_15m": {
+      "overall": {
+        "signals": 98,
+        "closed": 85,
+        "open": 13,
+        "wins": 33,
+        "losses": 52,
+        "winrate_pct": 38.8235,
+        "total_r": -9.953439,
+        "allocated_r": -12.431525,
+        "avg_r": -0.117099,
+        "profit_factor_r": 0.775206,
+        "max_drawdown_r": -22.057756
+      },
+      "by_timeframe": {
+        "1h": {
+          "signals": 9,
+          "closed": 9,
+          "open": 0,
+          "wins": 2,
+          "losses": 7,
+          "winrate_pct": 22.2222,
+          "total_r": -2.405051,
+          "allocated_r": -1.759657,
+          "avg_r": -0.267228,
+          "profit_factor_r": 0.460152,
+          "max_drawdown_r": -3.649007
+        },
+        "24h": {
+          "signals": 22,
+          "closed": 13,
+          "open": 9,
+          "wins": 7,
+          "losses": 6,
+          "winrate_pct": 53.8462,
+          "total_r": 3.086189,
+          "allocated_r": 2.603581,
+          "avg_r": 0.237399,
+          "profit_factor_r": 1.676972,
+          "max_drawdown_r": -2.558812
+        },
+        "4h": {
+          "signals": 67,
+          "closed": 63,
+          "open": 4,
+          "wins": 24,
+          "losses": 39,
+          "winrate_pct": 38.0952,
+          "total_r": -10.634577,
+          "allocated_r": -13.275449,
+          "avg_r": -0.168803,
+          "profit_factor_r": 0.698432,
+          "max_drawdown_r": -17.116734
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 18,
+          "closed": 17,
+          "open": 1,
+          "wins": 5,
+          "losses": 12,
+          "winrate_pct": 29.4118,
+          "total_r": -6.790051,
+          "allocated_r": -6.168375,
+          "avg_r": -0.399415,
+          "profit_factor_r": 0.28186,
+          "max_drawdown_r": -8.709007
+        },
+        "Ranging": {
+          "signals": 1,
+          "closed": 1,
+          "open": 0,
+          "wins": 0,
+          "losses": 1,
+          "winrate_pct": 0.0,
+          "total_r": -1.0,
+          "allocated_r": -1.262,
+          "avg_r": -1.0,
+          "profit_factor_r": 0.0,
+          "max_drawdown_r": -1.0
+        },
+        "Trending": {
+          "signals": 79,
+          "closed": 67,
+          "open": 12,
+          "wins": 28,
+          "losses": 39,
+          "winrate_pct": 41.791,
+          "total_r": -2.163388,
+          "allocated_r": -5.00115,
+          "avg_r": -0.032289,
+          "profit_factor_r": 0.936038,
+          "max_drawdown_r": -18.215241
+        }
+      }
+    },
+    "baseline_4h_only": {
+      "overall": {
+        "signals": 67,
+        "closed": 63,
+        "open": 4,
+        "wins": 24,
+        "losses": 39,
+        "winrate_pct": 38.0952,
+        "total_r": -10.634577,
+        "allocated_r": -13.275449,
+        "avg_r": -0.168803,
+        "profit_factor_r": 0.698432,
+        "max_drawdown_r": -17.116734
+      },
+      "by_timeframe": {
+        "4h": {
+          "signals": 67,
+          "closed": 63,
+          "open": 4,
+          "wins": 24,
+          "losses": 39,
+          "winrate_pct": 38.0952,
+          "total_r": -10.634577,
+          "allocated_r": -13.275449,
+          "avg_r": -0.168803,
+          "profit_factor_r": 0.698432,
+          "max_drawdown_r": -17.116734
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 12,
+          "closed": 11,
+          "open": 1,
+          "wins": 4,
+          "losses": 7,
+          "winrate_pct": 36.3636,
+          "total_r": -4.89,
+          "allocated_r": -5.033281,
+          "avg_r": -0.444545,
+          "profit_factor_r": 0.301429,
+          "max_drawdown_r": -7.0
+        },
+        "Trending": {
+          "signals": 55,
+          "closed": 52,
+          "open": 3,
+          "wins": 20,
+          "losses": 32,
+          "winrate_pct": 38.4615,
+          "total_r": -5.744577,
+          "allocated_r": -8.242168,
+          "avg_r": -0.110473,
+          "profit_factor_r": 0.796755,
+          "max_drawdown_r": -15.151429
+        }
+      }
+    },
+    "baseline_24h_only": {
+      "overall": {
+        "signals": 22,
+        "closed": 13,
+        "open": 9,
+        "wins": 7,
+        "losses": 6,
+        "winrate_pct": 53.8462,
+        "total_r": 3.086189,
+        "allocated_r": 2.603581,
+        "avg_r": 0.237399,
+        "profit_factor_r": 1.676972,
+        "max_drawdown_r": -2.558812
+      },
+      "by_timeframe": {
+        "24h": {
+          "signals": 22,
+          "closed": 13,
+          "open": 9,
+          "wins": 7,
+          "losses": 6,
+          "winrate_pct": 53.8462,
+          "total_r": 3.086189,
+          "allocated_r": 2.603581,
+          "avg_r": 0.237399,
+          "profit_factor_r": 1.676972,
+          "max_drawdown_r": -2.558812
+        }
+      },
+      "by_regime": {
+        "Trending": {
+          "signals": 22,
+          "closed": 13,
+          "open": 9,
+          "wins": 7,
+          "losses": 6,
+          "winrate_pct": 53.8462,
+          "total_r": 3.086189,
+          "allocated_r": 2.603581,
+          "avg_r": 0.237399,
+          "profit_factor_r": 1.676972,
+          "max_drawdown_r": -2.558812
+        }
+      }
+    },
+    "baseline_4h_24h": {
+      "overall": {
+        "signals": 89,
+        "closed": 76,
+        "open": 13,
+        "wins": 31,
+        "losses": 45,
+        "winrate_pct": 40.7895,
+        "total_r": -7.548388,
+        "allocated_r": -10.671868,
+        "avg_r": -0.099321,
+        "profit_factor_r": 0.810452,
+        "max_drawdown_r": -19.180545
+      },
+      "by_timeframe": {
+        "24h": {
+          "signals": 22,
+          "closed": 13,
+          "open": 9,
+          "wins": 7,
+          "losses": 6,
+          "winrate_pct": 53.8462,
+          "total_r": 3.086189,
+          "allocated_r": 2.603581,
+          "avg_r": 0.237399,
+          "profit_factor_r": 1.676972,
+          "max_drawdown_r": -2.558812
+        },
+        "4h": {
+          "signals": 67,
+          "closed": 63,
+          "open": 4,
+          "wins": 24,
+          "losses": 39,
+          "winrate_pct": 38.0952,
+          "total_r": -10.634577,
+          "allocated_r": -13.275449,
+          "avg_r": -0.168803,
+          "profit_factor_r": 0.698432,
+          "max_drawdown_r": -17.116734
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 12,
+          "closed": 11,
+          "open": 1,
+          "wins": 4,
+          "losses": 7,
+          "winrate_pct": 36.3636,
+          "total_r": -4.89,
+          "allocated_r": -5.033281,
+          "avg_r": -0.444545,
+          "profit_factor_r": 0.301429,
+          "max_drawdown_r": -7.0
+        },
+        "Trending": {
+          "signals": 77,
+          "closed": 65,
+          "open": 12,
+          "wins": 27,
+          "losses": 38,
+          "winrate_pct": 41.5385,
+          "total_r": -2.658388,
+          "allocated_r": -5.638588,
+          "avg_r": -0.040898,
+          "profit_factor_r": 0.919009,
+          "max_drawdown_r": -17.215241
+        }
+      }
+    },
+    "baseline_not_balanced": {
+      "overall": {
+        "signals": 101,
+        "closed": 89,
+        "open": 12,
+        "wins": 35,
+        "losses": 54,
+        "winrate_pct": 39.3258,
+        "total_r": -8.682132,
+        "allocated_r": -11.414127,
+        "avg_r": -0.097552,
+        "profit_factor_r": 0.813281,
+        "max_drawdown_r": -23.348471
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 21,
+          "closed": 21,
+          "open": 0,
+          "wins": 7,
+          "losses": 14,
+          "winrate_pct": 33.3333,
+          "total_r": -5.518744,
+          "allocated_r": -5.150977,
+          "avg_r": -0.262797,
+          "profit_factor_r": 0.527312,
+          "max_drawdown_r": -6.06787
+        },
+        "1h": {
+          "signals": 3,
+          "closed": 3,
+          "open": 0,
+          "wins": 1,
+          "losses": 2,
+          "winrate_pct": 33.3333,
+          "total_r": -0.505,
+          "allocated_r": -0.624563,
+          "avg_r": -0.168333,
+          "profit_factor_r": 0.7475,
+          "max_drawdown_r": -2.0
+        },
+        "24h": {
+          "signals": 22,
+          "closed": 13,
+          "open": 9,
+          "wins": 7,
+          "losses": 6,
+          "winrate_pct": 53.8462,
+          "total_r": 3.086189,
+          "allocated_r": 2.603581,
+          "avg_r": 0.237399,
+          "profit_factor_r": 1.676972,
+          "max_drawdown_r": -2.558812
+        },
+        "4h": {
+          "signals": 55,
+          "closed": 52,
+          "open": 3,
+          "wins": 20,
+          "losses": 32,
+          "winrate_pct": 38.4615,
+          "total_r": -5.744577,
+          "allocated_r": -8.242168,
+          "avg_r": -0.110473,
+          "profit_factor_r": 0.796755,
+          "max_drawdown_r": -15.151429
+        }
+      },
+      "by_regime": {
+        "Ranging": {
+          "signals": 15,
+          "closed": 15,
+          "open": 0,
+          "wins": 6,
+          "losses": 9,
+          "winrate_pct": 40.0,
+          "total_r": -2.08406,
+          "allocated_r": -2.417812,
+          "avg_r": -0.138937,
+          "profit_factor_r": 0.730935,
+          "max_drawdown_r": -4.0
+        },
+        "Trending": {
+          "signals": 86,
+          "closed": 74,
+          "open": 12,
+          "wins": 29,
+          "losses": 45,
+          "winrate_pct": 39.1892,
+          "total_r": -6.598072,
+          "allocated_r": -8.996314,
+          "avg_r": -0.089163,
+          "profit_factor_r": 0.829739,
+          "max_drawdown_r": -19.508731
+        }
+      }
+    },
+    "baseline_trending_only": {
+      "overall": {
+        "signals": 86,
+        "closed": 74,
+        "open": 12,
+        "wins": 29,
+        "losses": 45,
+        "winrate_pct": 39.1892,
+        "total_r": -6.598072,
+        "allocated_r": -8.996314,
+        "avg_r": -0.089163,
+        "profit_factor_r": 0.829739,
+        "max_drawdown_r": -19.508731
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 7,
+          "closed": 7,
+          "open": 0,
+          "wins": 1,
+          "losses": 6,
+          "winrate_pct": 14.2857,
+          "total_r": -4.434684,
+          "allocated_r": -3.995164,
+          "avg_r": -0.633526,
+          "profit_factor_r": 0.100412,
+          "max_drawdown_r": -4.434684
+        },
+        "1h": {
+          "signals": 2,
+          "closed": 2,
+          "open": 0,
+          "wins": 1,
+          "losses": 1,
+          "winrate_pct": 50.0,
+          "total_r": 0.495,
+          "allocated_r": 0.637437,
+          "avg_r": 0.2475,
+          "profit_factor_r": 1.495,
+          "max_drawdown_r": -1.0
+        },
+        "24h": {
+          "signals": 22,
+          "closed": 13,
+          "open": 9,
+          "wins": 7,
+          "losses": 6,
+          "winrate_pct": 53.8462,
+          "total_r": 3.086189,
+          "allocated_r": 2.603581,
+          "avg_r": 0.237399,
+          "profit_factor_r": 1.676972,
+          "max_drawdown_r": -2.558812
+        },
+        "4h": {
+          "signals": 55,
+          "closed": 52,
+          "open": 3,
+          "wins": 20,
+          "losses": 32,
+          "winrate_pct": 38.4615,
+          "total_r": -5.744577,
+          "allocated_r": -8.242168,
+          "avg_r": -0.110473,
+          "profit_factor_r": 0.796755,
+          "max_drawdown_r": -15.151429
+        }
+      },
+      "by_regime": {
+        "Trending": {
+          "signals": 86,
+          "closed": 74,
+          "open": 12,
+          "wins": 29,
+          "losses": 45,
+          "winrate_pct": 39.1892,
+          "total_r": -6.598072,
+          "allocated_r": -8.996314,
+          "avg_r": -0.089163,
+          "profit_factor_r": 0.829739,
+          "max_drawdown_r": -19.508731
+        }
+      }
+    },
+    "qmid_p06_all": {
+      "overall": {
+        "signals": 49,
+        "closed": 47,
+        "open": 2,
+        "wins": 26,
+        "losses": 21,
+        "winrate_pct": 55.3191,
+        "total_r": 8.747932,
+        "allocated_r": 9.188588,
+        "avg_r": 0.186126,
+        "profit_factor_r": 1.471318,
+        "max_drawdown_r": -6.01
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 36,
+          "closed": 36,
+          "open": 0,
+          "wins": 17,
+          "losses": 19,
+          "winrate_pct": 47.2222,
+          "total_r": -0.812068,
+          "allocated_r": 1.20957,
+          "avg_r": -0.022557,
+          "profit_factor_r": 0.950964,
+          "max_drawdown_r": -6.0
+        },
+        "4h": {
+          "signals": 13,
+          "closed": 11,
+          "open": 2,
+          "wins": 9,
+          "losses": 2,
+          "winrate_pct": 81.8182,
+          "total_r": 9.56,
+          "allocated_r": 7.979018,
+          "avg_r": 0.869091,
+          "profit_factor_r": 5.78,
+          "max_drawdown_r": -2.0
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 29,
+          "closed": 28,
+          "open": 1,
+          "wins": 13,
+          "losses": 15,
+          "winrate_pct": 46.4286,
+          "total_r": -0.877429,
+          "allocated_r": 0.292201,
+          "avg_r": -0.031337,
+          "profit_factor_r": 0.930144,
+          "max_drawdown_r": -7.050251
+        },
+        "Ranging": {
+          "signals": 7,
+          "closed": 7,
+          "open": 0,
+          "wins": 4,
+          "losses": 3,
+          "winrate_pct": 57.1429,
+          "total_r": 1.06536,
+          "allocated_r": 1.250833,
+          "avg_r": 0.152194,
+          "profit_factor_r": 1.35512,
+          "max_drawdown_r": -3.0
+        },
+        "Trending": {
+          "signals": 13,
+          "closed": 12,
+          "open": 1,
+          "wins": 9,
+          "losses": 3,
+          "winrate_pct": 75.0,
+          "total_r": 8.56,
+          "allocated_r": 7.645554,
+          "avg_r": 0.713333,
+          "profit_factor_r": 3.853333,
+          "max_drawdown_r": -2.505
+        }
+      }
+    },
+    "qmid_p07_all": {
+      "overall": {
+        "signals": 55,
+        "closed": 52,
+        "open": 3,
+        "wins": 29,
+        "losses": 23,
+        "winrate_pct": 55.7692,
+        "total_r": 8.315841,
+        "allocated_r": 8.598349,
+        "avg_r": 0.15992,
+        "profit_factor_r": 1.406094,
+        "max_drawdown_r": -6.515
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 37,
+          "closed": 37,
+          "open": 0,
+          "wins": 18,
+          "losses": 19,
+          "winrate_pct": 48.6486,
+          "total_r": -0.317068,
+          "allocated_r": 1.802729,
+          "avg_r": -0.008569,
+          "profit_factor_r": 0.980854,
+          "max_drawdown_r": -6.0
+        },
+        "4h": {
+          "signals": 18,
+          "closed": 15,
+          "open": 3,
+          "wins": 11,
+          "losses": 4,
+          "winrate_pct": 73.3333,
+          "total_r": 8.632909,
+          "allocated_r": 6.79562,
+          "avg_r": 0.575527,
+          "profit_factor_r": 3.203908,
+          "max_drawdown_r": -3.0
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 30,
+          "closed": 29,
+          "open": 1,
+          "wins": 14,
+          "losses": 15,
+          "winrate_pct": 48.2759,
+          "total_r": -0.382429,
+          "allocated_r": 0.88536,
+          "avg_r": -0.013187,
+          "profit_factor_r": 0.969553,
+          "max_drawdown_r": -7.050251
+        },
+        "Ranging": {
+          "signals": 7,
+          "closed": 7,
+          "open": 0,
+          "wins": 4,
+          "losses": 3,
+          "winrate_pct": 57.1429,
+          "total_r": 1.06536,
+          "allocated_r": 1.250833,
+          "avg_r": 0.152194,
+          "profit_factor_r": 1.35512,
+          "max_drawdown_r": -3.0
+        },
+        "Trending": {
+          "signals": 18,
+          "closed": 16,
+          "open": 2,
+          "wins": 11,
+          "losses": 5,
+          "winrate_pct": 68.75,
+          "total_r": 7.632909,
+          "allocated_r": 6.462156,
+          "avg_r": 0.477057,
+          "profit_factor_r": 2.552322,
+          "max_drawdown_r": -3.927091
+        }
+      }
+    },
+    "qmid_p06_no_balanced": {
+      "overall": {
+        "signals": 20,
+        "closed": 19,
+        "open": 1,
+        "wins": 13,
+        "losses": 6,
+        "winrate_pct": 68.4211,
+        "total_r": 9.62536,
+        "allocated_r": 8.896387,
+        "avg_r": 0.506598,
+        "profit_factor_r": 2.604227,
+        "max_drawdown_r": -4.505
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 10,
+          "closed": 10,
+          "open": 0,
+          "wins": 5,
+          "losses": 5,
+          "winrate_pct": 50.0,
+          "total_r": -0.43964,
+          "allocated_r": 0.278963,
+          "avg_r": -0.043964,
+          "profit_factor_r": 0.912072,
+          "max_drawdown_r": -4.505
+        },
+        "4h": {
+          "signals": 10,
+          "closed": 9,
+          "open": 1,
+          "wins": 8,
+          "losses": 1,
+          "winrate_pct": 88.8889,
+          "total_r": 10.065,
+          "allocated_r": 8.617424,
+          "avg_r": 1.118333,
+          "profit_factor_r": 11.065,
+          "max_drawdown_r": -1.0
+        }
+      },
+      "by_regime": {
+        "Ranging": {
+          "signals": 7,
+          "closed": 7,
+          "open": 0,
+          "wins": 4,
+          "losses": 3,
+          "winrate_pct": 57.1429,
+          "total_r": 1.06536,
+          "allocated_r": 1.250833,
+          "avg_r": 0.152194,
+          "profit_factor_r": 1.35512,
+          "max_drawdown_r": -3.0
+        },
+        "Trending": {
+          "signals": 13,
+          "closed": 12,
+          "open": 1,
+          "wins": 9,
+          "losses": 3,
+          "winrate_pct": 75.0,
+          "total_r": 8.56,
+          "allocated_r": 7.645554,
+          "avg_r": 0.713333,
+          "profit_factor_r": 3.853333,
+          "max_drawdown_r": -2.505
+        }
+      }
+    },
+    "qmid_p06_trending_only": {
+      "overall": {
+        "signals": 13,
+        "closed": 12,
+        "open": 1,
+        "wins": 9,
+        "losses": 3,
+        "winrate_pct": 75.0,
+        "total_r": 8.56,
+        "allocated_r": 7.645554,
+        "avg_r": 0.713333,
+        "profit_factor_r": 3.853333,
+        "max_drawdown_r": -2.505
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 3,
+          "closed": 3,
+          "open": 0,
+          "wins": 1,
+          "losses": 2,
+          "winrate_pct": 33.3333,
+          "total_r": -1.505,
+          "allocated_r": -0.97187,
+          "avg_r": -0.501667,
+          "profit_factor_r": 0.2475,
+          "max_drawdown_r": -1.505
+        },
+        "4h": {
+          "signals": 10,
+          "closed": 9,
+          "open": 1,
+          "wins": 8,
+          "losses": 1,
+          "winrate_pct": 88.8889,
+          "total_r": 10.065,
+          "allocated_r": 8.617424,
+          "avg_r": 1.118333,
+          "profit_factor_r": 11.065,
+          "max_drawdown_r": -1.0
+        }
+      },
+      "by_regime": {
+        "Trending": {
+          "signals": 13,
+          "closed": 12,
+          "open": 1,
+          "wins": 9,
+          "losses": 3,
+          "winrate_pct": 75.0,
+          "total_r": 8.56,
+          "allocated_r": 7.645554,
+          "avg_r": 0.713333,
+          "profit_factor_r": 3.853333,
+          "max_drawdown_r": -2.505
+        }
+      }
+    },
+    "qmid_p06_ranging_or_trending": {
+      "overall": {
+        "signals": 20,
+        "closed": 19,
+        "open": 1,
+        "wins": 13,
+        "losses": 6,
+        "winrate_pct": 68.4211,
+        "total_r": 9.62536,
+        "allocated_r": 8.896387,
+        "avg_r": 0.506598,
+        "profit_factor_r": 2.604227,
+        "max_drawdown_r": -4.505
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 10,
+          "closed": 10,
+          "open": 0,
+          "wins": 5,
+          "losses": 5,
+          "winrate_pct": 50.0,
+          "total_r": -0.43964,
+          "allocated_r": 0.278963,
+          "avg_r": -0.043964,
+          "profit_factor_r": 0.912072,
+          "max_drawdown_r": -4.505
+        },
+        "4h": {
+          "signals": 10,
+          "closed": 9,
+          "open": 1,
+          "wins": 8,
+          "losses": 1,
+          "winrate_pct": 88.8889,
+          "total_r": 10.065,
+          "allocated_r": 8.617424,
+          "avg_r": 1.118333,
+          "profit_factor_r": 11.065,
+          "max_drawdown_r": -1.0
+        }
+      },
+      "by_regime": {
+        "Ranging": {
+          "signals": 7,
+          "closed": 7,
+          "open": 0,
+          "wins": 4,
+          "losses": 3,
+          "winrate_pct": 57.1429,
+          "total_r": 1.06536,
+          "allocated_r": 1.250833,
+          "avg_r": 0.152194,
+          "profit_factor_r": 1.35512,
+          "max_drawdown_r": -3.0
+        },
+        "Trending": {
+          "signals": 13,
+          "closed": 12,
+          "open": 1,
+          "wins": 9,
+          "losses": 3,
+          "winrate_pct": 75.0,
+          "total_r": 8.56,
+          "allocated_r": 7.645554,
+          "avg_r": 0.713333,
+          "profit_factor_r": 3.853333,
+          "max_drawdown_r": -2.505
+        }
+      }
+    },
+    "qmid_p06_4h_only": {
+      "overall": {
+        "signals": 13,
+        "closed": 11,
+        "open": 2,
+        "wins": 9,
+        "losses": 2,
+        "winrate_pct": 81.8182,
+        "total_r": 9.56,
+        "allocated_r": 7.979018,
+        "avg_r": 0.869091,
+        "profit_factor_r": 5.78,
+        "max_drawdown_r": -2.0
+      },
+      "by_timeframe": {
+        "4h": {
+          "signals": 13,
+          "closed": 11,
+          "open": 2,
+          "wins": 9,
+          "losses": 2,
+          "winrate_pct": 81.8182,
+          "total_r": 9.56,
+          "allocated_r": 7.979018,
+          "avg_r": 0.869091,
+          "profit_factor_r": 5.78,
+          "max_drawdown_r": -2.0
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 3,
+          "closed": 2,
+          "open": 1,
+          "wins": 1,
+          "losses": 1,
+          "winrate_pct": 50.0,
+          "total_r": -0.505,
+          "allocated_r": -0.638406,
+          "avg_r": -0.2525,
+          "profit_factor_r": 0.495,
+          "max_drawdown_r": -1.0
+        },
+        "Trending": {
+          "signals": 10,
+          "closed": 9,
+          "open": 1,
+          "wins": 8,
+          "losses": 1,
+          "winrate_pct": 88.8889,
+          "total_r": 10.065,
+          "allocated_r": 8.617424,
+          "avg_r": 1.118333,
+          "profit_factor_r": 11.065,
+          "max_drawdown_r": -1.0
+        }
+      }
+    },
+    "qmid_p06_15m_strict": {
+      "overall": {
+        "signals": 5,
+        "closed": 5,
+        "open": 0,
+        "wins": 4,
+        "losses": 1,
+        "winrate_pct": 80.0,
+        "total_r": 2.113541,
+        "allocated_r": 1.634664,
+        "avg_r": 0.422708,
+        "profit_factor_r": 3.113541,
+        "max_drawdown_r": -1.0
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 5,
+          "closed": 5,
+          "open": 0,
+          "wins": 4,
+          "losses": 1,
+          "winrate_pct": 80.0,
+          "total_r": 2.113541,
+          "allocated_r": 1.634664,
+          "avg_r": 0.422708,
+          "profit_factor_r": 3.113541,
+          "max_drawdown_r": -1.0
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 3,
+          "closed": 3,
+          "open": 0,
+          "wins": 2,
+          "losses": 1,
+          "winrate_pct": 66.6667,
+          "total_r": 0.07818,
+          "allocated_r": -0.578073,
+          "avg_r": 0.02606,
+          "profit_factor_r": 1.07818,
+          "max_drawdown_r": -1.0
+        },
+        "Ranging": {
+          "signals": 2,
+          "closed": 2,
+          "open": 0,
+          "wins": 2,
+          "losses": 0,
+          "winrate_pct": 100.0,
+          "total_r": 2.03536,
+          "allocated_r": 2.212736,
+          "avg_r": 1.01768,
+          "profit_factor_r": null,
+          "max_drawdown_r": 0.0
+        }
+      }
+    },
+    "ema_aligned_all": {
+      "overall": {
+        "signals": 102,
+        "closed": 96,
+        "open": 6,
+        "wins": 36,
+        "losses": 60,
+        "winrate_pct": 37.5,
+        "total_r": -17.405988,
+        "allocated_r": -16.786269,
+        "avg_r": -0.181312,
+        "profit_factor_r": 0.67062,
+        "max_drawdown_r": -24.870792
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 44,
+          "closed": 44,
+          "open": 0,
+          "wins": 19,
+          "losses": 25,
+          "winrate_pct": 43.1818,
+          "total_r": -5.477145,
+          "allocated_r": -2.104652,
+          "avg_r": -0.124481,
+          "profit_factor_r": 0.758249,
+          "max_drawdown_r": -8.407632
+        },
+        "1h": {
+          "signals": 3,
+          "closed": 3,
+          "open": 0,
+          "wins": 0,
+          "losses": 3,
+          "winrate_pct": 0.0,
+          "total_r": -1.191044,
+          "allocated_r": -1.506333,
+          "avg_r": -0.397015,
+          "profit_factor_r": 0.04796,
+          "max_drawdown_r": -1.191044
+        },
+        "24h": {
+          "signals": 12,
+          "closed": 8,
+          "open": 4,
+          "wins": 5,
+          "losses": 3,
+          "winrate_pct": 62.5,
+          "total_r": 2.395007,
+          "allocated_r": 1.788787,
+          "avg_r": 0.299376,
+          "profit_factor_r": 2.091122,
+          "max_drawdown_r": -2.194993
+        },
+        "4h": {
+          "signals": 43,
+          "closed": 41,
+          "open": 2,
+          "wins": 12,
+          "losses": 29,
+          "winrate_pct": 29.2683,
+          "total_r": -13.132806,
+          "allocated_r": -14.964072,
+          "avg_r": -0.320312,
+          "profit_factor_r": 0.508916,
+          "max_drawdown_r": -16.833167
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 44,
+          "closed": 44,
+          "open": 0,
+          "wins": 18,
+          "losses": 26,
+          "winrate_pct": 40.9091,
+          "total_r": -7.200546,
+          "allocated_r": -4.095848,
+          "avg_r": -0.163649,
+          "profit_factor_r": 0.681584,
+          "max_drawdown_r": -10.767682
+        },
+        "Ranging": {
+          "signals": 5,
+          "closed": 5,
+          "open": 0,
+          "wins": 4,
+          "losses": 1,
+          "winrate_pct": 80.0,
+          "total_r": 2.440847,
+          "allocated_r": 2.775954,
+          "avg_r": 0.488169,
+          "profit_factor_r": 3.440847,
+          "max_drawdown_r": -1.0
+        },
+        "Trending": {
+          "signals": 53,
+          "closed": 47,
+          "open": 6,
+          "wins": 14,
+          "losses": 33,
+          "winrate_pct": 29.7872,
+          "total_r": -12.64629,
+          "allocated_r": -15.466375,
+          "avg_r": -0.26907,
+          "profit_factor_r": 0.567367,
+          "max_drawdown_r": -20.441651
+        }
+      }
+    },
+    "ema_pullback_all": {
+      "overall": {
+        "signals": 65,
+        "closed": 61,
+        "open": 4,
+        "wins": 21,
+        "losses": 40,
+        "winrate_pct": 34.4262,
+        "total_r": -15.336629,
+        "allocated_r": -14.981348,
+        "avg_r": -0.25142,
+        "profit_factor_r": 0.570056,
+        "max_drawdown_r": -19.277115
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 31,
+          "closed": 31,
+          "open": 0,
+          "wins": 12,
+          "losses": 19,
+          "winrate_pct": 38.7097,
+          "total_r": -6.113254,
+          "allocated_r": -3.577554,
+          "avg_r": -0.197202,
+          "profit_factor_r": 0.651946,
+          "max_drawdown_r": -7.518741
+        },
+        "1h": {
+          "signals": 2,
+          "closed": 2,
+          "open": 0,
+          "wins": 0,
+          "losses": 2,
+          "winrate_pct": 0.0,
+          "total_r": -0.94,
+          "allocated_r": -1.20262,
+          "avg_r": -0.47,
+          "profit_factor_r": 0.06,
+          "max_drawdown_r": -1.0
+        },
+        "24h": {
+          "signals": 6,
+          "closed": 4,
+          "open": 2,
+          "wins": 3,
+          "losses": 1,
+          "winrate_pct": 75.0,
+          "total_r": 0.535,
+          "allocated_r": 0.30361,
+          "avg_r": 0.13375,
+          "profit_factor_r": 1.535,
+          "max_drawdown_r": -1.0
+        },
+        "4h": {
+          "signals": 26,
+          "closed": 24,
+          "open": 2,
+          "wins": 6,
+          "losses": 18,
+          "winrate_pct": 25.0,
+          "total_r": -8.818374,
+          "allocated_r": -10.504784,
+          "avg_r": -0.367432,
+          "profit_factor_r": 0.452516,
+          "max_drawdown_r": -11.798374
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 27,
+          "closed": 27,
+          "open": 0,
+          "wins": 9,
+          "losses": 18,
+          "winrate_pct": 33.3333,
+          "total_r": -7.705611,
+          "allocated_r": -5.307225,
+          "avg_r": -0.285393,
+          "profit_factor_r": 0.526409,
+          "max_drawdown_r": -9.265611
+        },
+        "Ranging": {
+          "signals": 5,
+          "closed": 5,
+          "open": 0,
+          "wins": 4,
+          "losses": 1,
+          "winrate_pct": 80.0,
+          "total_r": 2.440847,
+          "allocated_r": 2.775954,
+          "avg_r": 0.488169,
+          "profit_factor_r": 3.440847,
+          "max_drawdown_r": -1.0
+        },
+        "Trending": {
+          "signals": 33,
+          "closed": 29,
+          "open": 4,
+          "wins": 8,
+          "losses": 21,
+          "winrate_pct": 27.5862,
+          "total_r": -10.071865,
+          "allocated_r": -12.450077,
+          "avg_r": -0.347306,
+          "profit_factor_r": 0.452633,
+          "max_drawdown_r": -15.423038
+        }
+      }
+    },
+    "qmid_p06_ema": {
+      "overall": {
+        "signals": 28,
+        "closed": 28,
+        "open": 0,
+        "wins": 17,
+        "losses": 11,
+        "winrate_pct": 60.7143,
+        "total_r": 7.773488,
+        "allocated_r": 7.933508,
+        "avg_r": 0.277625,
+        "profit_factor_r": 1.706681,
+        "max_drawdown_r": -4.505
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 22,
+          "closed": 22,
+          "open": 0,
+          "wins": 12,
+          "losses": 10,
+          "winrate_pct": 54.5455,
+          "total_r": 1.233488,
+          "allocated_r": 2.794995,
+          "avg_r": 0.056068,
+          "profit_factor_r": 1.123349,
+          "max_drawdown_r": -5.0
+        },
+        "4h": {
+          "signals": 6,
+          "closed": 6,
+          "open": 0,
+          "wins": 5,
+          "losses": 1,
+          "winrate_pct": 83.3333,
+          "total_r": 6.54,
+          "allocated_r": 5.138513,
+          "avg_r": 1.09,
+          "profit_factor_r": 7.54,
+          "max_drawdown_r": -1.0
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 18,
+          "closed": 18,
+          "open": 0,
+          "wins": 9,
+          "losses": 9,
+          "winrate_pct": 50.0,
+          "total_r": -0.296872,
+          "allocated_r": 0.258907,
+          "avg_r": -0.016493,
+          "profit_factor_r": 0.967014,
+          "max_drawdown_r": -5.915052
+        },
+        "Ranging": {
+          "signals": 3,
+          "closed": 3,
+          "open": 0,
+          "wins": 3,
+          "losses": 0,
+          "winrate_pct": 100.0,
+          "total_r": 2.53036,
+          "allocated_r": 2.786788,
+          "avg_r": 0.843453,
+          "profit_factor_r": null,
+          "max_drawdown_r": 0.0
+        },
+        "Trending": {
+          "signals": 7,
+          "closed": 7,
+          "open": 0,
+          "wins": 5,
+          "losses": 2,
+          "winrate_pct": 71.4286,
+          "total_r": 5.54,
+          "allocated_r": 4.887813,
+          "avg_r": 0.791429,
+          "profit_factor_r": 3.77,
+          "max_drawdown_r": -2.0
+        }
+      }
+    },
+    "qmid_p06_ema_no_balanced": {
+      "overall": {
+        "signals": 10,
+        "closed": 10,
+        "open": 0,
+        "wins": 8,
+        "losses": 2,
+        "winrate_pct": 80.0,
+        "total_r": 8.07036,
+        "allocated_r": 7.674601,
+        "avg_r": 0.807036,
+        "profit_factor_r": 5.03518,
+        "max_drawdown_r": -2.0
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 5,
+          "closed": 5,
+          "open": 0,
+          "wins": 3,
+          "losses": 2,
+          "winrate_pct": 60.0,
+          "total_r": 0.53036,
+          "allocated_r": 1.273388,
+          "avg_r": 0.106072,
+          "profit_factor_r": 1.26518,
+          "max_drawdown_r": -2.0
+        },
+        "4h": {
+          "signals": 5,
+          "closed": 5,
+          "open": 0,
+          "wins": 5,
+          "losses": 0,
+          "winrate_pct": 100.0,
+          "total_r": 7.54,
+          "allocated_r": 6.401213,
+          "avg_r": 1.508,
+          "profit_factor_r": null,
+          "max_drawdown_r": 0.0
+        }
+      },
+      "by_regime": {
+        "Ranging": {
+          "signals": 3,
+          "closed": 3,
+          "open": 0,
+          "wins": 3,
+          "losses": 0,
+          "winrate_pct": 100.0,
+          "total_r": 2.53036,
+          "allocated_r": 2.786788,
+          "avg_r": 0.843453,
+          "profit_factor_r": null,
+          "max_drawdown_r": 0.0
+        },
+        "Trending": {
+          "signals": 7,
+          "closed": 7,
+          "open": 0,
+          "wins": 5,
+          "losses": 2,
+          "winrate_pct": 71.4286,
+          "total_r": 5.54,
+          "allocated_r": 4.887813,
+          "avg_r": 0.791429,
+          "profit_factor_r": 3.77,
+          "max_drawdown_r": -2.0
+        }
+      }
+    },
+    "qmid_p06_ema_pullback": {
+      "overall": {
+        "signals": 17,
+        "closed": 17,
+        "open": 0,
+        "wins": 9,
+        "losses": 8,
+        "winrate_pct": 52.9412,
+        "total_r": 2.52536,
+        "allocated_r": 4.361865,
+        "avg_r": 0.148551,
+        "profit_factor_r": 1.31567,
+        "max_drawdown_r": -4.505
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 13,
+          "closed": 13,
+          "open": 0,
+          "wins": 6,
+          "losses": 7,
+          "winrate_pct": 46.1538,
+          "total_r": -0.95964,
+          "allocated_r": 0.936843,
+          "avg_r": -0.073818,
+          "profit_factor_r": 0.862909,
+          "max_drawdown_r": -5.0
+        },
+        "4h": {
+          "signals": 4,
+          "closed": 4,
+          "open": 0,
+          "wins": 3,
+          "losses": 1,
+          "winrate_pct": 75.0,
+          "total_r": 3.485,
+          "allocated_r": 3.425022,
+          "avg_r": 0.87125,
+          "profit_factor_r": 4.485,
+          "max_drawdown_r": -1.0
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 10,
+          "closed": 10,
+          "open": 0,
+          "wins": 3,
+          "losses": 7,
+          "winrate_pct": 30.0,
+          "total_r": -3.49,
+          "allocated_r": -2.047445,
+          "avg_r": -0.349,
+          "profit_factor_r": 0.501429,
+          "max_drawdown_r": -5.505
+        },
+        "Ranging": {
+          "signals": 3,
+          "closed": 3,
+          "open": 0,
+          "wins": 3,
+          "losses": 0,
+          "winrate_pct": 100.0,
+          "total_r": 2.53036,
+          "allocated_r": 2.786788,
+          "avg_r": 0.843453,
+          "profit_factor_r": null,
+          "max_drawdown_r": 0.0
+        },
+        "Trending": {
+          "signals": 4,
+          "closed": 4,
+          "open": 0,
+          "wins": 3,
+          "losses": 1,
+          "winrate_pct": 75.0,
+          "total_r": 3.485,
+          "allocated_r": 3.622522,
+          "avg_r": 0.87125,
+          "profit_factor_r": 4.485,
+          "max_drawdown_r": -1.0
+        }
+      }
+    },
+    "adaptive_v0": {
+      "overall": {
+        "signals": 17,
+        "closed": 15,
+        "open": 2,
+        "wins": 12,
+        "losses": 3,
+        "winrate_pct": 80.0,
+        "total_r": 11.178541,
+        "allocated_r": 9.303317,
+        "avg_r": 0.745236,
+        "profit_factor_r": 4.72618,
+        "max_drawdown_r": -2.0
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 4,
+          "closed": 4,
+          "open": 0,
+          "wins": 3,
+          "losses": 1,
+          "winrate_pct": 75.0,
+          "total_r": 1.618541,
+          "allocated_r": 1.324299,
+          "avg_r": 0.404635,
+          "profit_factor_r": 2.618541,
+          "max_drawdown_r": -1.0
+        },
+        "4h": {
+          "signals": 13,
+          "closed": 11,
+          "open": 2,
+          "wins": 9,
+          "losses": 2,
+          "winrate_pct": 81.8182,
+          "total_r": 9.56,
+          "allocated_r": 7.979018,
+          "avg_r": 0.869091,
+          "profit_factor_r": 5.78,
+          "max_drawdown_r": -2.0
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 5,
+          "closed": 4,
+          "open": 1,
+          "wins": 2,
+          "losses": 2,
+          "winrate_pct": 50.0,
+          "total_r": -0.92182,
+          "allocated_r": -1.526844,
+          "avg_r": -0.230455,
+          "profit_factor_r": 0.53909,
+          "max_drawdown_r": -2.0
+        },
+        "Ranging": {
+          "signals": 2,
+          "closed": 2,
+          "open": 0,
+          "wins": 2,
+          "losses": 0,
+          "winrate_pct": 100.0,
+          "total_r": 2.03536,
+          "allocated_r": 2.212736,
+          "avg_r": 1.01768,
+          "profit_factor_r": null,
+          "max_drawdown_r": 0.0
+        },
+        "Trending": {
+          "signals": 10,
+          "closed": 9,
+          "open": 1,
+          "wins": 8,
+          "losses": 1,
+          "winrate_pct": 88.8889,
+          "total_r": 10.065,
+          "allocated_r": 8.617424,
+          "avg_r": 1.118333,
+          "profit_factor_r": 11.065,
+          "max_drawdown_r": -1.0
+        }
+      }
+    },
+    "adaptive_v1": {
+      "overall": {
+        "signals": 8,
+        "closed": 8,
+        "open": 0,
+        "wins": 7,
+        "losses": 1,
+        "winrate_pct": 87.5,
+        "total_r": 8.57536,
+        "allocated_r": 7.351249,
+        "avg_r": 1.07192,
+        "profit_factor_r": 9.57536,
+        "max_drawdown_r": -1.0
+      },
+      "by_timeframe": {
+        "15m": {
+          "signals": 2,
+          "closed": 2,
+          "open": 0,
+          "wins": 2,
+          "losses": 0,
+          "winrate_pct": 100.0,
+          "total_r": 2.03536,
+          "allocated_r": 2.212736,
+          "avg_r": 1.01768,
+          "profit_factor_r": null,
+          "max_drawdown_r": 0.0
+        },
+        "4h": {
+          "signals": 6,
+          "closed": 6,
+          "open": 0,
+          "wins": 5,
+          "losses": 1,
+          "winrate_pct": 83.3333,
+          "total_r": 6.54,
+          "allocated_r": 5.138513,
+          "avg_r": 1.09,
+          "profit_factor_r": 7.54,
+          "max_drawdown_r": -1.0
+        }
+      },
+      "by_regime": {
+        "Balanced": {
+          "signals": 1,
+          "closed": 1,
+          "open": 0,
+          "wins": 0,
+          "losses": 1,
+          "winrate_pct": 0.0,
+          "total_r": -1.0,
+          "allocated_r": -1.2627,
+          "avg_r": -1.0,
+          "profit_factor_r": 0.0,
+          "max_drawdown_r": -1.0
+        },
+        "Ranging": {
+          "signals": 2,
+          "closed": 2,
+          "open": 0,
+          "wins": 2,
+          "losses": 0,
+          "winrate_pct": 100.0,
+          "total_r": 2.03536,
+          "allocated_r": 2.212736,
+          "avg_r": 1.01768,
+          "profit_factor_r": null,
+          "max_drawdown_r": 0.0
+        },
+        "Trending": {
+          "signals": 5,
+          "closed": 5,
+          "open": 0,
+          "wins": 5,
+          "losses": 0,
+          "winrate_pct": 100.0,
+          "total_r": 7.54,
+          "allocated_r": 6.401213,
+          "avg_r": 1.508,
+          "profit_factor_r": null,
+          "max_drawdown_r": 0.0
+        }
+      }
+    }
+  },
+  "ranking": [
+    {
+      "candidate": "adaptive_v0",
+      "score": 103.1398,
+      "signals": 17,
+      "closed": 15,
+      "open": 2,
+      "wins": 12,
+      "losses": 3,
+      "winrate_pct": 80.0,
+      "total_r": 11.178541,
+      "allocated_r": 9.303317,
+      "avg_r": 0.745236,
+      "profit_factor_r": 4.72618,
+      "max_drawdown_r": -2.0
+    },
+    {
+      "candidate": "qmid_p06_4h_only",
+      "score": 100.45,
+      "signals": 13,
+      "closed": 11,
+      "open": 2,
+      "wins": 9,
+      "losses": 2,
+      "winrate_pct": 81.8182,
+      "total_r": 9.56,
+      "allocated_r": 7.979018,
+      "avg_r": 0.869091,
+      "profit_factor_r": 5.78,
+      "max_drawdown_r": -2.0
+    },
+    {
+      "candidate": "adaptive_v1",
+      "score": 100.3859,
+      "signals": 8,
+      "closed": 8,
+      "open": 0,
+      "wins": 7,
+      "losses": 1,
+      "winrate_pct": 87.5,
+      "total_r": 8.57536,
+      "allocated_r": 7.351249,
+      "avg_r": 1.07192,
+      "profit_factor_r": 9.57536,
+      "max_drawdown_r": -1.0
+    },
+    {
+      "candidate": "qmid_p06_trending_only",
+      "score": 98.525,
+      "signals": 13,
+      "closed": 12,
+      "open": 1,
+      "wins": 9,
+      "losses": 3,
+      "winrate_pct": 75.0,
+      "total_r": 8.56,
+      "allocated_r": 7.645554,
+      "avg_r": 0.713333,
+      "profit_factor_r": 3.853333,
+      "max_drawdown_r": -2.505
+    },
+    {
+      "candidate": "qmid_p06_ema_no_balanced",
+      "score": 98.4213,
+      "signals": 10,
+      "closed": 10,
+      "open": 0,
+      "wins": 8,
+      "losses": 2,
+      "winrate_pct": 80.0,
+      "total_r": 8.07036,
+      "allocated_r": 7.674601,
+      "avg_r": 0.807036,
+      "profit_factor_r": 5.03518,
+      "max_drawdown_r": -2.0
+    },
+    {
+      "candidate": "qmid_p06_no_balanced",
+      "score": 97.69,
+      "signals": 20,
+      "closed": 19,
+      "open": 1,
+      "wins": 13,
+      "losses": 6,
+      "winrate_pct": 68.4211,
+      "total_r": 9.62536,
+      "allocated_r": 8.896387,
+      "avg_r": 0.506598,
+      "profit_factor_r": 2.604227,
+      "max_drawdown_r": -4.505
+    },
+    {
+      "candidate": "qmid_p06_ranging_or_trending",
+      "score": 97.69,
+      "signals": 20,
+      "closed": 19,
+      "open": 1,
+      "wins": 13,
+      "losses": 6,
+      "winrate_pct": 68.4211,
+      "total_r": 9.62536,
+      "allocated_r": 8.896387,
+      "avg_r": 0.506598,
+      "profit_factor_r": 2.604227,
+      "max_drawdown_r": -4.505
+    },
+    {
+      "candidate": "qmid_p06_15m_strict",
+      "score": 91.8086,
+      "signals": 5,
+      "closed": 5,
+      "open": 0,
+      "wins": 4,
+      "losses": 1,
+      "winrate_pct": 80.0,
+      "total_r": 2.113541,
+      "allocated_r": 1.634664,
+      "avg_r": 0.422708,
+      "profit_factor_r": 3.113541,
+      "max_drawdown_r": -1.0
+    },
+    {
+      "candidate": "qmid_p06_ema",
+      "score": 91.0088,
+      "signals": 28,
+      "closed": 28,
+      "open": 0,
+      "wins": 17,
+      "losses": 11,
+      "winrate_pct": 60.7143,
+      "total_r": 7.773488,
+      "allocated_r": 7.933508,
+      "avg_r": 0.277625,
+      "profit_factor_r": 1.706681,
+      "max_drawdown_r": -4.505
+    },
+    {
+      "candidate": "qmid_p06_all",
+      "score": 88.1779,
+      "signals": 49,
+      "closed": 47,
+      "open": 2,
+      "wins": 26,
+      "losses": 21,
+      "winrate_pct": 55.3191,
+      "total_r": 8.747932,
+      "allocated_r": 9.188588,
+      "avg_r": 0.186126,
+      "profit_factor_r": 1.471318,
+      "max_drawdown_r": -6.01
+    },
+    {
+      "candidate": "qmid_p07_all",
+      "score": 86.325,
+      "signals": 55,
+      "closed": 52,
+      "open": 3,
+      "wins": 29,
+      "losses": 23,
+      "winrate_pct": 55.7692,
+      "total_r": 8.315841,
+      "allocated_r": 8.598349,
+      "avg_r": 0.15992,
+      "profit_factor_r": 1.406094,
+      "max_drawdown_r": -6.515
+    },
+    {
+      "candidate": "baseline_24h_only",
+      "score": 85.2992,
+      "signals": 22,
+      "closed": 13,
+      "open": 9,
+      "wins": 7,
+      "losses": 6,
+      "winrate_pct": 53.8462,
+      "total_r": 3.086189,
+      "allocated_r": 2.603581,
+      "avg_r": 0.237399,
+      "profit_factor_r": 1.676972,
+      "max_drawdown_r": -2.558812
+    },
+    {
+      "candidate": "qmid_p06_ema_pullback",
+      "score": 74.7951,
+      "signals": 17,
+      "closed": 17,
+      "open": 0,
+      "wins": 9,
+      "losses": 8,
+      "winrate_pct": 52.9412,
+      "total_r": 2.52536,
+      "allocated_r": 4.361865,
+      "avg_r": 0.148551,
+      "profit_factor_r": 1.31567,
+      "max_drawdown_r": -4.505
+    },
+    {
+      "candidate": "baseline_trending_only",
+      "score": 35.8326,
+      "signals": 86,
+      "closed": 74,
+      "open": 12,
+      "wins": 29,
+      "losses": 45,
+      "winrate_pct": 39.1892,
+      "total_r": -6.598072,
+      "allocated_r": -8.996314,
+      "avg_r": -0.089163,
+      "profit_factor_r": 0.829739,
+      "max_drawdown_r": -19.508731
+    },
+    {
+      "candidate": "baseline_4h_24h",
+      "score": 34.806,
+      "signals": 89,
+      "closed": 76,
+      "open": 13,
+      "wins": 31,
+      "losses": 45,
+      "winrate_pct": 40.7895,
+      "total_r": -7.548388,
+      "allocated_r": -10.671868,
+      "avg_r": -0.099321,
+      "profit_factor_r": 0.810452,
+      "max_drawdown_r": -19.180545
+    },
+    {
+      "candidate": "baseline_4h_only",
+      "score": 32.1475,
+      "signals": 67,
+      "closed": 63,
+      "open": 4,
+      "wins": 24,
+      "losses": 39,
+      "winrate_pct": 38.0952,
+      "total_r": -10.634577,
+      "allocated_r": -13.275449,
+      "avg_r": -0.168803,
+      "profit_factor_r": 0.698432,
+      "max_drawdown_r": -17.116734
+    },
+    {
+      "candidate": "baseline_not_balanced",
+      "score": 26.4988,
+      "signals": 101,
+      "closed": 89,
+      "open": 12,
+      "wins": 35,
+      "losses": 54,
+      "winrate_pct": 39.3258,
+      "total_r": -8.682132,
+      "allocated_r": -11.414127,
+      "avg_r": -0.097552,
+      "profit_factor_r": 0.813281,
+      "max_drawdown_r": -23.348471
+    },
+    {
+      "candidate": "baseline_no_15m",
+      "score": 26.2994,
+      "signals": 98,
+      "closed": 85,
+      "open": 13,
+      "wins": 33,
+      "losses": 52,
+      "winrate_pct": 38.8235,
+      "total_r": -9.953439,
+      "allocated_r": -12.431525,
+      "avg_r": -0.117099,
+      "profit_factor_r": 0.775206,
+      "max_drawdown_r": -22.057756
+    },
+    {
+      "candidate": "ema_pullback_all",
+      "score": 20.1018,
+      "signals": 65,
+      "closed": 61,
+      "open": 4,
+      "wins": 21,
+      "losses": 40,
+      "winrate_pct": 34.4262,
+      "total_r": -15.336629,
+      "allocated_r": -14.981348,
+      "avg_r": -0.25142,
+      "profit_factor_r": 0.570056,
+      "max_drawdown_r": -19.277115
+    },
+    {
+      "candidate": "baseline_no_1h",
+      "score": 13.0894,
+      "signals": 159,
+      "closed": 146,
+      "open": 13,
+      "wins": 59,
+      "losses": 87,
+      "winrate_pct": 40.411,
+      "total_r": -17.741627,
+      "allocated_r": -15.607164,
+      "avg_r": -0.121518,
+      "profit_factor_r": 0.763322,
+      "max_drawdown_r": -26.966551
+    },
+    {
+      "candidate": "ema_aligned_all",
+      "score": 11.6549,
+      "signals": 102,
+      "closed": 96,
+      "open": 6,
+      "wins": 36,
+      "losses": 60,
+      "winrate_pct": 37.5,
+      "total_r": -17.405988,
+      "allocated_r": -16.786269,
+      "avg_r": -0.181312,
+      "profit_factor_r": 0.67062,
+      "max_drawdown_r": -24.870792
+    },
+    {
+      "candidate": "baseline_all",
+      "score": 9.9263,
+      "signals": 168,
+      "closed": 155,
+      "open": 13,
+      "wins": 61,
+      "losses": 94,
+      "winrate_pct": 39.3548,
+      "total_r": -20.146678,
+      "allocated_r": -17.366821,
+      "avg_r": -0.129979,
+      "profit_factor_r": 0.746315,
+      "max_drawdown_r": -28.120558
+    }
+  ]
+}

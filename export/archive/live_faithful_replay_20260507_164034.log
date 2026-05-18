@@ -1,0 +1,114 @@
+[setup] database=postgresql+asyncpg://localhost:5432/flowscope_replay_vps_20260507_123757 engine_tag=v2_balanced candidates=baseline,qmid_p06,qmid_p07,tf_simple,context_guard,quality_soft,balanced_soft,tf_profile,guarded
+[load] signals=183 window=2026-04-23T01:43:45.640813+00:00->2026-05-07T10:48:53.849876+00:00
+[load] buckets=1
+[load] buckets=100,000
+[load] bucket load complete rows=159,941 symbol_tf=420
+[replay:baseline] start signals=183 progress_every=25
+[replay:baseline] 1/183   0.5% sim_time=2026-04-23T01:43:45.640813+00:00 active=0 entered=0 closed=0 R=0.00 skips=1 entry_guard_rejected=1
+[replay:baseline] 25/183  13.7% sim_time=2026-04-26T11:15:45.056158+00:00 active=5 entered=22 closed=17 R=-3.72 skips=3 entry_guard_rejected=3
+[replay:baseline] 50/183  27.3% sim_time=2026-04-28T06:38:24.522862+00:00 active=5 entered=46 closed=41 R=-9.39 skips=4 entry_guard_rejected=4
+[replay:baseline] 75/183  41.0% sim_time=2026-05-01T04:01:11.891979+00:00 active=4 entered=69 closed=65 R=-18.36 skips=6 entry_guard_rejected=6
+[replay:baseline] 100/183  54.6% sim_time=2026-05-04T04:02:58.217894+00:00 active=6 entered=94 closed=88 R=-21.27 skips=6 entry_guard_rejected=6
+[replay:baseline] 125/183  68.3% sim_time=2026-05-05T04:08:46.288863+00:00 active=13 entered=116 closed=103 R=-22.34 skips=9 entry_guard_rejected=8 symbol_locked_open_position=1
+[replay:baseline] 150/183  82.0% sim_time=2026-05-06T04:00:52.824130+00:00 active=23 entered=139 closed=116 R=-18.45 skips=11 entry_guard_rejected=10 symbol_locked_open_position=1
+[replay:baseline] 175/183  95.6% sim_time=2026-05-07T03:15:34.747049+00:00 active=20 entered=160 closed=140 R=-17.77 skips=15 entry_guard_rejected=13 symbol_locked_open_position=2
+[replay:baseline] 183/183 100.0% sim_time=2026-05-07T10:48:53.849876+00:00 active=16 entered=168 closed=152 R=-22.71 skips=15 entry_guard_rejected=13 symbol_locked_open_position=2
+[replay:baseline] finish entered=168 closed=155 open=13 winrate=39.35% R=-20.147 allocated_R=-17.367
+[output:baseline] summary=export\live_faithful_baseline_20260507_164034.json trades=export\live_faithful_baseline_20260507_164034_trades.csv skips=export\live_faithful_baseline_20260507_164034_skips.csv
+[replay:qmid_p06] start signals=183 progress_every=25
+[replay:qmid_p06] 1/183   0.5% sim_time=2026-04-23T01:43:45.640813+00:00 active=0 entered=0 closed=0 R=0.00 skips=1 guard_quality_not_ready=1
+[replay:qmid_p06] 25/183  13.7% sim_time=2026-04-26T11:15:45.056158+00:00 active=0 entered=0 closed=0 R=0.00 skips=25 guard_quality_not_ready=25
+[replay:qmid_p06] 50/183  27.3% sim_time=2026-04-28T06:38:24.522862+00:00 active=1 entered=2 closed=1 R=1.50 skips=48 guard_quality_not_ready=48
+[replay:qmid_p06] 75/183  41.0% sim_time=2026-05-01T04:01:11.891979+00:00 active=0 entered=7 closed=7 R=3.65 skips=68 guard_quality_not_ready=60 guard_quality_score_outside_mid=4 guard_market_pressure_4h_high=3 entry_guard_rejected=1
+[replay:qmid_p06] 100/183  54.6% sim_time=2026-05-04T04:02:58.217894+00:00 active=0 entered=11 closed=11 R=2.64 skips=89 guard_quality_not_ready=62 guard_quality_score_outside_mid=23 guard_market_pressure_4h_high=3 entry_guard_rejected=1
+[replay:qmid_p06] 125/183  68.3% sim_time=2026-05-05T04:08:46.288863+00:00 active=2 entered=17 closed=15 R=3.65 skips=108 guard_quality_not_ready=76 guard_quality_score_outside_mid=23 guard_market_pressure_4h_high=7 entry_guard_rejected=2
+[replay:qmid_p06] 150/183  82.0% sim_time=2026-05-06T04:00:52.824130+00:00 active=9 entered=34 closed=25 R=9.76 skips=116 guard_quality_not_ready=81 guard_quality_score_outside_mid=23 guard_market_pressure_4h_high=10 entry_guard_rejected=2
+[replay:qmid_p06] 175/183  95.6% sim_time=2026-05-07T03:15:34.747049+00:00 active=3 entered=43 closed=40 R=10.26 skips=132 guard_quality_not_ready=91 guard_quality_score_outside_mid=26 guard_market_pressure_4h_high=13 entry_guard_rejected=2
+[replay:qmid_p06] 183/183 100.0% sim_time=2026-05-07T10:48:53.849876+00:00 active=2 entered=49 closed=47 R=8.75 skips=134 guard_quality_not_ready=92 guard_quality_score_outside_mid=26 guard_market_pressure_4h_high=14 entry_guard_rejected=2
+[replay:qmid_p06] finish entered=49 closed=47 open=2 winrate=55.32% R=8.748 allocated_R=9.189
+[output:qmid_p06] summary=export\live_faithful_qmid_p06_20260507_164034.json trades=export\live_faithful_qmid_p06_20260507_164034_trades.csv skips=export\live_faithful_qmid_p06_20260507_164034_skips.csv
+[replay:qmid_p07] start signals=183 progress_every=25
+[replay:qmid_p07] 1/183   0.5% sim_time=2026-04-23T01:43:45.640813+00:00 active=0 entered=0 closed=0 R=0.00 skips=1 guard_quality_not_ready=1
+[replay:qmid_p07] 25/183  13.7% sim_time=2026-04-26T11:15:45.056158+00:00 active=0 entered=0 closed=0 R=0.00 skips=25 guard_quality_not_ready=25
+[replay:qmid_p07] 50/183  27.3% sim_time=2026-04-28T06:38:24.522862+00:00 active=1 entered=2 closed=1 R=1.50 skips=48 guard_quality_not_ready=48
+[replay:qmid_p07] 75/183  41.0% sim_time=2026-05-01T04:01:11.891979+00:00 active=0 entered=8 closed=8 R=4.14 skips=67 guard_quality_not_ready=60 guard_quality_score_outside_mid=4 guard_market_pressure_4h_high=2 entry_guard_rejected=1
+[replay:qmid_p07] 100/183  54.6% sim_time=2026-05-04T04:02:58.217894+00:00 active=0 entered=12 closed=12 R=3.13 skips=88 guard_quality_not_ready=62 guard_quality_score_outside_mid=23 guard_market_pressure_4h_high=2 entry_guard_rejected=1
+[replay:qmid_p07] 125/183  68.3% sim_time=2026-05-05T04:08:46.288863+00:00 active=3 entered=19 closed=16 R=4.14 skips=106 guard_quality_not_ready=76 guard_quality_score_outside_mid=23 guard_market_pressure_4h_high=5 entry_guard_rejected=2
+[replay:qmid_p07] 150/183  82.0% sim_time=2026-05-06T04:00:52.824130+00:00 active=12 entered=38 closed=26 R=10.25 skips=112 guard_quality_not_ready=81 guard_quality_score_outside_mid=23 guard_market_pressure_4h_high=6 entry_guard_rejected=2
+[replay:qmid_p07] 175/183  95.6% sim_time=2026-05-07T03:15:34.747049+00:00 active=5 entered=48 closed=43 R=10.25 skips=127 guard_quality_not_ready=91 guard_quality_score_outside_mid=26 guard_market_pressure_4h_high=8 entry_guard_rejected=2
+[replay:qmid_p07] 183/183 100.0% sim_time=2026-05-07T10:48:53.849876+00:00 active=3 entered=55 closed=52 R=8.32 skips=128 guard_quality_not_ready=92 guard_quality_score_outside_mid=26 guard_market_pressure_4h_high=8 entry_guard_rejected=2
+[replay:qmid_p07] finish entered=55 closed=52 open=3 winrate=55.77% R=8.316 allocated_R=8.598
+[output:qmid_p07] summary=export\live_faithful_qmid_p07_20260507_164034.json trades=export\live_faithful_qmid_p07_20260507_164034_trades.csv skips=export\live_faithful_qmid_p07_20260507_164034_skips.csv
+[replay:tf_simple] start signals=183 progress_every=25
+[replay:tf_simple] 1/183   0.5% sim_time=2026-04-23T01:43:45.640813+00:00 active=0 entered=0 closed=0 R=0.00 skips=1 guard_market_pressure_4h_high=1
+[replay:tf_simple] 25/183  13.7% sim_time=2026-04-26T11:15:45.056158+00:00 active=3 entered=5 closed=2 R=-2.00 skips=20 guard_quality_not_ready=12 guard_market_pressure_4h_high=4 entry_guard_rejected=2 guard_low_volatility=1
+[replay:tf_simple] 50/183  27.3% sim_time=2026-04-28T06:38:24.522862+00:00 active=5 entered=11 closed=6 R=-1.01 skips=39 guard_quality_not_ready=20 guard_market_pressure_4h_high=9 guard_low_volatility=5 guard_timeframe_1h=3
+[replay:tf_simple] 75/183  41.0% sim_time=2026-05-01T04:01:11.891979+00:00 active=1 entered=20 closed=19 R=-3.57 skips=55 guard_quality_not_ready=20 guard_market_pressure_4h_high=14 guard_low_volatility=10 guard_timeframe_1h=5
+[replay:tf_simple] 100/183  54.6% sim_time=2026-05-04T04:02:58.217894+00:00 active=4 entered=31 closed=27 R=-3.56 skips=69 guard_quality_not_ready=20 guard_market_pressure_4h_high=15 guard_low_volatility=15 guard_quality_score_outside_mid=9
+[replay:tf_simple] 125/183  68.3% sim_time=2026-05-05T04:08:46.288863+00:00 active=4 entered=40 closed=36 R=-1.81 skips=85 guard_low_volatility=25 guard_quality_not_ready=20 guard_market_pressure_4h_high=18 guard_quality_score_outside_mid=9
+[replay:tf_simple] 150/183  82.0% sim_time=2026-05-06T04:00:52.824130+00:00 active=13 entered=57 closed=44 R=2.25 skips=93 guard_low_volatility=26 guard_market_pressure_4h_high=22 guard_quality_not_ready=20 guard_quality_score_outside_mid=9
+[replay:tf_simple] 175/183  95.6% sim_time=2026-05-07T03:15:34.747049+00:00 active=11 entered=71 closed=60 R=4.29 skips=104 guard_low_volatility=30 guard_market_pressure_4h_high=26 guard_quality_not_ready=20 entry_guard_rejected=9
+[replay:tf_simple] 183/183 100.0% sim_time=2026-05-07T10:48:53.849876+00:00 active=7 entered=76 closed=69 R=0.77 skips=107 guard_low_volatility=31 guard_market_pressure_4h_high=28 guard_quality_not_ready=20 entry_guard_rejected=9
+[replay:tf_simple] finish entered=76 closed=72 open=4 winrate=47.22% R=3.333 allocated_R=4.090
+[output:tf_simple] summary=export\live_faithful_tf_simple_20260507_164034.json trades=export\live_faithful_tf_simple_20260507_164034_trades.csv skips=export\live_faithful_tf_simple_20260507_164034_skips.csv
+[replay:context_guard] start signals=183 progress_every=25
+[replay:context_guard] 1/183   0.5% sim_time=2026-04-23T01:43:45.640813+00:00 active=0 entered=0 closed=0 R=0.00 skips=1 guard_market_pressure_4h_high=1
+[replay:context_guard] 25/183  13.7% sim_time=2026-04-26T11:15:45.056158+00:00 active=2 entered=8 closed=6 R=-2.40 skips=17 guard_market_pressure_4h_high=12 guard_volume_z_4h_extreme=2 guard_low_volatility=1 entry_guard_rejected=1
+[replay:context_guard] 50/183  27.3% sim_time=2026-04-28T06:38:24.522862+00:00 active=4 entered=18 closed=14 R=-4.42 skips=32 guard_market_pressure_4h_high=20 guard_low_volatility=5 guard_volume_z_4h_extreme=3 guard_timeframe_1h=3
+[replay:context_guard] 75/183  41.0% sim_time=2026-05-01T04:01:11.891979+00:00 active=2 entered=26 closed=24 R=-4.53 skips=49 guard_market_pressure_4h_high=26 guard_low_volatility=10 guard_volume_z_4h_extreme=5 guard_timeframe_1h=5
+[replay:context_guard] 100/183  54.6% sim_time=2026-05-04T04:02:58.217894+00:00 active=3 entered=40 closed=37 R=-4.87 skips=60 guard_market_pressure_4h_high=27 guard_low_volatility=15 guard_timeframe_1h=7 guard_volume_z_4h_extreme=5
+[replay:context_guard] 125/183  68.3% sim_time=2026-05-05T04:08:46.288863+00:00 active=2 entered=45 closed=43 R=-4.15 skips=80 guard_market_pressure_4h_high=30 guard_low_volatility=25 guard_volume_z_4h_extreme=9 guard_timeframe_1h=7
+[replay:context_guard] 150/183  82.0% sim_time=2026-05-06T04:00:52.824130+00:00 active=10 entered=58 closed=48 R=-1.08 skips=92 guard_market_pressure_4h_high=35 guard_low_volatility=26 guard_volume_z_4h_extreme=10 guard_timeframe_1h=8
+[replay:context_guard] 175/183  95.6% sim_time=2026-05-07T03:15:34.747049+00:00 active=9 entered=69 closed=60 R=-1.57 skips=106 guard_market_pressure_4h_high=42 guard_low_volatility=30 guard_volume_z_4h_extreme=12 guard_oi_delta_z_1h_extreme=9
+[replay:context_guard] 183/183 100.0% sim_time=2026-05-07T10:48:53.849876+00:00 active=5 entered=71 closed=66 R=-6.07 skips=112 guard_market_pressure_4h_high=44 guard_low_volatility=31 guard_volume_z_4h_extreme=15 guard_oi_delta_z_1h_extreme=9
+[replay:context_guard] finish entered=71 closed=68 open=3 winrate=42.65% R=-5.032 allocated_R=-1.360
+[output:context_guard] summary=export\live_faithful_context_guard_20260507_164034.json trades=export\live_faithful_context_guard_20260507_164034_trades.csv skips=export\live_faithful_context_guard_20260507_164034_skips.csv
+[replay:quality_soft] start signals=183 progress_every=25
+[replay:quality_soft] 1/183   0.5% sim_time=2026-04-23T01:43:45.640813+00:00 active=0 entered=0 closed=0 R=0.00 skips=1 entry_guard_rejected=1
+[replay:quality_soft] 25/183  13.7% sim_time=2026-04-26T11:15:45.056158+00:00 active=5 entered=20 closed=15 R=-4.97 skips=5 entry_guard_rejected=3 guard_low_volatility=1 guard_timeframe_1h=1
+[replay:quality_soft] 50/183  27.3% sim_time=2026-04-28T06:38:24.522862+00:00 active=5 entered=39 closed=34 R=-8.25 skips=11 guard_low_volatility=5 entry_guard_rejected=3 guard_timeframe_1h=3
+[replay:quality_soft] 75/183  41.0% sim_time=2026-05-01T04:01:11.891979+00:00 active=1 entered=52 closed=51 R=-11.78 skips=23 guard_low_volatility=10 entry_guard_rejected=5 guard_timeframe_1h=5 guard_quality_score_outside_mid=3
+[replay:quality_soft] 100/183  54.6% sim_time=2026-05-04T04:02:58.217894+00:00 active=1 entered=56 closed=55 R=-12.79 skips=44 guard_quality_score_outside_mid=17 guard_low_volatility=15 guard_timeframe_1h=7 entry_guard_rejected=5
+[replay:quality_soft] 125/183  68.3% sim_time=2026-05-05T04:08:46.288863+00:00 active=7 entered=69 closed=62 R=-13.34 skips=56 guard_low_volatility=25 guard_quality_score_outside_mid=17 entry_guard_rejected=7 guard_timeframe_1h=7
+[replay:quality_soft] 150/183  82.0% sim_time=2026-05-06T04:00:52.824130+00:00 active=17 entered=90 closed=73 R=-8.79 skips=60 guard_low_volatility=26 guard_quality_score_outside_mid=17 entry_guard_rejected=9 guard_timeframe_1h=8
+[replay:quality_soft] 175/183  95.6% sim_time=2026-05-07T03:15:34.747049+00:00 active=13 entered=105 closed=92 R=-8.24 skips=70 guard_low_volatility=30 guard_quality_score_outside_mid=20 entry_guard_rejected=11 guard_timeframe_1h=8
+[replay:quality_soft] 183/183 100.0% sim_time=2026-05-07T10:48:53.849876+00:00 active=9 entered=112 closed=103 R=-12.17 skips=71 guard_low_volatility=31 guard_quality_score_outside_mid=20 entry_guard_rejected=11 guard_timeframe_1h=8
+[replay:quality_soft] finish entered=112 closed=106 open=6 winrate=43.40% R=-9.614 allocated_R=-10.158
+[output:quality_soft] summary=export\live_faithful_quality_soft_20260507_164034.json trades=export\live_faithful_quality_soft_20260507_164034_trades.csv skips=export\live_faithful_quality_soft_20260507_164034_skips.csv
+[replay:balanced_soft] start signals=183 progress_every=25
+[replay:balanced_soft] 1/183   0.5% sim_time=2026-04-23T01:43:45.640813+00:00 active=0 entered=0 closed=0 R=0.00 skips=1 guard_market_pressure_4h_high=1
+[replay:balanced_soft] 25/183  13.7% sim_time=2026-04-26T11:15:45.056158+00:00 active=2 entered=8 closed=6 R=-2.40 skips=17 guard_market_pressure_4h_high=12 guard_volume_z_4h_extreme=2 guard_low_volatility=1 entry_guard_rejected=1
+[replay:balanced_soft] 50/183  27.3% sim_time=2026-04-28T06:38:24.522862+00:00 active=4 entered=18 closed=14 R=-4.42 skips=32 guard_market_pressure_4h_high=20 guard_low_volatility=5 guard_volume_z_4h_extreme=3 guard_timeframe_1h=3
+[replay:balanced_soft] 75/183  41.0% sim_time=2026-05-01T04:01:11.891979+00:00 active=1 entered=25 closed=24 R=-4.53 skips=50 guard_market_pressure_4h_high=26 guard_low_volatility=10 guard_volume_z_4h_extreme=5 guard_timeframe_1h=5
+[replay:balanced_soft] 100/183  54.6% sim_time=2026-05-04T04:02:58.217894+00:00 active=1 entered=29 closed=28 R=-5.54 skips=71 guard_market_pressure_4h_high=27 guard_low_volatility=15 guard_quality_score_outside_mid=11 guard_timeframe_1h=7
+[replay:balanced_soft] 125/183  68.3% sim_time=2026-05-05T04:08:46.288863+00:00 active=3 entered=35 closed=32 R=-4.62 skips=90 guard_market_pressure_4h_high=30 guard_low_volatility=25 guard_quality_score_outside_mid=11 guard_volume_z_4h_extreme=9
+[replay:balanced_soft] 150/183  82.0% sim_time=2026-05-06T04:00:52.824130+00:00 active=10 entered=48 closed=38 R=-1.06 skips=102 guard_market_pressure_4h_high=35 guard_low_volatility=26 guard_quality_score_outside_mid=11 guard_volume_z_4h_extreme=10
+[replay:balanced_soft] 175/183  95.6% sim_time=2026-05-07T03:15:34.747049+00:00 active=8 entered=58 closed=50 R=-1.55 skips=117 guard_market_pressure_4h_high=42 guard_low_volatility=30 guard_volume_z_4h_extreme=12 guard_quality_score_outside_mid=12
+[replay:balanced_soft] 183/183 100.0% sim_time=2026-05-07T10:48:53.849876+00:00 active=5 entered=60 closed=55 R=-5.05 skips=123 guard_market_pressure_4h_high=44 guard_low_volatility=31 guard_volume_z_4h_extreme=15 guard_quality_score_outside_mid=12
+[replay:balanced_soft] finish entered=60 closed=57 open=3 winrate=43.86% R=-4.014 allocated_R=-2.133
+[output:balanced_soft] summary=export\live_faithful_balanced_soft_20260507_164034.json trades=export\live_faithful_balanced_soft_20260507_164034_trades.csv skips=export\live_faithful_balanced_soft_20260507_164034_skips.csv
+[replay:tf_profile] start signals=183 progress_every=25
+[replay:tf_profile] 1/183   0.5% sim_time=2026-04-23T01:43:45.640813+00:00 active=0 entered=0 closed=0 R=0.00 skips=1 guard_oi_delta_z_1h_extreme=1
+[replay:tf_profile] 25/183  13.7% sim_time=2026-04-26T11:15:45.056158+00:00 active=1 entered=1 closed=0 R=0.00 skips=24 guard_volume_z_4h_extreme=8 guard_quality_not_ready=7 guard_market_pressure_4h_high=5 guard_oi_delta_z_1h_extreme=1
+[replay:tf_profile] 50/183  27.3% sim_time=2026-04-28T06:38:24.522862+00:00 active=4 entered=6 closed=2 R=-2.00 skips=44 guard_volume_z_4h_extreme=15 guard_quality_not_ready=11 guard_market_pressure_4h_high=7 guard_low_volatility=5
+[replay:tf_profile] 75/183  41.0% sim_time=2026-05-01T04:01:11.891979+00:00 active=1 entered=11 closed=10 R=-3.14 skips=64 guard_volume_z_4h_extreme=18 guard_market_pressure_4h_high=12 guard_quality_not_ready=11 guard_low_volatility=10
+[replay:tf_profile] 100/183  54.6% sim_time=2026-05-04T04:02:58.217894+00:00 active=3 entered=17 closed=14 R=-2.20 skips=83 guard_volume_z_4h_extreme=18 guard_low_volatility=15 guard_market_pressure_4h_high=13 guard_quality_not_ready=11
+[replay:tf_profile] 125/183  68.3% sim_time=2026-05-05T04:08:46.288863+00:00 active=2 entered=19 closed=17 R=-1.89 skips=106 guard_low_volatility=25 guard_volume_z_4h_extreme=22 guard_market_pressure_4h_high=16 guard_quality_not_ready=11
+[replay:tf_profile] 150/183  82.0% sim_time=2026-05-06T04:00:52.824130+00:00 active=10 entered=31 closed=21 R=0.68 skips=119 guard_low_volatility=26 guard_volume_z_4h_extreme=25 guard_market_pressure_4h_high=19 guard_volume_z_15m_weak=12
+[replay:tf_profile] 175/183  95.6% sim_time=2026-05-07T03:15:34.747049+00:00 active=8 entered=37 closed=29 R=4.20 skips=138 guard_low_volatility=30 guard_volume_z_4h_extreme=28 guard_market_pressure_4h_high=24 guard_volume_z_15m_weak=17
+[replay:tf_profile] 183/183 100.0% sim_time=2026-05-07T10:48:53.849876+00:00 active=5 entered=37 closed=32 R=2.69 skips=146 guard_volume_z_4h_extreme=32 guard_low_volatility=31 guard_market_pressure_4h_high=25 guard_volume_z_15m_weak=19
+[replay:tf_profile] finish entered=37 closed=34 open=3 winrate=52.94% R=3.730 allocated_R=4.724
+[output:tf_profile] summary=export\live_faithful_tf_profile_20260507_164034.json trades=export\live_faithful_tf_profile_20260507_164034_trades.csv skips=export\live_faithful_tf_profile_20260507_164034_skips.csv
+[replay:guarded] start signals=183 progress_every=25
+[replay:guarded] 1/183   0.5% sim_time=2026-04-23T01:43:45.640813+00:00 active=0 entered=0 closed=0 R=0.00 skips=1 guard_market_pressure_4h_high=1
+[replay:guarded] 25/183  13.7% sim_time=2026-04-26T11:15:45.056158+00:00 active=0 entered=0 closed=0 R=0.00 skips=25 guard_market_pressure_4h_high=12 guard_quality_not_ready=9 guard_volume_z_4h_extreme=2 guard_low_volatility=1
+[replay:guarded] 50/183  27.3% sim_time=2026-04-28T06:38:24.522862+00:00 active=1 entered=2 closed=1 R=1.50 skips=48 guard_market_pressure_4h_high=20 guard_quality_not_ready=17 guard_low_volatility=5 guard_volume_z_4h_extreme=3
+[replay:guarded] 75/183  41.0% sim_time=2026-05-01T04:01:11.891979+00:00 active=0 entered=6 closed=6 R=4.09 skips=69 guard_market_pressure_4h_high=26 guard_quality_not_ready=20 guard_low_volatility=10 guard_volume_z_4h_extreme=5
+[replay:guarded] 100/183  54.6% sim_time=2026-05-04T04:02:58.217894+00:00 active=0 entered=10 closed=10 R=3.08 skips=90 guard_market_pressure_4h_high=27 guard_quality_not_ready=20 guard_low_volatility=15 guard_quality_score_outside_mid=11
+[replay:guarded] 125/183  68.3% sim_time=2026-05-05T04:08:46.288863+00:00 active=1 entered=14 closed=13 R=3.50 skips=111 guard_market_pressure_4h_high=30 guard_low_volatility=25 guard_quality_not_ready=22 guard_quality_score_outside_mid=11
+[replay:guarded] 150/183  82.0% sim_time=2026-05-06T04:00:52.824130+00:00 active=7 entered=25 closed=18 R=6.57 skips=125 guard_market_pressure_4h_high=35 guard_low_volatility=26 guard_quality_not_ready=25 guard_quality_score_outside_mid=11
+[replay:guarded] 175/183  95.6% sim_time=2026-05-07T03:15:34.747049+00:00 active=2 entered=32 closed=30 R=6.08 skips=143 guard_market_pressure_4h_high=42 guard_low_volatility=30 guard_quality_not_ready=28 guard_volume_z_4h_extreme=12
+[replay:guarded] 183/183 100.0% sim_time=2026-05-07T10:48:53.849876+00:00 active=0 entered=34 closed=34 R=3.58 skips=149 guard_market_pressure_4h_high=44 guard_low_volatility=31 guard_quality_not_ready=28 guard_volume_z_4h_extreme=15
+[replay:guarded] finish entered=34 closed=34 open=0 winrate=50.00% R=3.577 allocated_R=4.713
+[output:guarded] summary=export\live_faithful_guarded_20260507_164034.json trades=export\live_faithful_guarded_20260507_164034_trades.csv skips=export\live_faithful_guarded_20260507_164034_skips.csv
+[output] combined_summary=export\live_faithful_summary_20260507_164034.json

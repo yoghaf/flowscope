@@ -1,0 +1,146 @@
+2026-05-12 20:40:22,704 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2026-05-12 20:40:22,704 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-05-12 20:40:22,706 INFO sqlalchemy.engine.Engine select current_schema()
+2026-05-12 20:40:22,706 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-05-12 20:40:22,707 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2026-05-12 20:40:22,708 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-05-12 20:40:22,709 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-05-12 20:40:22,711 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+2026-05-12 20:40:22,711 INFO sqlalchemy.engine.Engine [generated in 0.00040s] ('market_data', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+2026-05-12 20:40:22,715 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+2026-05-12 20:40:22,716 INFO sqlalchemy.engine.Engine [cached since 0.004461s ago] ('signals', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+2026-05-12 20:40:22,716 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+2026-05-12 20:40:22,716 INFO sqlalchemy.engine.Engine [cached since 0.005292s ago] ('market_data_buckets', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+2026-05-12 20:40:22,717 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+2026-05-12 20:40:22,717 INFO sqlalchemy.engine.Engine [cached since 0.006122s ago] ('latest_asset_states', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+2026-05-12 20:40:22,718 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+2026-05-12 20:40:22,718 INFO sqlalchemy.engine.Engine [cached since 0.00693s ago] ('alert_preferences', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+2026-05-12 20:40:22,719 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+2026-05-12 20:40:22,719 INFO sqlalchemy.engine.Engine [cached since 0.007882s ago] ('trade_signals', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+2026-05-12 20:40:22,720 INFO sqlalchemy.engine.Engine ALTER TABLE alert_preferences ADD COLUMN IF NOT EXISTS timeframes JSON NOT NULL DEFAULT '[]'::json
+2026-05-12 20:40:22,720 INFO sqlalchemy.engine.Engine [generated in 0.00037s] ()
+2026-05-12 20:40:22,721 INFO sqlalchemy.engine.Engine ALTER TABLE alert_preferences ADD COLUMN IF NOT EXISTS telegram_enabled BOOLEAN NOT NULL DEFAULT FALSE
+2026-05-12 20:40:22,722 INFO sqlalchemy.engine.Engine [generated in 0.00028s] ()
+2026-05-12 20:40:22,722 INFO sqlalchemy.engine.Engine ALTER TABLE alert_preferences ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(80)
+2026-05-12 20:40:22,722 INFO sqlalchemy.engine.Engine [generated in 0.00025s] ()
+2026-05-12 20:40:22,723 INFO sqlalchemy.engine.Engine ALTER TABLE alert_preferences ADD COLUMN IF NOT EXISTS market_regimes JSON NOT NULL DEFAULT '[]'::json
+2026-05-12 20:40:22,723 INFO sqlalchemy.engine.Engine [generated in 0.00034s] ()
+2026-05-12 20:40:22,724 INFO sqlalchemy.engine.Engine ALTER TABLE alert_preferences ADD COLUMN IF NOT EXISTS telegram_destinations JSON NOT NULL DEFAULT '[]'::json
+2026-05-12 20:40:22,724 INFO sqlalchemy.engine.Engine [generated in 0.00030s] ()
+2026-05-12 20:40:22,725 INFO sqlalchemy.engine.Engine ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS entry_touched_at TIMESTAMPTZ
+2026-05-12 20:40:22,725 INFO sqlalchemy.engine.Engine [generated in 0.00036s] ()
+2026-05-12 20:40:22,726 INFO sqlalchemy.engine.Engine ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS history_logs JSON
+2026-05-12 20:40:22,726 INFO sqlalchemy.engine.Engine [generated in 0.00031s] ()
+2026-05-12 20:40:22,727 INFO sqlalchemy.engine.Engine ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS entry_flow_alignment DOUBLE PRECISION
+2026-05-12 20:40:22,727 INFO sqlalchemy.engine.Engine [generated in 0.00029s] ()
+2026-05-12 20:40:22,728 INFO sqlalchemy.engine.Engine ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS fill_count INTEGER NOT NULL DEFAULT 1
+2026-05-12 20:40:22,728 INFO sqlalchemy.engine.Engine [generated in 0.00030s] ()
+2026-05-12 20:40:22,729 INFO sqlalchemy.engine.Engine ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS last_scale_in_at TIMESTAMPTZ
+2026-05-12 20:40:22,729 INFO sqlalchemy.engine.Engine [generated in 0.00037s] ()
+2026-05-12 20:40:22,730 INFO sqlalchemy.engine.Engine ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS entry_notification_sent_at TIMESTAMPTZ
+2026-05-12 20:40:22,730 INFO sqlalchemy.engine.Engine [generated in 0.00027s] ()
+2026-05-12 20:40:22,731 INFO sqlalchemy.engine.Engine ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ
+2026-05-12 20:40:22,731 INFO sqlalchemy.engine.Engine [generated in 0.00029s] ()
+2026-05-12 20:40:22,732 INFO sqlalchemy.engine.Engine ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS close_reason VARCHAR(32)
+2026-05-12 20:40:22,732 INFO sqlalchemy.engine.Engine [generated in 0.00033s] ()
+2026-05-12 20:40:22,733 INFO sqlalchemy.engine.Engine ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS engine_tag VARCHAR(64)
+2026-05-12 20:40:22,733 INFO sqlalchemy.engine.Engine [generated in 0.00050s] ()
+2026-05-12 20:40:22,734 INFO sqlalchemy.engine.Engine ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS entry_features JSON
+2026-05-12 20:40:22,734 INFO sqlalchemy.engine.Engine [generated in 0.00027s] ()
+2026-05-12 20:40:22,734 INFO sqlalchemy.engine.Engine CREATE INDEX IF NOT EXISTS ix_trade_signals_engine_tag ON trade_signals (engine_tag)
+2026-05-12 20:40:22,735 INFO sqlalchemy.engine.Engine [generated in 0.00027s] ()
+2026-05-12 20:40:22,736 INFO sqlalchemy.engine.Engine 
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name = 'demo_trades' AND column_name = 'session_id'
+                
+2026-05-12 20:40:22,736 INFO sqlalchemy.engine.Engine [generated in 0.00029s] ()
+2026-05-12 20:40:22,743 INFO sqlalchemy.engine.Engine 
+                        CREATE TABLE IF NOT EXISTS demo_trades (
+                            id SERIAL PRIMARY KEY,
+                            session_id VARCHAR(80) NOT NULL,
+                            symbol VARCHAR(20) NOT NULL,
+                            signal_type VARCHAR(40) NOT NULL,
+                            bias VARCHAR(12) NOT NULL,
+                            setup_type VARCHAR(20) NOT NULL,
+                            confidence DOUBLE PRECISION NOT NULL,
+                            side VARCHAR(4) NOT NULL,
+                            entry_price DOUBLE PRECISION NOT NULL,
+                            quantity DOUBLE PRECISION NOT NULL,
+                            stop_loss DOUBLE PRECISION,
+                            take_profit DOUBLE PRECISION,
+                            position_size_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                            order_id INTEGER,
+                            exit_price DOUBLE PRECISION,
+                            exit_reason VARCHAR(80),
+                            pnl DOUBLE PRECISION,
+                            pnl_pct DOUBLE PRECISION,
+                            status VARCHAR(16) NOT NULL DEFAULT 'OPEN',
+                            timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            closed_at TIMESTAMPTZ,
+                            extra_data JSON NOT NULL DEFAULT '{}'::json
+                        )
+                    
+2026-05-12 20:40:22,744 INFO sqlalchemy.engine.Engine [generated in 0.00045s] ()
+2026-05-12 20:40:22,745 INFO sqlalchemy.engine.Engine 
+                        CREATE TABLE IF NOT EXISTS demo_sessions (
+                            id SERIAL PRIMARY KEY,
+                            session_id VARCHAR(80) UNIQUE NOT NULL,
+                            initial_balance DOUBLE PRECISION NOT NULL,
+                            final_balance DOUBLE PRECISION,
+                            total_trades INTEGER NOT NULL DEFAULT 0,
+                            winning_trades INTEGER NOT NULL DEFAULT 0,
+                            losing_trades INTEGER NOT NULL DEFAULT 0,
+                            description VARCHAR(255),
+                            started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            ended_at TIMESTAMPTZ,
+                            status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE'
+                        )
+                    
+2026-05-12 20:40:22,745 INFO sqlalchemy.engine.Engine [generated in 0.00029s] ()
+2026-05-12 20:40:22,745 INFO sqlalchemy.engine.Engine CREATE INDEX IF NOT EXISTS idx_demo_trades_session ON demo_trades(session_id)
+2026-05-12 20:40:22,746 INFO sqlalchemy.engine.Engine [generated in 0.00025s] ()
+2026-05-12 20:40:22,746 INFO sqlalchemy.engine.Engine CREATE INDEX IF NOT EXISTS idx_demo_trades_symbol ON demo_trades(symbol)
+2026-05-12 20:40:22,746 INFO sqlalchemy.engine.Engine [generated in 0.00022s] ()
+2026-05-12 20:40:22,747 INFO sqlalchemy.engine.Engine CREATE INDEX IF NOT EXISTS idx_demo_trades_status ON demo_trades(status)
+2026-05-12 20:40:22,747 INFO sqlalchemy.engine.Engine [generated in 0.00022s] ()
+2026-05-12 20:40:22,748 INFO sqlalchemy.engine.Engine COMMIT
+2026-05-12 20:40:23,512 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-05-12 20:40:23,518 INFO sqlalchemy.engine.Engine SELECT alert_preferences.user_id, alert_preferences.timeframes, alert_preferences.signal_types, alert_preferences.market_regimes, alert_preferences.watchlist, alert_preferences.min_score, alert_preferences.debounce_minutes, alert_preferences.enabled, alert_preferences.telegram_enabled, alert_preferences.telegram_chat_id, alert_preferences.telegram_destinations, alert_preferences.updated_at 
+FROM alert_preferences ORDER BY alert_preferences.updated_at DESC
+2026-05-12 20:40:23,519 INFO sqlalchemy.engine.Engine [generated in 0.00057s] ()
+2026-05-12 20:40:23,522 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-05-12 20:40:23,528 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-05-12 20:40:23,530 INFO sqlalchemy.engine.Engine SELECT market_data_buckets.symbol, market_data_buckets.timeframe, market_data_buckets.bucket_start, market_data_buckets.bucket_end, market_data_buckets.last_timestamp, market_data_buckets.open_price, market_data_buckets.high_price, market_data_buckets.low_price, market_data_buckets.close_price, market_data_buckets.open_interest_open, market_data_buckets.open_interest_high, market_data_buckets.open_interest_low, market_data_buckets.open_interest_close, market_data_buckets.spot_volume_open, market_data_buckets.spot_volume_close, market_data_buckets.spot_volume_delta, market_data_buckets.futures_volume_open, market_data_buckets.futures_volume_close, market_data_buckets.futures_volume_delta, market_data_buckets.volume_delta, market_data_buckets.funding_rate_avg, market_data_buckets.funding_rate_close, market_data_buckets.long_short_ratio_avg, market_data_buckets.long_short_ratio_close, market_data_buckets.taker_buy_sell_ratio_avg, market_data_buckets.taker_buy_sell_ratio_close, market_data_buckets.long_liquidations_total, market_data_buckets.short_liquidations_total, market_data_buckets.foundation_version, market_data_buckets.bucket_is_closed, market_data_buckets.bucket_completion_pct, market_data_buckets.exchange_count_avg, market_data_buckets.sample_count, market_data_buckets.score, market_data_buckets.signal_type, market_data_buckets.breakdown_open_interest, market_data_buckets.breakdown_volume, market_data_buckets.breakdown_compression, market_data_buckets.breakdown_funding 
+FROM market_data_buckets 
+WHERE market_data_buckets.symbol IN ($2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR, $7::VARCHAR, $8::VARCHAR, $9::VARCHAR, $10::VARCHAR, $11::VARCHAR, $12::VARCHAR, $13::VARCHAR, $14::VARCHAR, $15::VARCHAR, $16::VARCHAR, $17::VARCHAR, $18::VARCHAR, $19::VARCHAR, $20::VARCHAR, $21::VARCHAR, $22::VARCHAR, $23::VARCHAR, $24::VARCHAR, $25::VARCHAR, $26::VARCHAR, $27::VARCHAR, $28::VARCHAR, $29::VARCHAR, $30::VARCHAR, $31::VARCHAR, $32::VARCHAR, $33::VARCHAR, $34::VARCHAR, $35::VARCHAR, $36::VARCHAR, $37::VARCHAR, $38::VARCHAR, $39::VARCHAR, $40::VARCHAR, $41::VARCHAR, $42::VARCHAR, $43::VARCHAR, $44::VARCHAR, $45::VARCHAR, $46::VARCHAR, $47::VARCHAR, $48::VARCHAR, $49::VARCHAR, $50::VARCHAR, $51::VARCHAR, $52::VARCHAR, $53::VARCHAR, $54::VARCHAR, $55::VARCHAR, $56::VARCHAR, $57::VARCHAR, $58::VARCHAR, $59::VARCHAR, $60::VARCHAR, $61::VARCHAR, $62::VARCHAR, $63::VARCHAR, $64::VARCHAR, $65::VARCHAR, $66::VARCHAR, $67::VARCHAR, $68::VARCHAR, $69::VARCHAR, $70::VARCHAR, $71::VARCHAR, $72::VARCHAR, $73::VARCHAR, $74::VARCHAR, $75::VARCHAR, $76::VARCHAR, $77::VARCHAR, $78::VARCHAR, $79::VARCHAR, $80::VARCHAR, $81::VARCHAR, $82::VARCHAR, $83::VARCHAR, $84::VARCHAR, $85::VARCHAR, $86::VARCHAR, $87::VARCHAR, $88::VARCHAR, $89::VARCHAR, $90::VARCHAR, $91::VARCHAR, $92::VARCHAR, $93::VARCHAR, $94::VARCHAR, $95::VARCHAR, $96::VARCHAR, $97::VARCHAR, $98::VARCHAR, $99::VARCHAR, $100::VARCHAR, $101::VARCHAR, $102::VARCHAR, $103::VARCHAR, $104::VARCHAR, $105::VARCHAR, $106::VARCHAR, $107::VARCHAR, $108::VARCHAR, $109::VARCHAR, $110::VARCHAR, $111::VARCHAR, $112::VARCHAR, $113::VARCHAR, $114::VARCHAR, $115::VARCHAR, $116::VARCHAR, $117::VARCHAR, $118::VARCHAR, $119::VARCHAR, $120::VARCHAR, $121::VARCHAR) AND market_data_buckets.timeframe IN ($122::VARCHAR, $123::VARCHAR, $124::VARCHAR, $125::VARCHAR) AND market_data_buckets.bucket_start >= $1::TIMESTAMP WITH TIME ZONE ORDER BY market_data_buckets.symbol ASC, market_data_buckets.timeframe ASC, market_data_buckets.bucket_start ASC
+2026-05-12 20:40:23,530 INFO sqlalchemy.engine.Engine [generated in 0.00091s] (datetime.datetime(2026, 5, 4, 13, 40, 23, 523527, tzinfo=datetime.timezone.utc), 'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XAGUSDT', 'XAUUSDT', 'CLUSDT', 'LABUSDT', 'XRPUSDT', 'ZECUSDT', 'DOGEUSDT', 'SUIUSDT', 'BUSDT', 'SAGAUSDT', 'BNBUSDT', 'CRCLUSDT', 'TONUSDT', 'BILLUSDT', 'GTCUSDT', 'BZUSDT', 'SNDKUSDT', '1000PEPEUSDT', 'HYPEUSDT', 'VVVUSDT', 'SKYAIUSDT', 'TAOUSDT', 'CHIPUSDT', 'ONDOUSDT', 'ADAUSDT', 'MUUSDT', 'HUSDT', 'NEARUSDT', 'AVAXUSDT', 'LINKUSDT', 'FILUSDT', 'USELESSUSDT', 'INTCUSDT', 'ENAUSDT', 'SAHARAUSDT', 'PAXGUSDT', 'AAVEUSDT', 'BCHUSDT', 'INJUSDT', 'LTCUSDT', 'WLDUSDT', 'LDOUSDT', 'CRVUSDT', 'PENDLEUSDT', 'IRYSUSDT', 'UBUSDT' ... 25 parameters truncated ... 'ORDIUSDT', 'SAPIENUSDT', 'NVDAUSDT', 'XMRUSDT', 'DYMUSDT', 'FFUSDT', 'INXUSDT', 'ALGOUSDT', 'BIOUSDT', 'VIRTUALUSDT', 'XPLUSDT', 'HBARUSDT', 'DASHUSDT', 'COINUSDT', 'SOLVUSDT', 'ATOMUSDT', 'PARTIUSDT', 'COLLECTUSDT', 'JUPUSDT', 'KITEUSDT', 'BSBUSDT', 'ARBUSDT', 'TIAUSDT', 'OPGUSDT', 'RAVEUSDT', 'RIFUSDT', 'GUAUSDT', 'STRKUSDT', 'USUSDT', 'FETUSDT', 'JELLYJELLYUSDT', 'ETCUSDT', 'WIFUSDT', 'AKTUSDT', 'ZBTUSDT', 'BASEDUSDT', 'BANANAS31USDT', 'MOVEUSDT', 'AMDUSDT', 'RENDERUSDT', 'SIRENUSDT', 'MEGAUSDT', 'PLAYUSDT', 'XAUTUSDT', 'AIOTUSDT', 'OPUSDT', '15m', '1h', '4h', '24h')
+2026-05-12 20:40:23,658 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-05-12 20:40:24,273 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-05-12 20:40:24,274 INFO sqlalchemy.engine.Engine SELECT latest_asset_states.symbol, latest_asset_states.timeframe, latest_asset_states.updated_at, latest_asset_states.snapshot 
+FROM latest_asset_states 
+WHERE latest_asset_states.symbol IN ($1::VARCHAR, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR, $7::VARCHAR, $8::VARCHAR, $9::VARCHAR, $10::VARCHAR, $11::VARCHAR, $12::VARCHAR, $13::VARCHAR, $14::VARCHAR, $15::VARCHAR, $16::VARCHAR, $17::VARCHAR, $18::VARCHAR, $19::VARCHAR, $20::VARCHAR, $21::VARCHAR, $22::VARCHAR, $23::VARCHAR, $24::VARCHAR, $25::VARCHAR, $26::VARCHAR, $27::VARCHAR, $28::VARCHAR, $29::VARCHAR, $30::VARCHAR, $31::VARCHAR, $32::VARCHAR, $33::VARCHAR, $34::VARCHAR, $35::VARCHAR, $36::VARCHAR, $37::VARCHAR, $38::VARCHAR, $39::VARCHAR, $40::VARCHAR, $41::VARCHAR, $42::VARCHAR, $43::VARCHAR, $44::VARCHAR, $45::VARCHAR, $46::VARCHAR, $47::VARCHAR, $48::VARCHAR, $49::VARCHAR, $50::VARCHAR, $51::VARCHAR, $52::VARCHAR, $53::VARCHAR, $54::VARCHAR, $55::VARCHAR, $56::VARCHAR, $57::VARCHAR, $58::VARCHAR, $59::VARCHAR, $60::VARCHAR, $61::VARCHAR, $62::VARCHAR, $63::VARCHAR, $64::VARCHAR, $65::VARCHAR, $66::VARCHAR, $67::VARCHAR, $68::VARCHAR, $69::VARCHAR, $70::VARCHAR, $71::VARCHAR, $72::VARCHAR, $73::VARCHAR, $74::VARCHAR, $75::VARCHAR, $76::VARCHAR, $77::VARCHAR, $78::VARCHAR, $79::VARCHAR, $80::VARCHAR, $81::VARCHAR, $82::VARCHAR, $83::VARCHAR, $84::VARCHAR, $85::VARCHAR, $86::VARCHAR, $87::VARCHAR, $88::VARCHAR, $89::VARCHAR, $90::VARCHAR, $91::VARCHAR, $92::VARCHAR, $93::VARCHAR, $94::VARCHAR, $95::VARCHAR, $96::VARCHAR, $97::VARCHAR, $98::VARCHAR, $99::VARCHAR, $100::VARCHAR, $101::VARCHAR, $102::VARCHAR, $103::VARCHAR, $104::VARCHAR, $105::VARCHAR, $106::VARCHAR, $107::VARCHAR, $108::VARCHAR, $109::VARCHAR, $110::VARCHAR, $111::VARCHAR, $112::VARCHAR, $113::VARCHAR, $114::VARCHAR, $115::VARCHAR, $116::VARCHAR, $117::VARCHAR, $118::VARCHAR, $119::VARCHAR, $120::VARCHAR) AND latest_asset_states.timeframe IN ($121::VARCHAR, $122::VARCHAR, $123::VARCHAR, $124::VARCHAR) ORDER BY latest_asset_states.symbol ASC, latest_asset_states.timeframe ASC
+2026-05-12 20:40:24,350 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-05-12 20:40:24,431 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-05-12 20:40:24,433 INFO sqlalchemy.engine.Engine SELECT trade_signals.id, trade_signals.symbol, trade_signals.timeframe, trade_signals.timestamp, trade_signals.state, trade_signals.bias, trade_signals.setup_type, trade_signals.status, trade_signals.market_regime, trade_signals.volatility_regime, trade_signals.entry_price, trade_signals.invalidation_price, trade_signals.target_price, trade_signals.target_price_1, trade_signals.target_price_2, trade_signals.trailing_stop_price, trade_signals.tp1_hit, trade_signals.fill_count, trade_signals.last_scale_in_at, trade_signals.entry_touched_at, trade_signals.entry_flow_alignment, trade_signals.entry_notification_sent_at, trade_signals.closed_at, trade_signals.close_reason, trade_signals.risk_level, trade_signals.quality_score, trade_signals.confidence, trade_signals.result, trade_signals.pnl_pct, trade_signals.max_drawdown_pct, trade_signals.max_profit_pct, trade_signals.engine_tag, trade_signals.entry_features, trade_signals.exit_features, trade_signals.history_logs, trade_signals.autopsy_rationale, trade_signals.created_at, trade_signals.updated_at 
+FROM trade_signals 
+WHERE trade_signals.result = $1::VARCHAR
+2026-05-12 20:40:24,433 INFO sqlalchemy.engine.Engine [generated in 0.00027s] ('open',)
+2026-05-12 20:40:24,437 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-05-12 20:40:25,778 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-05-12 20:40:25,781 INFO sqlalchemy.engine.Engine INSERT INTO market_data (timestamp, symbol, price, volume, spot_volume, futures_volume, open_interest, funding_rate, long_short_ratio, long_liquidations, short_liquidations, exchange_count, score, signal_type) VALUES ($1::TIMESTAMP WITH TIME ZONE, $2::VARCHAR, $3::FLOAT, $4::FLOAT, $5::FLOAT, $6::FLOAT, $7::FLOAT, $8::FLOAT, $9::FLOAT, $10::FLOAT, $11::FLOAT, $12::INTEGER, $13::FLOAT, $14::VARCHAR)
+2026-05-12 20:40:25,781 INFO sqlalchemy.engine.Engine [generated in 0.00059s] [(datetime.datetime(2026, 5, 12, 12, 43, 14, 58297, tzinfo=datetime.timezone.utc), 'SOLUSDT', 95.36, 378552.14259999996, 0.0, 378552.14259999996, 11708252.78, 3.539e-05, 1.3030861354214647, 0.0, 0.0, 1, 0.374, 'Breakout Watch'), (datetime.datetime(2026, 5, 12, 6, 13, 19, 9739, tzinfo=datetime.timezone.utc), 'CHIPUSDT', 0.06357, 0.0, 0.0, 0.0, 318598437.0, -0.00071817, 0.8112660749864155, 0.0, 0.0, 1, 0.25, 'Neutral'), (datetime.datetime(2026, 5, 12, 6, 13, 19, 9739, tzinfo=datetime.timezone.utc), 'VVVUSDT', 17.727, 0.0, 0.0, 0.0, 1642140.14, 0.00015926, 0.7733640716439085, 0.0, 0.0, 1, 0.3276, 'Neutral'), (datetime.datetime(2026, 5, 12, 12, 43, 14, 58297, tzinfo=datetime.timezone.utc), 'APTUSDT', 1.09, 0.0, 0.0, 0.0, 20136338.0, 5.89e-05, 1.969121140142518, 0.0, 0.0, 1, 0.4257, 'Neutral'), (datetime.datetime(2026, 5, 12, 12, 43, 14, 58297, tzinfo=datetime.timezone.utc), 'ICPUSDT', 3.29, 0.0, 0.0, 0.0, 9185676.0, 6.681e-05, 1.6946914578280787, 0.0, 0.0, 1, 0.3655, 'Breakout Watch'), (datetime.datetime(2026, 5, 12, 12, 43, 14, 58297, tzinfo=datetime.timezone.utc), 'ETCUSDT', 9.477, 0.0, 0.0, 0.0, 2523690.32, 0.0001, 1.5094102885821832, 0.0, 0.0, 1, 0.3903, 'Breakout Watch'), (datetime.datetime(2026, 5, 12, 12, 43, 14, 58297, tzinfo=datetime.timezone.utc), 'AVAXUSDT', 9.909, 6817.193, 0.0, 6817.193, 8955151.0, -2.1e-05, 2.7133308577794284, 0.0, 0.0, 1, 0.3283, 'Neutral'), (datetime.datetime(2026, 5, 12, 6, 13, 19, 9739, tzinfo=datetime.timezone.utc), 'SNDKUSDT', 1489.03, 0.0, 0.0, 0.0, 9228.07, -9.834e-05, 1.4307243558580458, 0.0, 0.0, 1, 0.2403, 'Neutral')  ... displaying 10 of 120 total bound parameter sets ...  (datetime.datetime(2026, 5, 12, 13, 40, 25, 385216, tzinfo=datetime.timezone.utc), 'SOLVUSDT', 0.005643, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1, 0.0, 'Neutral'), (datetime.datetime(2026, 5, 12, 13, 40, 25, 385216, tzinfo=datetime.timezone.utc), 'RIFUSDT', 0.07927, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1, 0.0, 'Neutral')]
+2026-05-12 20:40:25,802 INFO sqlalchemy.engine.Engine COMMIT
+2026-05-12 20:40:25,869 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-05-12 20:40:25,871 INFO sqlalchemy.engine.Engine ROLLBACK

@@ -1,0 +1,144 @@
+{
+  "generated_at": "2026-05-08T03:02:51.805936+00:00",
+  "database": "postgresql+asyncpg://localhost:5432/flowscope_replay_vps_20260507_123757",
+  "bucket_range": {
+    "start": "2024-09-04T12:00:00+00:00",
+    "end": "2026-05-07T12:15:00+00:00",
+    "rows": 640565
+  },
+  "days": 1,
+  "symbols": 2,
+  "strategy_notes": {
+    "v2_balanced_continuation_only": "Replay v2 with persisted entries restricted to Continuation.",
+    "v2_all_setups_triggered_only": "Replay v2 without setup restriction; only naturally Triggered setups are recorded.",
+    "v2_full_setup_ready_entry": "Replay v2 with Ready non-Continuation setups promoted to replay entries after existing filters/execution checks."
+  },
+  "statistics": {
+    "v2_balanced_continuation_only": {
+      "signals": 0,
+      "closed": 0,
+      "open": 0,
+      "wins": 0,
+      "losses": 0,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 0.0,
+      "total_r": 0,
+      "avg_r": 0.0,
+      "allocated_r": 0,
+      "profit_factor_r": null,
+      "max_drawdown_r": 0.0,
+      "max_loss_streak": 0,
+      "max_win_streak": 0
+    },
+    "v2_all_setups_triggered_only": {
+      "signals": 0,
+      "closed": 0,
+      "open": 0,
+      "wins": 0,
+      "losses": 0,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 0.0,
+      "total_r": 0,
+      "avg_r": 0.0,
+      "allocated_r": 0,
+      "profit_factor_r": null,
+      "max_drawdown_r": 0.0,
+      "max_loss_streak": 0,
+      "max_win_streak": 0
+    },
+    "v2_full_setup_ready_entry": {
+      "signals": 1,
+      "closed": 1,
+      "open": 0,
+      "wins": 0,
+      "losses": 1,
+      "breakevens": 0,
+      "timeouts": 0,
+      "winrate_pct": 0.0,
+      "total_r": -1.0,
+      "avg_r": -1.0,
+      "allocated_r": -0.5082,
+      "profit_factor_r": 0.0,
+      "max_drawdown_r": -1.0,
+      "max_loss_streak": 1,
+      "max_win_streak": 0
+    }
+  },
+  "by_setup": {
+    "v2_balanced_continuation_only": {},
+    "v2_all_setups_triggered_only": {},
+    "v2_full_setup_ready_entry": {
+      "Accumulation": {
+        "signals": 1,
+        "closed": 1,
+        "open": 0,
+        "wins": 0,
+        "losses": 1,
+        "breakevens": 0,
+        "timeouts": 0,
+        "winrate_pct": 0.0,
+        "total_r": -1.0,
+        "avg_r": -1.0,
+        "allocated_r": -0.5082,
+        "profit_factor_r": 0.0,
+        "max_drawdown_r": -1.0,
+        "max_loss_streak": 1,
+        "max_win_streak": 0
+      }
+    }
+  },
+  "by_timeframe": {
+    "v2_balanced_continuation_only": {},
+    "v2_all_setups_triggered_only": {},
+    "v2_full_setup_ready_entry": {
+      "15m": {
+        "signals": 1,
+        "closed": 1,
+        "open": 0,
+        "wins": 0,
+        "losses": 1,
+        "breakevens": 0,
+        "timeouts": 0,
+        "winrate_pct": 0.0,
+        "total_r": -1.0,
+        "avg_r": -1.0,
+        "allocated_r": -0.5082,
+        "profit_factor_r": 0.0,
+        "max_drawdown_r": -1.0,
+        "max_loss_streak": 1,
+        "max_win_streak": 0
+      }
+    }
+  },
+  "top_reject_reasons": {
+    "v2_balanced_continuation_only": {
+      "continuation_choppy_regime": 2,
+      "exhaustion_volume_climax": 1,
+      "exhaustion_oi_climax": 1,
+      "continuation_control_not_directional": 1,
+      "continuation_flow_alignment_below_threshold": 1,
+      "continuation_structure_strength_below_threshold": 1,
+      "clarity_below_threshold": 1
+    },
+    "v2_all_setups_triggered_only": {
+      "continuation_choppy_regime": 2,
+      "exhaustion_volume_climax": 1,
+      "exhaustion_oi_climax": 1,
+      "continuation_control_not_directional": 1,
+      "continuation_flow_alignment_below_threshold": 1,
+      "continuation_structure_strength_below_threshold": 1,
+      "clarity_below_threshold": 1
+    },
+    "v2_full_setup_ready_entry": {
+      "continuation_choppy_regime": 2,
+      "exhaustion_volume_climax": 1,
+      "exhaustion_oi_climax": 1,
+      "continuation_control_not_directional": 1,
+      "continuation_flow_alignment_below_threshold": 1,
+      "continuation_structure_strength_below_threshold": 1,
+      "clarity_below_threshold": 1
+    }
+  }
+}

@@ -1,0 +1,21 @@
+[setup] database=postgresql+asyncpg://localhost:5432/flowscope_replay_vps_20260507_123757 engine_tag=v2_balanced candidates=baseline,guarded
+[load] signals=20 window=2026-04-23T01:43:45.640813+00:00->2026-04-25T23:12:16.621452+00:00
+[load] buckets=1
+[load] bucket load complete rows=29,074 symbol_tf=76
+[replay:baseline] start signals=20 progress_every=5
+[replay:baseline] 1/20   5.0% sim_time=2026-04-23T01:43:45.640813+00:00 active=0 entered=0 closed=0 R=0.00 skips=1 entry_guard_rejected=1
+[replay:baseline] 5/20  25.0% sim_time=2026-04-23T15:00:11.891755+00:00 active=2 entered=4 closed=2 R=0.27 skips=1 entry_guard_rejected=1
+[replay:baseline] 10/20  50.0% sim_time=2026-04-24T20:03:12.819715+00:00 active=4 entered=9 closed=5 R=-0.12 skips=1 entry_guard_rejected=1
+[replay:baseline] 15/20  75.0% sim_time=2026-04-25T07:04:44.230290+00:00 active=5 entered=13 closed=8 R=2.78 skips=2 entry_guard_rejected=2
+[replay:baseline] 20/20 100.0% sim_time=2026-04-25T23:12:16.621452+00:00 active=4 entered=18 closed=14 R=-0.72 skips=2 entry_guard_rejected=2
+[replay:baseline] finish entered=18 closed=18 open=0 winrate=38.89% R=-1.591 allocated_R=-1.426
+[output:baseline] summary=export\live_faithful_baseline_20260507_125353.json trades=export\live_faithful_baseline_20260507_125353_trades.csv skips=export\live_faithful_baseline_20260507_125353_skips.csv
+[replay:guarded] start signals=20 progress_every=5
+[replay:guarded] 1/20   5.0% sim_time=2026-04-23T01:43:45.640813+00:00 active=0 entered=0 closed=0 R=0.00 skips=1 guard_quality_not_ready=1
+[replay:guarded] 5/20  25.0% sim_time=2026-04-23T15:00:11.891755+00:00 active=0 entered=0 closed=0 R=0.00 skips=5 guard_quality_not_ready=4 guard_low_volatility=1
+[replay:guarded] 10/20  50.0% sim_time=2026-04-24T20:03:12.819715+00:00 active=0 entered=0 closed=0 R=0.00 skips=10 guard_quality_not_ready=9 guard_low_volatility=1
+[replay:guarded] 15/20  75.0% sim_time=2026-04-25T07:04:44.230290+00:00 active=0 entered=0 closed=0 R=0.00 skips=15 guard_quality_not_ready=13 guard_low_volatility=1 guard_timeframe_1h=1
+[replay:guarded] 20/20 100.0% sim_time=2026-04-25T23:12:16.621452+00:00 active=0 entered=0 closed=0 R=0.00 skips=20 guard_quality_not_ready=18 guard_low_volatility=1 guard_timeframe_1h=1
+[replay:guarded] finish entered=0 closed=0 open=0 winrate=0.00% R=0.000 allocated_R=0.000
+[output:guarded] summary=export\live_faithful_guarded_20260507_125353.json trades=export\live_faithful_guarded_20260507_125353_trades.csv skips=export\live_faithful_guarded_20260507_125353_skips.csv
+[output] combined_summary=export\live_faithful_summary_20260507_125353.json
