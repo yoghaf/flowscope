@@ -93,6 +93,29 @@ const HUMAN_LABELS: Record<string, string> = {
   no_layer5_direction: "No Layer 5 direction",
   direction_conflict: "Direction conflict",
   trap_or_squeeze_unconsumed: "Trap/squeeze not consumed",
+  relative_strength: "Relative Strength",
+  relative_weakness: "Relative Weakness",
+  market_aligned: "Market Aligned",
+  no_independent_edge: "No Independent Edge",
+  unknown_market_context: "Market Context Pending",
+  early_build: "Early Build",
+  healthy_continuation: "Healthy Continuation",
+  wait_pullback: "Wait Pullback",
+  late_chase: "Late Chase",
+  exhaustion_risk: "Exhaustion Risk",
+  distribution_risk: "Distribution Risk",
+  accumulation_risk: "Accumulation Risk",
+  range_no_edge: "Range No Edge",
+  unknown_location: "Unknown",
+  good_location: "Good Location",
+  wait_confirmation: "Wait Confirmation",
+  late_do_not_chase: "Late, Do Not Chase",
+  avoid_reversal_risk: "Avoid Reversal Risk",
+  opposite_watch: "Opposite Watch",
+  no_edge: "No Edge",
+  none: "None",
+  watch_short_confirmation: "Watch Short Confirmation",
+  watch_long_confirmation: "Watch Long Confirmation",
 };
 
 export function isFiniteNumber(value: unknown): value is number {
@@ -238,6 +261,10 @@ export function getVolumeChange(asset: AssetSnapshot, timeframe: Timeframe): num
 
 function flowValue(asset: AssetSnapshot, field: string): unknown {
   return (asset.flow_metrics as unknown as Record<string, unknown> | undefined)?.[field];
+}
+
+function assetValue(asset: AssetSnapshot, field: string): unknown {
+  return (asset as unknown as Record<string, unknown>)[field];
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -392,6 +419,53 @@ export function getDirectionAlignmentStatus(asset: AssetSnapshot): string {
   return stringOrNull(asset.direction_alignment_status) ?? stringOrNull(flowValue(asset, "direction_alignment_status")) ?? "NO_DIRECTION";
 }
 
+export function getSemanticGateShadowDecision(asset: AssetSnapshot): string | null {
+  return stringOrNull(asset.semantic_gate_shadow_decision) ?? stringOrNull(flowValue(asset, "semantic_gate_shadow_decision"));
+}
+
+export function getSemanticGateLiveEffect(asset: AssetSnapshot): string | null {
+  return stringOrNull(asset.semantic_gate_live_effect) ?? stringOrNull(flowValue(asset, "semantic_gate_live_effect"));
+}
+
+export function getMarketRelativeStatus(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string | null {
+  const field = `market_relative_status_${timeframe}`;
+  return stringOrNull(flowValue(asset, field)) ?? stringOrNull(assetValue(asset, field));
+}
+
+export function getRelativeStrengthScore(asset: AssetSnapshot, timeframe: Timeframe = "15m"): number | null {
+  const field = `relative_strength_score_${timeframe}`;
+  return toNumberOrNull(flowValue(asset, field)) ?? toNumberOrNull(assetValue(asset, field));
+}
+
+export function getRelativeWeaknessScore(asset: AssetSnapshot, timeframe: Timeframe = "15m"): number | null {
+  const field = `relative_weakness_score_${timeframe}`;
+  return toNumberOrNull(flowValue(asset, field)) ?? toNumberOrNull(assetValue(asset, field));
+}
+
+export function getMarketIndependenceScore(asset: AssetSnapshot, timeframe: Timeframe = "15m"): number | null {
+  const field = `market_independence_score_${timeframe}`;
+  return toNumberOrNull(flowValue(asset, field)) ?? toNumberOrNull(assetValue(asset, field));
+}
+
+export function getEntryLocationPhase(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string | null {
+  const field = `entry_location_phase_${timeframe}`;
+  return stringOrNull(flowValue(asset, field)) ?? stringOrNull(assetValue(asset, field));
+}
+
+export function getEntryLocationQuality(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string | null {
+  const field = `entry_location_quality_${timeframe}`;
+  return stringOrNull(flowValue(asset, field)) ?? stringOrNull(assetValue(asset, field));
+}
+
+export function getEntryLocationReason(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string | null {
+  const field = `entry_location_reason_${timeframe}`;
+  return stringOrNull(flowValue(asset, field)) ?? stringOrNull(assetValue(asset, field));
+}
+
+export function getOppositeSignalWatch(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string | null {
+  return stringOrNull(flowValue(asset, `opposite_signal_watch_${timeframe}`));
+}
+
 export function getStructuralPermission(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string {
   return (
     stringOrNull(flowValue(asset, `final_structural_permission_${timeframe}`)) ??
@@ -485,6 +559,90 @@ export function getHumanLabel(value: string | null | undefined): string {
   }
 
   return formatPipelineLabel(value);
+}
+
+export function formatMarketRelativeStatus(value: string | null | undefined): string {
+  if (isUnknownMarketRelativeStatus(value)) {
+    return "Market Context Pending";
+  }
+  return getHumanLabel(value);
+}
+
+export function formatEntryLocationPhase(value: string | null | undefined): string {
+  return getHumanLabel(value);
+}
+
+export function formatEntryLocationQuality(value: string | null | undefined): string {
+  return getHumanLabel(value);
+}
+
+export function formatSemanticGateDecision(value: string | null | undefined): string {
+  const normalized = normalizeDecisionText(value);
+  if (normalized === "trade_ready") return "Trade Ready";
+  if (normalized === "long_watch") return "Long Watch";
+  if (normalized === "short_watch") return "Short Watch";
+  if (normalized === "long_trap_watch") return "Long Trap Watch";
+  if (normalized === "short_squeeze_watch") return "Short Squeeze Watch";
+  if (normalized === "waiting_confirmation" || normalized === "wait_scenario") return "Waiting Confirmation";
+  if (normalized === "waiting_direction" || normalized === "wait_direction") return "Waiting Direction";
+  if (normalized === "avoid" || normalized === "avoid_layer5_risk") return "Avoid";
+  if (normalized === "data_issue" || normalized === "data_blocked") return "Data Issue";
+  if (normalized === "no_setup" || normalized === "range_no_edge" || normalized === "no_edge") return "Range No Edge";
+  if (normalized === "blocked") return "Blocked";
+  if (normalized === "watchlist") return "Watchlist";
+  if (normalized === "wait") return "Wait";
+  return getHumanLabel(value);
+}
+
+export function formatRelativeScore(value: number | null | undefined): string {
+  const numeric = toNumberOrNull(value);
+  if (numeric === null) {
+    return "Unknown";
+  }
+  if (Math.abs(numeric) <= 1) {
+    return `${Math.round(numeric * 100)}%`;
+  }
+  return numeric.toFixed(1);
+}
+
+export function isUnknownMarketRelativeStatus(value: string | null | undefined): boolean {
+  const normalized = normalizeDecisionText(value);
+  return !normalized || normalized === "unknown" || normalized === "unknown_market_context";
+}
+
+export function shouldShowRelativeScore(status: string | null | undefined, value: number | null | undefined): boolean {
+  return !isUnknownMarketRelativeStatus(status) && toNumberOrNull(value) !== null;
+}
+
+export function isRiskEntryLocationPhase(value: string | null | undefined): boolean {
+  return ["exhaustion_risk", "distribution_risk", "accumulation_risk", "late_chase"].includes(normalizeDecisionText(value));
+}
+
+export function getEntryLocationWarning(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string | null {
+  const phase = getEntryLocationPhase(asset, timeframe);
+  if (!isRiskEntryLocationPhase(phase)) {
+    return null;
+  }
+  const oppositeWatch = normalizeDecisionText(getOppositeSignalWatch(asset, timeframe));
+  if (oppositeWatch === "watch_short_confirmation" || oppositeWatch === "watch_long_confirmation") {
+    return "Watch opposite confirmation only";
+  }
+  return "Do not chase";
+}
+
+export function getObservabilityDecisionLabel(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string {
+  const warning = getEntryLocationWarning(asset, timeframe);
+  if (warning) {
+    return "Do Not Chase";
+  }
+  return formatSemanticGateDecision(getDisplayDecision(asset, timeframe));
+}
+
+export function getObservabilityDecisionTone(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string {
+  if (getEntryLocationWarning(asset, timeframe)) {
+    return "border-red-500/30 bg-red-500/10 text-red-300";
+  }
+  return getDecisionTone(getDisplayDecision(asset, timeframe));
 }
 
 export function getDqLabel(asset: AssetSnapshot, timeframe: Timeframe = "15m"): string {
@@ -667,12 +825,24 @@ export function getHumanReason(asset: AssetSnapshot, timeframe: Timeframe = "15m
   const layer5Reason = getLayer5WatchReason(asset);
   const semantic = normalizeDecisionText(getV2BalancedSemanticReadiness(asset));
   const readinessReason = getV2BalancedReadinessReason(asset);
+  const direction = normalizeDecisionText(getLayer5DirectionBias(asset));
+  const locationWarning = getEntryLocationWarning(asset, timeframe);
+
+  if (locationWarning) {
+    return locationWarning;
+  }
+  if ((direction === "long_watch" || direction === "short_watch") && semantic === "wait_scenario") {
+    return "Direction watch, scenario not confirmed";
+  }
+  if (direction === "long_watch" || direction === "short_watch") {
+    return "Watch forming";
+  }
+
   if (
     layer5 === "watchlist_mixed_building" ||
     layer5 === "watchlist_weak_propulsion" ||
     layer5 === "watchlist_healthy_expansion"
   ) {
-    const direction = normalizeDecisionText(getLayer5DirectionBias(asset));
     if (
       direction === "long_watch" ||
       direction === "short_watch" ||

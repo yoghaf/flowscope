@@ -9,30 +9,47 @@ import { ChevronDown, Clock3, HelpCircle, RefreshCw, Search as SearchIcon, Slide
 import { api } from "@/lib/api";
 import {
   formatAge,
+  formatEntryLocationPhase,
+  formatEntryLocationQuality,
   formatFundingRate,
+  formatMarketRelativeStatus,
   formatPipelineLabel,
   formatPrice,
   formatRatio,
+  formatRelativeScore,
+  formatSemanticGateDecision,
   getBlockReasons,
-  getDecisionTone,
   getDisplayDecision,
   getDqLabel,
   getDqStatus,
+  getEntryLocationWarning,
+  getEntryLocationPhase,
+  getEntryLocationQuality,
+  getEntryLocationReason,
   getFallbackFields,
   getHardFilterReasons,
   getHumanDecisionSubtitle,
   getHumanLabel,
   getHumanReason,
+  getMarketIndependenceScore,
+  getMarketRelativeStatus,
+  getObservabilityDecisionLabel,
+  getObservabilityDecisionTone,
+  getOppositeSignalWatch,
   getProvenanceValue,
   getReadinessTone,
   getReasonLabel,
+  getRelativeStrengthScore,
+  getRelativeWeaknessScore,
   getScenarioDisposition,
-  getScenarioDisplay,
-  getStructureDisplay,
+  getSemanticGateLiveEffect,
+  getSemanticGateShadowDecision,
   getStructuralPermission,
   getSystemReadiness,
   isReliable,
+  isUnknownMarketRelativeStatus,
   shortSymbol,
+  shouldShowRelativeScore,
   toNumberOrNull,
   type DisplayDecision,
 } from "@/lib/formatters";
@@ -97,6 +114,26 @@ function isWaitingDecision(decision: DisplayDecision): boolean {
 
 function isBlockedDecision(decision: DisplayDecision): boolean {
   return decision === "BLOCKED" || decision === "AVOID";
+}
+
+function semanticStatusTone(value: string | null | undefined): string {
+  const normalized = (value ?? "").toUpperCase();
+  if (["RELATIVE_STRENGTH", "MARKET_ALIGNED", "HEALTHY_CONTINUATION", "EARLY_BUILD", "GOOD_LOCATION"].includes(normalized)) {
+    return "border-emerald-500/25 bg-emerald-500/10 text-emerald-300";
+  }
+  if (["RELATIVE_WEAKNESS", "WAIT_PULLBACK", "WAIT_CONFIRMATION"].includes(normalized)) {
+    return "border-amber-500/25 bg-amber-500/10 text-amber-300";
+  }
+  if (["EXHAUSTION_RISK", "DISTRIBUTION_RISK", "ACCUMULATION_RISK", "LATE_CHASE", "LATE_DO_NOT_CHASE", "AVOID_REVERSAL_RISK"].includes(normalized)) {
+    return "border-red-500/25 bg-red-500/10 text-red-300";
+  }
+  if (["NO_INDEPENDENT_EDGE", "RANGE_NO_EDGE", "NO_EDGE"].includes(normalized)) {
+    return "border-white/10 bg-white/5 text-slate-300";
+  }
+  if (!normalized || normalized === "UNKNOWN_MARKET_CONTEXT" || normalized === "UNKNOWN_LOCATION" || normalized === "UNKNOWN") {
+    return "border-white/10 bg-white/5 text-slate-400";
+  }
+  return "border-white/10 bg-white/5 text-muted-foreground";
 }
 
 function getScannerStaleTime(timeframe: Timeframe): number {
@@ -479,9 +516,9 @@ export default function ScannerPage() {
                   <th className="px-4 py-3 text-left">Bias</th>
                   <th className="px-4 py-3 text-left">Setup</th>
                   <th className="px-4 py-3 text-left">Decision State</th>
+                  <th className="px-4 py-3 text-left">Market</th>
+                  <th className="px-4 py-3 text-left">Entry Location</th>
                   <th className="px-4 py-3 text-left">DQ</th>
-                  <th className="px-4 py-3 text-left">Scenario</th>
-                  <th className="px-4 py-3 text-left">Structure</th>
                   <th className="px-4 py-3 text-left">Main Reason</th>
                   <th className="px-4 py-3 text-right">Confidence</th>
                   <th className="px-3 py-3 text-right">Details</th>
@@ -493,10 +530,19 @@ export default function ScannerPage() {
                   const decision = getDisplayDecision(asset, timeframe);
                   const dqStatus = getDqStatus(asset, timeframe);
                   const dqLabel = getDqLabel(asset, timeframe);
-                  const scenario = getScenarioDisplay(asset);
-                  const structure = getStructureDisplay(asset, timeframe);
+                  const marketRelativeStatus = getMarketRelativeStatus(asset, timeframe);
+                  const relativeScore =
+                    getRelativeStrengthScore(asset, timeframe) ??
+                    getRelativeWeaknessScore(asset, timeframe) ??
+                    getMarketIndependenceScore(asset, timeframe);
+                  const entryPhase = getEntryLocationPhase(asset, timeframe);
+                  const entryQuality = getEntryLocationQuality(asset, timeframe);
                   const reason = getHumanReason(asset, timeframe);
                   const subtitle = getHumanDecisionSubtitle(asset);
+                  const locationWarning = getEntryLocationWarning(asset, timeframe);
+                  const decisionLabel = getObservabilityDecisionLabel(asset, timeframe);
+                  const decisionTone = getObservabilityDecisionTone(asset, timeframe);
+                  const showRelativeScore = shouldShowRelativeScore(marketRelativeStatus, relativeScore);
                   const confidence = Math.round(getOpportunityScore(asset, timeframe) * 100);
                   const setupStats = setupMap.get(setupTypeFromDecision(asset.decision_type, asset.position_quality) ?? "");
                   const degradedBadges = getDegradedBadges(asset, timeframe);
@@ -518,18 +564,38 @@ export default function ScannerPage() {
                           <p className="text-xs text-muted-foreground">{getHumanLabel(asset.decision_type ?? "No-Trade")}</p>
                         </td>
                         <td className="px-4 py-3">
-                          <span title={getHelpText(decision)} className={`inline-flex rounded-lg border px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide ${getDecisionTone(decision)}`}>
-                            {decision}
+                          <span title={getHelpText(decisionLabel)} className={`inline-flex rounded-lg border px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide ${decisionTone}`}>
+                            {decisionLabel}
                           </span>
-                          <p className="mt-1 max-w-[180px] text-xs text-muted-foreground">{subtitle}</p>
+                          <p className="mt-1 max-w-[180px] text-xs text-muted-foreground">{locationWarning ?? subtitle}</p>
+                        </td>
+                        <td className="min-w-[150px] px-4 py-3">
+                          {!isUnknownMarketRelativeStatus(marketRelativeStatus) ? (
+                            <span className={`inline-flex rounded-lg border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${semanticStatusTone(marketRelativeStatus)}`}>
+                              {formatMarketRelativeStatus(marketRelativeStatus)}
+                            </span>
+                          ) : (
+                            <span className={`inline-flex rounded-lg border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${semanticStatusTone(marketRelativeStatus)}`}>
+                              {formatMarketRelativeStatus(marketRelativeStatus)}
+                            </span>
+                          )}
+                          {showRelativeScore ? <p className="mt-1 text-xs text-muted-foreground">Score {formatRelativeScore(relativeScore)}</p> : null}
+                        </td>
+                        <td className="min-w-[170px] px-4 py-3">
+                          {entryPhase ? (
+                            <span className={`inline-flex rounded-lg border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${semanticStatusTone(entryPhase)}`}>
+                              {formatEntryLocationPhase(entryPhase)}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">Unknown</span>
+                          )}
+                          <p className="mt-1 text-xs text-muted-foreground">{formatEntryLocationQuality(entryQuality)}</p>
                         </td>
                         <td className="px-4 py-3">
                           <span title={dqStatus.toUpperCase() === "STALE" ? "Data stale: wait for a fresh snapshot before trusting the setup." : undefined} className={`inline-flex rounded-lg border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${dqStatus.toUpperCase() === "FRESH" ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300" : "border-orange-500/25 bg-orange-500/10 text-orange-300"}`}>
                             {dqLabel}
                           </span>
                         </td>
-                        <td className="min-w-[150px] px-4 py-3 text-muted-foreground" title={scenario.includes("Mixed market") ? getHelpText("Mixed market") : undefined}>{scenario}</td>
-                        <td className="min-w-[140px] px-4 py-3 text-muted-foreground" title={structure === "Structural block" ? getHelpText("Structural block") : undefined}>{structure}</td>
                         <td className="min-w-[220px] px-4 py-3">
                           <p className="font-medium text-foreground">{reason}</p>
                           {degradedBadges.length > 0 ? (
@@ -687,6 +753,16 @@ function ScannerDetails({
   const hardReasons = getHardFilterReasons(asset);
   const blockReasons = getBlockReasons(asset);
   const fallbackFields = getFallbackFields(asset, timeframe);
+  const marketRelativeStatus = getMarketRelativeStatus(asset, timeframe);
+  const entryPhase = getEntryLocationPhase(asset, timeframe);
+  const entryQuality = getEntryLocationQuality(asset, timeframe);
+  const entryReason = getEntryLocationReason(asset, timeframe);
+  const oppositeWatch = getOppositeSignalWatch(asset, timeframe);
+  const semanticGateDecision = getSemanticGateShadowDecision(asset);
+  const semanticGateEffect = getSemanticGateLiveEffect(asset);
+  const relativeStrength = getRelativeStrengthScore(asset, timeframe);
+  const relativeWeakness = getRelativeWeaknessScore(asset, timeframe);
+  const marketIndependence = getMarketIndependenceScore(asset, timeframe);
   const fundingAge = toNumberOrNull(getProvenanceValue(asset, "funding_age_seconds", timeframe));
   const liquidationAge = toNumberOrNull(getProvenanceValue(asset, "liquidation_age_seconds", timeframe));
   const takerAge = toNumberOrNull(getProvenanceValue(asset, "taker_ratio_age_seconds", timeframe));
@@ -712,13 +788,15 @@ function ScannerDetails({
         ])}
       />
       <DetailBlock
-        title="Classifier trace"
+        title="Semantic context"
         items={detailItems([
-          `State: ${marketInterpretation.state}`,
-          `Intent: ${asset.position_intent ?? "None"}`,
-          `Quality: ${asset.position_quality ?? "Neutral"}`,
-          `Decision: ${asset.decision_type ?? "No-Trade"}`,
+          `Decision: ${formatSemanticGateDecision(semanticGateDecision ?? getDisplayDecision(asset, timeframe))}`,
+          `Live effect: ${formatSemanticGateDecision(semanticGateEffect)}`,
+          `Market: ${formatMarketRelativeStatus(marketRelativeStatus)} (RS ${formatRelativeScore(relativeStrength)}, RW ${formatRelativeScore(relativeWeakness)}, independence ${formatRelativeScore(marketIndependence)})`,
+          `Entry location: ${formatEntryLocationPhase(entryPhase)} / ${formatEntryLocationQuality(entryQuality)}`,
           `Setup stats: ${setupStats?.validated ? "validated" : "experimental"}`,
+          entryReason ? `Location reason: ${entryReason}` : null,
+          oppositeWatch && oppositeWatch !== "NONE" ? `Opposite watch: ${formatEntryLocationPhase(oppositeWatch)}` : "Opposite watch: none",
         ])}
       />
       <DetailBlock

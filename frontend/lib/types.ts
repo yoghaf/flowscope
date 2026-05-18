@@ -334,6 +334,8 @@ export interface FlowMetrics {
   v2_action_status?: string | null;
   direction_alignment_status?: string;
   direction_alignment_reason?: string;
+  semantic_gate_shadow_decision?: string | null;
+  semantic_gate_live_effect?: string | null;
   v2balanced_candidate_stage?: string;
   v2balanced_stage_reason?: string;
   v2balanced_semantic_readiness?: string;
@@ -444,6 +446,8 @@ export interface AssetSnapshot {
   v2_action_status?: string | null;
   direction_alignment_status?: string;
   direction_alignment_reason?: string;
+  semantic_gate_shadow_decision?: string | null;
+  semantic_gate_live_effect?: string | null;
   v2balanced_candidate_stage?: string;
   v2balanced_stage_reason?: string;
   v2balanced_semantic_readiness?: string;

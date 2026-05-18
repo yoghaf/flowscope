@@ -24,27 +24,44 @@ import { api } from "@/lib/api";
 import {
   type SystemReadiness,
   formatAge,
-  getDecisionTone,
+  formatEntryLocationPhase,
+  formatEntryLocationQuality,
+  formatMarketRelativeStatus,
+  formatRelativeScore,
+  formatSemanticGateDecision,
+  getDirectionAlignmentStatus,
   getDisplayDecision,
   getDqLabel,
   getDqStatus,
+  getEntryLocationPhase,
+  getEntryLocationQuality,
+  getEntryLocationReason,
   getFallbackFields,
+  getHardFilterReasons,
   getHumanDecisionSubtitle,
   getHumanLabel,
   getHumanReason,
   getLayer5DirectionBias,
   getLayer5WatchStatus,
   getMainBlockReason,
+  getMarketIndependenceScore,
+  getMarketRelativeStatus,
+  getObservabilityDecisionLabel,
+  getObservabilityDecisionTone,
   getProvenanceValue,
   getReadinessTone,
   getReasonLabel,
+  getRelativeStrengthScore,
+  getRelativeWeaknessScore,
   getScenarioDisplay,
   getScenarioDisposition,
   getScenarioLabel,
-  getStructureDisplay,
   getSystemReadiness,
   isReliable,
+  isRiskEntryLocationPhase,
+  isUnknownMarketRelativeStatus,
   scoreToPercent,
+  shouldShowRelativeScore,
   shortSymbol,
   toNumberOrNull,
 } from "@/lib/formatters";
@@ -56,6 +73,7 @@ const SECTION_LIMIT = 10;
 type CandidateBucket =
   | "tradeReady"
   | "watchlist"
+  | "neutralWatch"
   | "waiting"
   | "strategyBlocked"
   | "dataBlocked"
@@ -99,7 +117,7 @@ function statusTone(status: string): string {
   if (["DATA ISSUE", "DATA_BLOCKED", "DEGRADED", "STALE", "FALLBACK_ONLY"].includes(normalized)) {
     return "border-orange-500/30 bg-orange-500/10 text-orange-300";
   }
-  if (["BLOCKED", "AVOID_RISK", "AVOID_LAYER5_RISK", "BLOCK", "MISSING", "NO_DATA", "INVALID"].includes(normalized)) {
+  if (["BLOCKED", "AVOID / RISK", "AVOID_RISK", "AVOID_LAYER5_RISK", "BLOCK", "MISSING", "NO_DATA", "INVALID"].includes(normalized)) {
     return "border-red-500/30 bg-red-500/10 text-red-300";
   }
   return "border-white/10 bg-white/5 text-slate-300";
@@ -113,6 +131,19 @@ function countBy(items: string[]): Array<[string, number]> {
 
 function pipelineConfidence(asset: AssetSnapshot): number {
   return scoreToPercent(asset.action_opportunity_score ?? asset.reliability_score ?? asset.score);
+}
+
+function observabilityPriority(asset: AssetSnapshot): number {
+  const direction = getLayer5DirectionBias(asset);
+  const semantic = getSemanticReadiness(asset);
+  const market = getMarketRelativeStatus(asset, DASHBOARD_TIMEFRAME);
+  const entryPhase = getEntryLocationPhase(asset, DASHBOARD_TIMEFRAME);
+  let priority = pipelineConfidence(asset);
+  if (direction === "LONG_WATCH" || direction === "SHORT_WATCH") priority += 120;
+  if (semantic === "WAIT_SCENARIO" && getHumanReason(asset, DASHBOARD_TIMEFRAME) !== "No trade reason available") priority += 80;
+  if (market === "RELATIVE_STRENGTH" || market === "RELATIVE_WEAKNESS") priority += 60;
+  if (entryPhase === "HEALTHY_CONTINUATION" || entryPhase === "EARLY_BUILD" || entryPhase === "WAIT_PULLBACK") priority += 35;
+  return priority;
 }
 
 function assetRecord(asset: AssetSnapshot): Record<string, unknown> {
@@ -209,6 +240,59 @@ function getDataIssue(asset: AssetSnapshot): string {
   return "Data not ready";
 }
 
+function getAvoidLabel(asset: AssetSnapshot): string {
+  const semantic = getSemanticReadiness(asset);
+  const entryPhase = getEntryLocationPhase(asset, DASHBOARD_TIMEFRAME);
+  const dataIssue = getCandidateStage(asset) === "DATA_BLOCKED" || semantic === "DATA_BLOCKED";
+  if (semantic === "AVOID_LAYER5_RISK") {
+    return "AVOID_LAYER5_RISK";
+  }
+  if (["EXHAUSTION_RISK", "DISTRIBUTION_RISK", "ACCUMULATION_RISK", "LATE_CHASE"].includes(entryPhase ?? "")) {
+    return entryPhase ?? "AVOID_LAYER5_RISK";
+  }
+  if (dataIssue) {
+    return "DATA_BLOCKED";
+  }
+  return getMainBlockReason(asset);
+}
+
+function hasHardRisk(asset: AssetSnapshot): boolean {
+  const semantic = getSemanticReadiness(asset);
+  return (
+    semantic === "AVOID_LAYER5_RISK" ||
+    semantic === "DATA_BLOCKED" ||
+    getCandidateStage(asset) === "DATA_BLOCKED" ||
+    getLayer5WatchStatus(asset) === "AVOID_HARD_RISK" ||
+    isRiskEntryLocationPhase(getEntryLocationPhase(asset, DASHBOARD_TIMEFRAME))
+  );
+}
+
+function isMainWatchlistCandidate(asset: AssetSnapshot): boolean {
+  const direction = getLayer5DirectionBias(asset);
+  const semantic = getSemanticReadiness(asset);
+  return (
+    (direction === "LONG_WATCH" || direction === "SHORT_WATCH") &&
+    (semantic === "WAIT_SCENARIO" || semantic === "READY_CANDIDATE") &&
+    !hasHardRisk(asset)
+  );
+}
+
+function isNeutralWatchCandidate(asset: AssetSnapshot): boolean {
+  if (hasHardRisk(asset)) {
+    return false;
+  }
+  const decision = getDisplayDecision(asset, DASHBOARD_TIMEFRAME);
+  const direction = getLayer5DirectionBias(asset);
+  const semantic = getSemanticReadiness(asset);
+  return (
+    direction === "NO_DIRECTION" ||
+    direction === "NEUTRAL_WATCH" ||
+    semantic === "WAIT_DIRECTION" ||
+    getLayer5WatchStatus(asset).startsWith("WATCHLIST") ||
+    (isWatchDecision(decision) && direction !== "LONG_WATCH" && direction !== "SHORT_WATCH")
+  );
+}
+
 function getLastUpdate(asset: AssetSnapshot): string {
   const oiAge = toNumberOrNull(getProvenanceValue(asset, "oi_close_age_seconds", DASHBOARD_TIMEFRAME));
   const ratioAge = toNumberOrNull(getProvenanceValue(asset, "taker_ratio_age_seconds", DASHBOARD_TIMEFRAME));
@@ -224,14 +308,17 @@ function bucketFor(asset: AssetSnapshot): CandidateBucket {
   if (decision === "DATA ISSUE" || stage === "DATA_BLOCKED" || semantic === "DATA_BLOCKED") {
     return "dataBlocked";
   }
-  if (decision === "AVOID" || semantic === "AVOID_LAYER5_RISK" || getLayer5WatchStatus(asset) === "AVOID_HARD_RISK") {
+  if (decision === "AVOID" || hasHardRisk(asset)) {
     return "strategyBlocked";
   }
   if (decision === "TRADE READY" || semantic === "READY_CANDIDATE") {
     return "tradeReady";
   }
-  if (isWatchDecision(decision) || getLayer5WatchStatus(asset).startsWith("WATCHLIST")) {
+  if (isMainWatchlistCandidate(asset)) {
     return "watchlist";
+  }
+  if (isNeutralWatchCandidate(asset)) {
+    return "neutralWatch";
   }
   if (isWaitingDecision(decision) || semantic === "WAIT_SCENARIO" || semantic === "WAIT_DIRECTION") {
     return "waiting";
@@ -364,8 +451,16 @@ function getRegimeInterpretation(assets: AssetSnapshot[]): string {
 }
 
 function isClosestToAllow(asset: AssetSnapshot): boolean {
-  const bucket = bucketFor(asset);
-  return bucket !== "dataBlocked" && bucket !== "noSetup" && getLayer5WatchStatus(asset) !== "AVOID_HARD_RISK";
+  const direction = getLayer5DirectionBias(asset);
+  const quality = getEntryLocationQuality(asset, DASHBOARD_TIMEFRAME);
+  return (
+    getDirectionAlignmentStatus(asset) === "ALIGNED" &&
+    (direction === "LONG_WATCH" || direction === "SHORT_WATCH") &&
+    !isUnknownMarketRelativeStatus(getMarketRelativeStatus(asset, DASHBOARD_TIMEFRAME)) &&
+    (quality === "WAIT_CONFIRMATION" || quality === "GOOD_LOCATION") &&
+    getHardFilterReasons(asset).length === 0 &&
+    !hasHardRisk(asset)
+  );
 }
 
 function FoundationRow({ label, value, total }: { label: string; value: number; total: number }) {
@@ -415,6 +510,7 @@ export default function DashboardPage() {
     const buckets: Record<CandidateBucket, AssetSnapshot[]> = {
       tradeReady: [],
       watchlist: [],
+      neutralWatch: [],
       waiting: [],
       strategyBlocked: [],
       dataBlocked: [],
@@ -426,13 +522,13 @@ export default function DashboardPage() {
     });
 
     Object.values(buckets).forEach((bucket) => {
-      bucket.sort((a, b) => pipelineConfidence(b) - pipelineConfidence(a));
+      bucket.sort((a, b) => observabilityPriority(b) - observabilityPriority(a));
     });
 
     const readiness = getSystemReadiness(assets, DASHBOARD_TIMEFRAME);
     const currentAction = getCurrentAction(readiness, buckets);
     const foundation = getFoundationSummary(readiness);
-    const closest = assets.filter(isClosestToAllow).sort((a, b) => pipelineConfidence(b) - pipelineConfidence(a));
+    const closest = assets.filter(isClosestToAllow).sort((a, b) => observabilityPriority(b) - observabilityPriority(a));
     const topBlockers = countBy(
       assets
         .filter((asset) => bucketFor(asset) !== "tradeReady")
@@ -463,8 +559,9 @@ export default function DashboardPage() {
     { label: "Assets Scanned", value: command.total, tone: "border-white/10 bg-white/5 text-slate-200" },
     { label: "Trade Ready", value: command.buckets.tradeReady.length, tone: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" },
     { label: "Watchlist", value: command.buckets.watchlist.length, tone: "border-blue-500/30 bg-blue-500/10 text-blue-300" },
+    { label: "Neutral Watch", value: command.buckets.neutralWatch.length, tone: "border-white/10 bg-white/5 text-slate-300" },
     { label: "Waiting", value: command.buckets.waiting.length, tone: "border-amber-500/30 bg-amber-500/10 text-amber-300" },
-    { label: "Strategy Blocked", value: command.buckets.strategyBlocked.length, tone: "border-red-500/30 bg-red-500/10 text-red-300" },
+    { label: "Avoid / Risk", value: command.buckets.strategyBlocked.length, tone: "border-red-500/30 bg-red-500/10 text-red-300" },
     { label: "Data Blocked", value: command.buckets.dataBlocked.length, tone: "border-orange-500/30 bg-orange-500/10 text-orange-300" },
     { label: "No Setup", value: command.buckets.noSetup.length, tone: "border-white/10 bg-white/5 text-slate-300" },
   ];
@@ -488,8 +585,9 @@ export default function DashboardPage() {
 
       <CandidateSection bucket="tradeReady" title="Trade Ready" rows={command.buckets.tradeReady} />
       <CandidateSection bucket="watchlist" title="Watchlist" rows={command.buckets.watchlist} />
+      <CandidateSection bucket="neutralWatch" title="Neutral Watch / No Clear Edge" rows={command.buckets.neutralWatch} />
       <CandidateSection bucket="waiting" title="Waiting for Confirmation" rows={command.buckets.waiting} />
-      <CandidateSection bucket="strategyBlocked" title="Strategy Blocked" rows={command.buckets.strategyBlocked} />
+      <CandidateSection bucket="strategyBlocked" title="Avoid / Risk" rows={command.buckets.strategyBlocked} />
       <CandidateSection bucket="dataBlocked" title="Data Blocked" rows={command.buckets.dataBlocked} />
       <CandidateSection bucket="noSetup" title="No Setup" rows={command.buckets.noSetup} />
 
@@ -585,7 +683,7 @@ function DecisionFunnel({ items }: { items: Array<{ label: string; value: number
         <Gauge className="h-4 w-4 text-primary" />
         <h2 className="font-semibold text-foreground">Decision Funnel</h2>
       </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         {items.map((item) => (
           <div key={item.label} className={`rounded-lg border p-3 ${item.tone}`}>
             <p className="text-xs font-semibold uppercase tracking-wide opacity-90">{item.label}</p>
@@ -602,6 +700,7 @@ function CandidateSection({ bucket, title, rows }: { bucket: CandidateBucket; ti
   const empty = {
     tradeReady: "No trade-ready candidates. Do not force a trade.",
     watchlist: "No clean watchlist candidates. Wait for better structure.",
+    neutralWatch: "No neutral watch rows. Directionless or no-edge rows are not being promoted here.",
     waiting: "No rows are waiting for confirmation right now.",
     strategyBlocked: "No strategy-blocked candidates in the current feed.",
     dataBlocked: "No data-blocked rows. Data foundation is not the main blocker here.",
@@ -643,9 +742,10 @@ function CandidateSection({ bucket, title, rows }: { bucket: CandidateBucket; ti
 function CandidateHeader({ bucket }: { bucket: CandidateBucket }) {
   const columns: Record<CandidateBucket, string[]> = {
     tradeReady: ["Symbol", "Direction", "Setup", "Reason", "Confidence", "Risk", "Action"],
-    watchlist: ["Symbol", "Watch Type", "Direction", "Tier", "Reason", "Needed Confirmation"],
-    waiting: ["Symbol", "Bias", "Scenario", "Reason", "Missing Confirmation"],
-    strategyBlocked: ["Symbol", "Bias", "Block Reason", "Scenario", "Structure", "Confidence"],
+    watchlist: ["Symbol", "Watch Type", "Market", "Entry Location", "Reason", "Needed Confirmation"],
+    neutralWatch: ["Symbol", "State", "Market", "Entry Location", "Reason"],
+    waiting: ["Symbol", "Bias", "Market", "Entry Location", "Missing Confirmation"],
+    strategyBlocked: ["Symbol", "Avoid Reason", "Market", "Entry Location", "Scenario", "Confidence"],
     dataBlocked: ["Symbol", "Main Data Issue", "DQ", "OI", "Ratio", "Funding", "Last Update"],
     noSetup: ["Symbol", "Market State", "Reason", "Confidence"],
   };
@@ -662,6 +762,33 @@ function CandidateHeader({ bucket }: { bucket: CandidateBucket }) {
   );
 }
 
+function MarketRelativeCell({ asset }: { asset: AssetSnapshot }) {
+  const status = getMarketRelativeStatus(asset, DASHBOARD_TIMEFRAME);
+  const score =
+    getRelativeStrengthScore(asset, DASHBOARD_TIMEFRAME) ??
+    getRelativeWeaknessScore(asset, DASHBOARD_TIMEFRAME) ??
+    getMarketIndependenceScore(asset, DASHBOARD_TIMEFRAME);
+  const showScore = shouldShowRelativeScore(status, score);
+  return (
+    <div>
+      <p className="font-medium text-foreground">{formatMarketRelativeStatus(status)}</p>
+      {showScore ? <p className="mt-1 text-xs text-muted-foreground">Score {formatRelativeScore(score)}</p> : null}
+    </div>
+  );
+}
+
+function EntryLocationCell({ asset }: { asset: AssetSnapshot }) {
+  const phase = getEntryLocationPhase(asset, DASHBOARD_TIMEFRAME);
+  const quality = getEntryLocationQuality(asset, DASHBOARD_TIMEFRAME);
+  const reason = getEntryLocationReason(asset, DASHBOARD_TIMEFRAME);
+  return (
+    <div title={reason ?? undefined}>
+      <p className="font-medium text-foreground">{formatEntryLocationPhase(phase)}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{formatEntryLocationQuality(quality)}</p>
+    </div>
+  );
+}
+
 function CandidateRow({ bucket, asset }: { bucket: CandidateBucket; asset: AssetSnapshot }) {
   const symbol = (
     <Link href={`/coin/${asset.symbol}?timeframe=${asset.timeframe}&snapshot_id=latest`} className="font-semibold text-foreground hover:text-primary">
@@ -672,6 +799,8 @@ function CandidateRow({ bucket, asset }: { bucket: CandidateBucket; asset: Asset
   const reason = getHumanReason(asset, DASHBOARD_TIMEFRAME);
   const decision = getDisplayDecision(asset, DASHBOARD_TIMEFRAME);
   const subtitle = getHumanDecisionSubtitle(asset);
+  const decisionLabel = getObservabilityDecisionLabel(asset, DASHBOARD_TIMEFRAME);
+  const decisionTone = getObservabilityDecisionTone(asset, DASHBOARD_TIMEFRAME);
   const rowClass = "border-b border-white/5 text-sm hover:bg-white/5";
   const cellClass = "px-5 py-3 text-muted-foreground";
   const rightCell = "px-5 py-3 text-right font-semibold text-foreground";
@@ -695,12 +824,12 @@ function CandidateRow({ bucket, asset }: { bucket: CandidateBucket; asset: Asset
       <tr className={rowClass}>
         <td className="px-5 py-3">{symbol}</td>
         <td className={cellClass}>
-          <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${getDecisionTone(decision)}`}>
-            {decision}
+          <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${decisionTone}`}>
+            {decisionLabel}
           </span>
         </td>
-        <td className={cellClass}>{getDirectionLabel(asset)}</td>
-        <td className={cellClass}>{asset.layer5_candidate_tier ?? "B"}</td>
+        <td className={cellClass}><MarketRelativeCell asset={asset} /></td>
+        <td className={cellClass}><EntryLocationCell asset={asset} /></td>
         <td className={cellClass}>
           <p className="text-foreground">{reason}</p>
           <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
@@ -710,26 +839,42 @@ function CandidateRow({ bucket, asset }: { bucket: CandidateBucket; asset: Asset
     );
   }
 
+  if (bucket === "neutralWatch") {
+    return (
+      <tr className={rowClass}>
+        <td className="px-5 py-3">{symbol}</td>
+        <td className={cellClass}>{formatSemanticGateDecision(decision)}</td>
+        <td className={cellClass}><MarketRelativeCell asset={asset} /></td>
+        <td className={cellClass}><EntryLocationCell asset={asset} /></td>
+        <td className={rightCell}>{reason}</td>
+      </tr>
+    );
+  }
+
   if (bucket === "waiting") {
     return (
       <tr className={rowClass}>
         <td className="px-5 py-3">{symbol}</td>
         <td className={cellClass}>{humanStatus(asset.action_bias ?? "Neutral")}</td>
-        <td className={cellClass}>{getScenarioDisplay(asset)}</td>
-        <td className={cellClass}>{reason}</td>
+        <td className={cellClass}><MarketRelativeCell asset={asset} /></td>
+        <td className={cellClass}><EntryLocationCell asset={asset} /></td>
         <td className={rightCell}>{getMissingConfirmation(asset)}</td>
       </tr>
     );
   }
 
   if (bucket === "strategyBlocked") {
+    const avoidLabel = getAvoidLabel(asset);
     return (
       <tr className={rowClass}>
         <td className="px-5 py-3">{symbol}</td>
-        <td className={cellClass}>{humanStatus(asset.action_bias ?? "Neutral")}</td>
-        <td className={cellClass}>{getReasonLabel(getMainBlockReason(asset))}</td>
+        <td className={cellClass}>
+          <p className="font-medium text-foreground">{formatSemanticGateDecision(avoidLabel)}</p>
+          <p className="mt-1 font-mono text-[11px] text-muted-foreground">{avoidLabel}</p>
+        </td>
+        <td className={cellClass}><MarketRelativeCell asset={asset} /></td>
+        <td className={cellClass}><EntryLocationCell asset={asset} /></td>
         <td className={cellClass}>{getScenarioDisplay(asset)}</td>
-        <td className={cellClass}>{getStructureDisplay(asset, DASHBOARD_TIMEFRAME)}</td>
         <td className={rightCell}>{confidence}</td>
       </tr>
     );
@@ -789,8 +934,8 @@ function ClosestToAllow({ assets, allDataBlocked }: { assets: AssetSnapshot[]; a
                 <Link href={`/coin/${asset.symbol}?timeframe=${asset.timeframe}&snapshot_id=latest`} className="font-semibold text-foreground hover:text-primary">
                   {shortSymbol(asset.symbol)}
                 </Link>
-                <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${getDecisionTone(getDisplayDecision(asset, DASHBOARD_TIMEFRAME))}`}>
-                  {getDisplayDecision(asset, DASHBOARD_TIMEFRAME)}
+                <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${getObservabilityDecisionTone(asset, DASHBOARD_TIMEFRAME)}`}>
+                  {getObservabilityDecisionLabel(asset, DASHBOARD_TIMEFRAME)}
                 </span>
               </div>
               <p className="mt-3 text-sm text-muted-foreground">{getHumanReason(asset, DASHBOARD_TIMEFRAME)}</p>

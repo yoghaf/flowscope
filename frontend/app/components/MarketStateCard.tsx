@@ -2,25 +2,38 @@ import Link from "next/link";
 
 import {
   formatAge,
+  formatEntryLocationPhase,
+  formatEntryLocationQuality,
   formatFundingRate,
+  formatMarketRelativeStatus,
   formatPercent,
   formatPipelineLabel,
   formatPrice,
   formatRatio,
+  formatRelativeScore,
   getBlockReasons,
-  getDecisionTone,
-  getDisplayDecision,
   getDqStatus,
+  getEntryLocationWarning,
+  getEntryLocationPhase,
+  getEntryLocationQuality,
+  getEntryLocationReason,
   getEntryPermission,
   getFallbackFields,
   getHardFilterReasons,
   getHumanDecisionSubtitle,
   getHumanReason,
+  getMarketIndependenceScore,
+  getMarketRelativeStatus,
+  getObservabilityDecisionLabel,
+  getObservabilityDecisionTone,
   getProvenanceValue,
+  getRelativeStrengthScore,
+  getRelativeWeaknessScore,
   getScenarioDisposition,
   getScenarioLabel,
   getStructuralPermission,
   isReliable,
+  shouldShowRelativeScore,
   shortSymbol,
   toNumberOrNull,
 } from "@/lib/formatters";
@@ -75,9 +88,21 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
   const structuralPermission = getStructuralPermission(asset, timeframe);
   const hardFilterReasons = getHardFilterReasons(asset);
   const blockReasons = getBlockReasons(asset);
-  const displayDecision = getDisplayDecision(asset, timeframe);
   const decisionSubtitle = getHumanDecisionSubtitle(asset);
   const humanReason = getHumanReason(asset, timeframe);
+  const marketRelativeStatus = getMarketRelativeStatus(asset, timeframe);
+  const relativeScore =
+    getRelativeStrengthScore(asset, timeframe) ??
+    getRelativeWeaknessScore(asset, timeframe) ??
+    getMarketIndependenceScore(asset, timeframe);
+  const entryPhase = getEntryLocationPhase(asset, timeframe);
+  const entryQuality = getEntryLocationQuality(asset, timeframe);
+  const entryReason = getEntryLocationReason(asset, timeframe);
+  const decisionLabel = getObservabilityDecisionLabel(asset, timeframe);
+  const decisionTone = getObservabilityDecisionTone(asset, timeframe);
+  const locationWarning = getEntryLocationWarning(asset, timeframe);
+  const displaySubtitle = locationWarning ?? decisionSubtitle;
+  const showRelativeScore = shouldShowRelativeScore(marketRelativeStatus, relativeScore);
 
   const oiAlignment = source(getProvenanceValue(asset, "oi_alignment_status", timeframe)).toUpperCase();
   const oiReliabilityRaw = getProvenanceValue(asset, "oi_delta_reliable", timeframe);
@@ -129,37 +154,34 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
             </div>
           </Link>
           <div className="shrink-0 text-right">
-            <span className={`inline-flex rounded-lg border px-3 py-1.5 text-xs font-bold uppercase tracking-wide ${getDecisionTone(displayDecision)}`}>
-              {displayDecision}
+            <span className={`inline-flex rounded-lg border px-3 py-1.5 text-xs font-bold uppercase tracking-wide ${decisionTone}`}>
+              {decisionLabel}
             </span>
-            <p className="mt-1 max-w-[220px] text-xs text-muted-foreground">{decisionSubtitle}</p>
+            <p className="mt-1 max-w-[220px] text-xs text-muted-foreground">{displaySubtitle}</p>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-3 xl:grid-cols-6">
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Bias</p>
-            <p className="mt-1 font-semibold text-foreground">{action.tradeBias}</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Decision</p>
+            <p className="mt-1 font-semibold text-foreground">{decisionLabel}</p>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Setup</p>
-            <p className="mt-1 font-semibold text-foreground">{action.setupType}</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Market</p>
+            <p className="mt-1 font-semibold text-foreground">{formatMarketRelativeStatus(marketRelativeStatus)}</p>
+            {showRelativeScore ? <p className="mt-1 text-[11px] text-muted-foreground">Score {formatRelativeScore(relativeScore)}</p> : null}
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Scenario</p>
-            <p className="mt-1 truncate font-semibold text-foreground" title={`${scenarioLabel} / ${scenarioDisposition}`}>
-              {formatPipelineLabel(scenarioLabel)} / {formatPipelineLabel(scenarioDisposition)}
-            </p>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Entry Location</p>
+            <p className="mt-1 font-semibold text-foreground">{formatEntryLocationPhase(entryPhase)}</p>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Structure</p>
-            <p className="mt-1 truncate font-semibold text-foreground" title={structuralPermission}>
-              {formatPipelineLabel(structuralPermission)}
-            </p>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Quality</p>
+            <p className="mt-1 font-semibold text-foreground">{formatEntryLocationQuality(entryQuality)}</p>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Reason</p>
-            <p className="mt-1 truncate font-semibold text-amber-300" title={humanReason}>{humanReason}</p>
+            <p className="mt-1 truncate font-semibold text-amber-300" title={entryReason ?? humanReason}>{entryReason ?? humanReason}</p>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Confidence</p>
@@ -210,6 +232,8 @@ export default function MarketStateCard({ asset, timeframe, setupStats }: Market
               <p>Taker: {formatRatio(takerRatio)} - {takerSource} - {formatAge(takerAge)}</p>
               <p>L/S: {formatRatio(longShortRatio)} - {longShortSource} - {formatAge(longShortAge)}</p>
               <p>Fallbacks: {fallbackFields.length > 0 ? fallbackFields.join(", ") : "none"}</p>
+              <p>Scenario: {formatPipelineLabel(scenarioLabel)} / {formatPipelineLabel(scenarioDisposition)}</p>
+              <p>Structure: {formatPipelineLabel(structuralPermission)}</p>
               <p>Final permission: {formatPipelineLabel(entryPermission)}</p>
               <p>Hard filters: {firstText(hardFilterReasons)}</p>
               <p>Blocks: {firstText(blockReasons)}</p>
