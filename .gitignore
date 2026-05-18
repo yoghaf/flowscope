@@ -19,6 +19,7 @@ Thumbs.db
 
 # Data files — do not push
 *.sql
+!scripts/migrations/*.sql
 phase*-report.csv
 phase*-summary.json
 phase*-after-report.csv

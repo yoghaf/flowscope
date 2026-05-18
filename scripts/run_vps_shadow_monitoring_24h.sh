@@ -21,28 +21,50 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || { echo "FATAL: Cannot cd to repo root: $REPO_ROOT"; exit 1; }
 
+# --- Auto-detect Python ---
+detect_python() {
+    # Priority order matching VPS layout
+    local candidates=(
+        "$REPO_ROOT/backend/venv/bin/python"
+        "$REPO_ROOT/venv/bin/python"
+        "$REPO_ROOT/.venv/bin/python"
+    )
+    for candidate in "${candidates[@]}"; do
+        if [ -x "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    # Fall back to system Python
+    if command -v python3 &>/dev/null; then
+        echo "python3"
+        return 0
+    fi
+    if command -v python &>/dev/null; then
+        echo "python"
+        return 0
+    fi
+    echo ""
+    return 1
+}
+
+PY="$(detect_python)"
+if [ -z "$PY" ]; then
+    echo "FATAL: No Python interpreter found."
+    echo "Searched: backend/venv/bin/python, venv/bin/python, .venv/bin/python, python3, python"
+    exit 1
+fi
+
 echo "============================================================"
 echo "FLOWSCOPE VPS 24H SHADOW MONITORING"
 echo "============================================================"
 echo "Repo root:   $REPO_ROOT"
+echo "Python:      $PY"
+echo "Python ver:  $($PY --version 2>&1)"
 echo "Started at:  $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 echo "Duration:    ~24 hours (144 cycles x 10 min)"
 echo "Mode:        OBSERVABILITY ONLY — NO LIVE TRADING"
 echo "============================================================"
-
-# --- Activate venv if available ---
-if [ -f "$REPO_ROOT/venv/bin/activate" ]; then
-    echo "[SETUP] Activating venv/bin/activate"
-    source "$REPO_ROOT/venv/bin/activate"
-elif [ -f "$REPO_ROOT/.venv/bin/activate" ]; then
-    echo "[SETUP] Activating .venv/bin/activate"
-    source "$REPO_ROOT/.venv/bin/activate"
-else
-    echo "[SETUP] No venv found, using system Python"
-fi
-
-echo "[SETUP] Python: $(which python)"
-echo "[SETUP] Python version: $(python --version 2>&1)"
 
 # --- Create needed directories ---
 mkdir -p "$REPO_ROOT/logs"
@@ -57,64 +79,134 @@ echo ""
 
 # --- Health check function ---
 check_foundation_health() {
-    local output
-    output=$(PYTHONUNBUFFERED=1 python -u "$REPO_ROOT/scratch/check_active_foundation.py" 2>&1) || true
-    echo "$output"
+    # Try Python-based foundation check first
+    if [ -f "$REPO_ROOT/scratch/check_active_foundation.py" ]; then
+        echo "[HEALTH] Using scratch/check_active_foundation.py"
+        local output
+        output=$(PYTHONUNBUFFERED=1 "$PY" -u "$REPO_ROOT/scratch/check_active_foundation.py" 2>&1) || true
+        echo "$output"
 
-    # Parse key metrics — if any parse fails, default to "unknown" (will skip check)
-    local state_count
-    state_count=$(echo "$output" | grep -oP 'Active v2 state count:\s*\K[0-9]+' 2>/dev/null || echo "0")
+        # Parse key metrics
+        local state_count
+        state_count=$(echo "$output" | grep -oP 'Active v2 state count:\s*\K[0-9]+' 2>/dev/null || echo "0")
 
-    local oi_aligned
-    oi_aligned=$(echo "$output" | awk '/^oi_alignment_status_15m/,/^$/' | grep -oP 'ALIGNED:\s*\K[0-9]+' 2>/dev/null || echo "0")
+        local oi_aligned
+        oi_aligned=$(echo "$output" | awk '/^oi_alignment_status_15m/,/^$/' | grep -oP 'ALIGNED:\s*\K[0-9]+' 2>/dev/null || echo "0")
 
-    local dq_fresh
-    dq_fresh=$(echo "$output" | awk '/^data_quality_status_15m/,/^$/' | grep -oP 'FRESH:\s*\K[0-9]+' 2>/dev/null || echo "0")
+        local dq_fresh
+        dq_fresh=$(echo "$output" | awk '/^data_quality_status_15m/,/^$/' | grep -oP 'FRESH:\s*\K[0-9]+' 2>/dev/null || echo "0")
 
-    local fallback_none
-    fallback_none=$(echo "$output" | awk '/^fallback_fields_15m/,/^$/' | grep -oP 'NONE:\s*\K[0-9]+' 2>/dev/null || echo "0")
+        local fallback_none
+        fallback_none=$(echo "$output" | awk '/^fallback_fields_15m/,/^$/' | grep -oP 'NONE:\s*\K[0-9]+' 2>/dev/null || echo "0")
 
-    echo ""
-    echo "[HEALTH] state_count=$state_count oi_aligned=$oi_aligned dq_fresh=$dq_fresh fallback_none=$fallback_none"
+        echo ""
+        echo "[HEALTH] state_count=$state_count oi_aligned=$oi_aligned dq_fresh=$dq_fresh fallback_none=$fallback_none"
 
-    # Health rules:
-    #   - Active v2 state count >= 120
-    #   - OI ALIGNED/True >= 115
-    #   - data_quality_status FRESH >= 115
-    #   - fallback NONE == 120
-    # If any metric is "0" (parse failure or genuinely zero), warn but allow
-    local healthy=true
-    local reasons=""
+        local healthy=true
+        local reasons=""
+        if [ "$state_count" -lt 120 ] 2>/dev/null; then
+            reasons="${reasons} state_count=${state_count}<120"
+            healthy=false
+        fi
+        if [ "$oi_aligned" -lt 115 ] 2>/dev/null; then
+            reasons="${reasons} oi_aligned=${oi_aligned}<115"
+            echo "[HEALTH] WARNING: OI aligned count below threshold (${oi_aligned}<115) — running anyway"
+        fi
+        if [ "$dq_fresh" -lt 115 ] 2>/dev/null; then
+            reasons="${reasons} dq_fresh=${dq_fresh}<115"
+            healthy=false
+        fi
+        if [ "$fallback_none" -lt 120 ] 2>/dev/null; then
+            reasons="${reasons} fallback_none=${fallback_none}<120"
+            healthy=false
+        fi
 
-    if [ "$state_count" -lt 120 ] 2>/dev/null; then
-        reasons="${reasons} state_count=${state_count}<120"
-        healthy=false
-    fi
-
-    if [ "$oi_aligned" -lt 115 ] 2>/dev/null; then
-        reasons="${reasons} oi_aligned=${oi_aligned}<115"
-        # OI alignment can be low in early buckets — warn but don't block
-        echo "[HEALTH] WARNING: OI aligned count below threshold (${oi_aligned}<115) — running anyway"
-    fi
-
-    if [ "$dq_fresh" -lt 115 ] 2>/dev/null; then
-        reasons="${reasons} dq_fresh=${dq_fresh}<115"
-        healthy=false
-    fi
-
-    if [ "$fallback_none" -lt 120 ] 2>/dev/null; then
-        reasons="${reasons} fallback_none=${fallback_none}<120"
-        healthy=false
-    fi
-
-    if [ "$healthy" = true ]; then
-        echo "[HEALTH] PASS — foundation healthy"
+        if [ "$healthy" = true ]; then
+            echo "[HEALTH] PASS — foundation healthy"
+        else
+            echo "[HEALTH] WARN — foundation below threshold:${reasons}"
+            echo "[HEALTH] Running monitor anyway (observability mode)"
+        fi
         return 0
-    else
-        echo "[HEALTH] WARN — foundation below threshold:${reasons}"
-        echo "[HEALTH] Running monitor anyway (observability mode)"
-        return 0  # Still run — we want data even if not perfect
     fi
+
+    # Fallback: direct DB health check via psql or Python
+    echo "[HEALTH] scratch/check_active_foundation.py not found — using DB fallback"
+
+    if command -v psql &>/dev/null; then
+        echo "[HEALTH] Using psql fallback"
+        local db_name="${FLOWSCOPE_DB_NAME:-flowscope}"
+        local db_user="${FLOWSCOPE_DB_USER:-flowdb_user}"
+
+        # Count active 15m states updated in last 10 minutes
+        local state_count
+        state_count=$(psql -U "$db_user" -d "$db_name" -t -A -c \
+            "SELECT COUNT(*) FROM latest_asset_states
+             WHERE timeframe = '15m'
+               AND updated_at > NOW() - INTERVAL '10 minutes';" 2>/dev/null || echo "0")
+        state_count=$(echo "$state_count" | tr -d '[:space:]')
+
+        # OI alignment distribution from latest snapshot flow_metrics
+        local oi_summary
+        oi_summary=$(psql -U "$db_user" -d "$db_name" -t -A -c \
+            "SELECT
+                COUNT(*) FILTER (WHERE snapshot->'flow_metrics'->>'oi_alignment_status_15m' = 'ALIGNED') AS aligned,
+                COUNT(*) FILTER (WHERE snapshot->'flow_metrics'->>'data_quality_status_15m' = 'FRESH') AS fresh,
+                COUNT(*) AS total
+             FROM latest_asset_states
+             WHERE timeframe = '15m'
+               AND updated_at > NOW() - INTERVAL '10 minutes';" 2>/dev/null || echo "0|0|0")
+
+        local oi_aligned fresh_count total_count
+        oi_aligned=$(echo "$oi_summary" | cut -d'|' -f1 | tr -d '[:space:]')
+        fresh_count=$(echo "$oi_summary" | cut -d'|' -f2 | tr -d '[:space:]')
+        total_count=$(echo "$oi_summary" | cut -d'|' -f3 | tr -d '[:space:]')
+
+        echo "[HEALTH] DB fallback: state_count=$state_count oi_aligned=${oi_aligned:-0} fresh=${fresh_count:-0} total=${total_count:-0}"
+
+        if [ "${state_count:-0}" -ge 100 ] 2>/dev/null; then
+            echo "[HEALTH] PASS — DB has active states"
+        else
+            echo "[HEALTH] WARN — Low active state count: ${state_count:-0}"
+            echo "[HEALTH] Running monitor anyway (observability mode)"
+        fi
+        return 0
+    fi
+
+    # Final fallback: Python inline DB check
+    echo "[HEALTH] No psql available — using Python inline DB check"
+    PYTHONUNBUFFERED=1 "$PY" -u -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT')
+try:
+    import asyncio
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import select, func
+    from backend.config import get_settings
+    from backend.database import DatabaseManager
+    from backend.models import LatestAssetState
+
+    async def check():
+        db = DatabaseManager(get_settings())
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+        async with db.session_factory() as session:
+            result = await session.execute(
+                select(func.count()).select_from(LatestAssetState)
+                .where(LatestAssetState.timeframe == '15m')
+                .where(LatestAssetState.updated_at > cutoff)
+            )
+            count = result.scalar() or 0
+            print(f'[HEALTH] Active 15m states: {count}')
+            if count >= 100:
+                print('[HEALTH] PASS')
+            else:
+                print(f'[HEALTH] WARN — Low active state count: {count}')
+    asyncio.run(check())
+except Exception as e:
+    print(f'[HEALTH] ERROR — {e}')
+    print('[HEALTH] Running monitor anyway')
+" 2>&1 || true
+    return 0
 }
 
 # --- Main loop ---
@@ -144,7 +236,7 @@ for ((cycle=1; cycle<=TOTAL_CYCLES; cycle++)); do
     echo "[CYCLE $cycle] Running forward shadow monitor..." | tee -a "$MONITOR_LOG"
     {
         echo "--- Monitor Run @ $cycle_start ---"
-        PYTHONUNBUFFERED=1 python -u "$REPO_ROOT/scripts/forward_shadow_monitor.py" 2>&1
+        PYTHONUNBUFFERED=1 "$PY" -u "$REPO_ROOT/scripts/forward_shadow_monitor.py" 2>&1
         echo ""
     } >> "$MONITOR_LOG" 2>&1 || {
         echo "[CYCLE $cycle] WARNING: Monitor run failed (exit $?)" | tee -a "$MONITOR_LOG"
@@ -155,7 +247,7 @@ for ((cycle=1; cycle<=TOTAL_CYCLES; cycle++)); do
         echo "[CYCLE $cycle] Running outcome tracker..." | tee -a "$OUTCOME_LOG"
         {
             echo "--- Outcome Tracker @ $cycle_start ---"
-            PYTHONUNBUFFERED=1 python -u "$REPO_ROOT/scripts/forward_shadow_outcome_tracker.py" 2>&1
+            PYTHONUNBUFFERED=1 "$PY" -u "$REPO_ROOT/scripts/forward_shadow_outcome_tracker.py" 2>&1
             echo ""
         } >> "$OUTCOME_LOG" 2>&1 || {
             echo "[CYCLE $cycle] WARNING: Outcome tracker failed (exit $?)" | tee -a "$OUTCOME_LOG"

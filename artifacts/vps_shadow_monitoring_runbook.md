@@ -8,37 +8,55 @@ This deployment collects forward-shadow observations and outcome tracking data o
 
 **CAUTION: This is an observability/validation deployment. Do NOT enable live trading, semantic gate enforcement, or threshold changes on VPS.**
 
-## 2. VPS Setup Commands
+## 2. VPS Environment
+
+| Item | Value |
+|---|---|
+| DB name | `flowscope` |
+| DB user | `flowdb_user` |
+| Backend venv | `/var/www/flowscope/backend/venv/bin/python` |
+| Backend PM2 | Uses `backend/venv/bin/uvicorn` |
+| Python alias | VPS has `python3` only — scripts auto-detect |
+| Repo root | `/var/www/flowscope` |
+
+## 3. VPS Setup Commands
 
 ```bash
 # 1. Pull latest code
-cd /path/to/flowscope
+cd /var/www/flowscope
 git pull origin main
 
-# 2. Activate virtual environment
-source venv/bin/activate
-# or: source .venv/bin/activate
+# 2. Install dependencies (uses backend venv)
+backend/venv/bin/pip install -r backend/requirements.txt
 
-# 3. Install dependencies if needed
-pip install -r requirements.txt
+# NOTE: tabulate is required by pandas.to_markdown() used in the monitor.
+# It is now included in backend/requirements.txt.
+
+# 3. Run DB migration if needed (idempotent, safe to re-run)
+sudo -u postgres psql -d flowscope -f scripts/migrations/vps_market_data_buckets_v2_columns.sql
 
 # 4. Verify .env is configured
 cat .env | head -5  # should have DATABASE_URL etc.
 
-# 5. Ensure backend is running separately (in another tmux session)
-# The shadow monitor reads from the database — backend must be ingesting data.
-tmux new -s flowscope-backend
-uvicorn backend.main:app --host 0.0.0.0 --port 8000
-# CTRL+B then D to detach
+# 5. Ensure backend is running (check PM2 or start manually)
+pm2 status
+# If backend is not running:
+cd /var/www/flowscope/backend
+pm2 start "venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000" --name flowscope-backend
+cd /var/www/flowscope
+
+# 6. If frontend is inaccessible, restart and ensure port 3000 is listening
+pm2 restart flowscope-frontend || true
+ss -tlnp | grep 3000
 ```
 
-## 3. Pre-Flight Validation
+## 4. Pre-Flight Validation
 
 Run these commands BEFORE starting 24h monitoring:
 
 ```bash
-# Syntax check
-python -m py_compile backend/config.py \
+# Syntax check (using backend venv python)
+backend/venv/bin/python -m py_compile backend/config.py \
     backend/schemas.py \
     backend/services/signal_service.py \
     backend/services/timeframe_aggregator.py \
@@ -47,7 +65,7 @@ python -m py_compile backend/config.py \
     scripts/forward_shadow_outcome_tracker.py
 
 # Test suite
-python -m pytest \
+backend/venv/bin/python -m pytest \
     tests/test_observability_no_behavior_change.py \
     tests/test_semantic_readiness_gate.py \
     tests/test_market_relative_context.py \
@@ -59,16 +77,16 @@ python -m pytest \
     tests/test_forward_shadow_registry_persistence.py \
     -q
 
-# Quick foundation check
-python scratch/check_active_foundation.py
+# Quick foundation check (if available)
+backend/venv/bin/python scratch/check_active_foundation.py 2>/dev/null || echo "Foundation check script not available on VPS — OK"
 
 # Quick monitor smoke test
-PYTHONUNBUFFERED=1 python -u scripts/forward_shadow_monitor.py
+PYTHONUNBUFFERED=1 backend/venv/bin/python -u scripts/forward_shadow_monitor.py
 ```
 
 All tests must pass before starting the 24h run.
 
-## 4. Running with tmux
+## 5. Running with tmux
 
 ```bash
 # Create a dedicated tmux session
@@ -88,7 +106,15 @@ tmux attach -t flowscope-shadow
 tmux ls
 ```
 
-## 5. Checking Status
+### Manual Monitor Fallback
+
+If the runner script has issues, run the monitor directly:
+
+```bash
+PYTHONUNBUFFERED=1 /var/www/flowscope/backend/venv/bin/python -u scripts/forward_shadow_monitor.py
+```
+
+## 6. Checking Status
 
 ```bash
 # Quick status check (run anytime)
@@ -103,7 +129,7 @@ tail -30 logs/vps_outcome_tracker_24h.log
 wc -l artifacts/forward_shadow_observations_registry.csv
 ```
 
-## 6. Files to Collect After 24h
+## 7. Files to Collect After 24h
 
 | File | Description |
 |---|---|
@@ -116,14 +142,14 @@ wc -l artifacts/forward_shadow_observations_registry.csv
 
 ```bash
 # Download via scp (from local machine)
-scp user@vps:/path/to/flowscope/artifacts/forward_shadow_observations_registry.csv ./
-scp user@vps:/path/to/flowscope/artifacts/forward_shadow_outcomes.csv ./
-scp user@vps:/path/to/flowscope/artifacts/forward_shadow_outcome_summary.md ./
-scp user@vps:/path/to/flowscope/logs/vps_shadow_monitoring_24h.log ./
-scp user@vps:/path/to/flowscope/logs/vps_outcome_tracker_24h.log ./
+scp user@vps:/var/www/flowscope/artifacts/forward_shadow_observations_registry.csv ./
+scp user@vps:/var/www/flowscope/artifacts/forward_shadow_outcomes.csv ./
+scp user@vps:/var/www/flowscope/artifacts/forward_shadow_outcome_summary.md ./
+scp user@vps:/var/www/flowscope/logs/vps_shadow_monitoring_24h.log ./
+scp user@vps:/var/www/flowscope/logs/vps_outcome_tracker_24h.log ./
 ```
 
-## 7. What Good Results Look Like
+## 8. What Good Results Look Like
 
 | Metric | Good | Excellent |
 |---|---|---|
@@ -140,18 +166,42 @@ scp user@vps:/path/to/flowscope/logs/vps_outcome_tracker_24h.log ./
 - **1h-4h**: `after_1h_return` populates, partial outcomes appear
 - **4h+**: COMPLETE outcomes with full MFE/MAE/outcome labels
 
-## 8. What Bad Results Mean
+## 9. What Bad Results Mean
 
 | Symptom | Likely Cause | Action |
 |---|---|---|
-| Registry stays near 0 | No continuation candidates, or backend not ingesting | Check backend is running, check `check_active_foundation.py` |
-| All DATA_BLOCKED | OI/foundation issue, data staleness | Check OI alignment, foundation version, backend ingestion |
+| Registry stays near 0 | No continuation candidates, or backend not ingesting | Check backend is running, check `pm2 status` |
+| All DATA_BLOCKED | OI/foundation issue, data staleness | Check OI alignment, run migration if needed |
 | All UNKNOWN_OUTCOME after many hours | Future bucket lookup issue | Check DB has 15m market_data_buckets, check timestamps |
 | Many BAD_WAIT / BAD_AVOID / MISSED_MOVE | System may be too conservative | Collect data for analysis — do NOT tune on VPS |
 | Many GOOD_WAIT / GOOD_AVOID / CHOP_CONFIRMED | System correctly filtering noise | Good signal — collect for validation |
 | `semantic_gate_live_effect` != `none_when_disabled` | Gate was accidentally enabled | **STOP** — verify Settings, ensure gate is disabled |
+| `ModuleNotFoundError: tabulate` | Missing dependency | Run: `backend/venv/bin/pip install tabulate` |
 
-## 9. Hard Rules
+## 10. DB Migration Reference
+
+The v2 migration adds these columns to `market_data_buckets`:
+
+| Column | Type | Default |
+|---|---|---|
+| `foundation_version` | VARCHAR(32) | `v2_option_a` |
+| `bucket_is_closed` | BOOLEAN | `FALSE` |
+| `bucket_completion_pct` | DOUBLE PRECISION | `0.0` |
+| `oi_open_timestamp` | TIMESTAMP WITH TIME ZONE | — |
+| `oi_close_timestamp` | TIMESTAMP WITH TIME ZONE | — |
+| `oi_open_age` | DOUBLE PRECISION | — |
+| `oi_close_age` | DOUBLE PRECISION | — |
+| `oi_alignment_status` | VARCHAR(32) | `MISSING` |
+| `oi_delta_reliable` | BOOLEAN | `FALSE` |
+
+Run migration:
+```bash
+sudo -u postgres psql -d flowscope -f scripts/migrations/vps_market_data_buckets_v2_columns.sql
+```
+
+The migration is idempotent — safe to run multiple times.
+
+## 11. Hard Rules
 
 **STRICTLY PROHIBITED on VPS during this deployment:**
 

@@ -10,6 +10,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || { echo "FATAL: Cannot cd to repo root"; exit 1; }
 
+# --- Auto-detect Python ---
+detect_python() {
+    local candidates=(
+        "$REPO_ROOT/backend/venv/bin/python"
+        "$REPO_ROOT/venv/bin/python"
+        "$REPO_ROOT/.venv/bin/python"
+    )
+    for candidate in "${candidates[@]}"; do
+        if [ -x "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    if command -v python3 &>/dev/null; then echo "python3"; return 0; fi
+    if command -v python &>/dev/null; then echo "python"; return 0; fi
+    echo ""
+    return 1
+}
+
+PY="$(detect_python)"
+
 echo "============================================================"
 echo "FLOWSCOPE VPS SHADOW MONITORING STATUS"
 echo "============================================================"
@@ -19,6 +40,7 @@ echo ""
 echo "=== System ==="
 echo "Date UTC:    $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 echo "Repo root:   $REPO_ROOT"
+echo "Python:      ${PY:-not found}"
 
 # Git commit
 if command -v git &>/dev/null && [ -d .git ]; then
@@ -28,7 +50,17 @@ else
     echo "Git:         not available"
 fi
 
-# Backend status
+# PM2 status
+echo ""
+echo "=== Process Manager ==="
+if command -v pm2 &>/dev/null; then
+    echo "PM2 processes:"
+    pm2 list 2>/dev/null | head -20 || echo "  (pm2 list failed)"
+else
+    echo "PM2:         not available"
+fi
+
+# Backend HTTP status
 echo ""
 echo "=== Backend ==="
 if command -v curl &>/dev/null; then
@@ -101,7 +133,10 @@ fi
 echo ""
 echo "=== Distributions ==="
 
-python3 - <<'PYEOF' 2>/dev/null || python - <<'PYEOF' 2>/dev/null || echo "(Python/pandas not available for distributions)"
+if [ -z "$PY" ]; then
+    echo "(No Python found — skipping distributions)"
+else
+    "$PY" - <<'PYEOF' 2>&1 || echo "(Python/pandas error — skipping distributions)"
 import sys
 from pathlib import Path
 
@@ -151,6 +186,7 @@ if registry_path.exists():
 else:
     print("\n--- Registry: file not found ---")
 PYEOF
+fi
 
 echo ""
 echo "============================================================"
