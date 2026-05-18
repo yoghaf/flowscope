@@ -529,6 +529,71 @@ def evaluate_observations(
     return pd.DataFrame(rows, columns=OUTCOME_COLUMNS)
 
 
+def _summary_series(df: pd.DataFrame, column: str, default: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series([default] * len(df), index=df.index, dtype="object")
+    return df[column].fillna(default).replace("", default)
+
+
+def _numeric_summary_series(df: pd.DataFrame, column: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series([pd.NA] * len(df), index=df.index)
+    return pd.to_numeric(df[column], errors="coerce")
+
+
+def _write_markdown_table(handle: Any, table: pd.DataFrame | pd.Series, *, empty_note: str = "No data.") -> None:
+    if table.empty:
+        handle.write(empty_note)
+    else:
+        handle.write(table.to_markdown())
+    handle.write("\n\n")
+
+
+def _write_missing_column_note(handle: Any, column: str) -> None:
+    handle.write(f"Column `{column}` is not available in this outcomes file.\n\n")
+
+
+def _grouped_outcome_table(df: pd.DataFrame, group_column: str) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+    labels = _summary_series(df, "outcome_label", "UNKNOWN_OUTCOME")
+    groups = _summary_series(df, group_column, "UNKNOWN")
+    table = pd.crosstab(groups, labels)
+    if table.empty:
+        return table
+    table.insert(0, "n", table.sum(axis=1))
+    table["sample_note"] = table["n"].apply(lambda value: "LOW_SAMPLE_WEAK_EVIDENCE" if int(value) < 5 else "")
+    return table.sort_values(["n"], ascending=False)
+
+
+def _case_review_table(outcomes: pd.DataFrame, labels: list[str]) -> pd.DataFrame:
+    if outcomes.empty or "outcome_label" not in outcomes.columns:
+        return pd.DataFrame()
+    subset = outcomes[_summary_series(outcomes, "outcome_label", "UNKNOWN_OUTCOME").isin(labels)].copy()
+    if subset.empty:
+        return pd.DataFrame()
+
+    subset["_mfe_4h_sort"] = _numeric_summary_series(subset, "mfe_4h").abs()
+    subset["_after_4h_sort"] = _numeric_summary_series(subset, "after_4h_return").abs()
+    subset = subset.sort_values(["_mfe_4h_sort", "_after_4h_sort"], ascending=False, na_position="last")
+    columns = [
+        "symbol",
+        "timeframe",
+        "timestamp",
+        "layer5_direction_bias",
+        "v2balanced_semantic_readiness",
+        "market_relative_status_15m",
+        "entry_location_phase_15m",
+        "outcome_label",
+        "after_1h_return",
+        "after_4h_return",
+        "mfe_4h",
+        "mae_4h",
+    ]
+    available_columns = [column for column in columns if column in subset.columns]
+    return subset[available_columns].head(10)
+
+
 def write_summary(outcomes: pd.DataFrame, path: Path = SUMMARY_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
@@ -538,43 +603,62 @@ def write_summary(outcomes: pd.DataFrame, path: Path = SUMMARY_PATH) -> None:
             handle.write("No forward shadow outcomes evaluated yet.\n")
             return
 
+        handle.write(f"- **Total rows**: {len(outcomes)}\n")
         handle.write(f"- **Total observations evaluated**: {len(outcomes)}\n")
-        status_counts = outcomes["outcome_status"].fillna("UNKNOWN").value_counts()
+        status_counts = _summary_series(outcomes, "outcome_status", "UNKNOWN").value_counts()
         complete_count = int(status_counts.get("COMPLETE", 0))
         pending_count = int(status_counts.get("PENDING", 0))
+        unknown_count = int(_summary_series(outcomes, "outcome_label", "UNKNOWN_OUTCOME").eq("UNKNOWN_OUTCOME").sum())
+        completion_rate = (complete_count / len(outcomes) * 100.0) if len(outcomes) else 0.0
         handle.write(f"- **Complete**: {complete_count}\n")
-        handle.write(f"- **Pending**: {pending_count}\n\n")
+        handle.write(f"- **Pending**: {pending_count}\n")
+        handle.write(f"- **UNKNOWN_OUTCOME**: {unknown_count}\n")
+        handle.write(f"- **Completion rate**: {completion_rate:.1f}%\n\n")
+
+        handle.write("## Sample-Size Warnings\n")
+        if complete_count < 30:
+            handle.write(
+                f"- COMPLETE sample is still too small for Phase 9 decisions: {complete_count}/30 minimum review target.\n"
+            )
+        else:
+            handle.write("- COMPLETE sample has reached the minimum review target for early Phase 9 analysis.\n")
+        handle.write("- Grouped rows with `LOW_SAMPLE_WEAK_EVIDENCE` have n < 5 and should not drive decisions alone.\n\n")
+
+        completed = outcomes[_summary_series(outcomes, "outcome_status", "UNKNOWN").eq("COMPLETE")].copy()
+        handle.write("## Completed Outcome Label Distribution\n")
+        if completed.empty:
+            handle.write("No COMPLETE outcomes yet.\n\n")
+        else:
+            _write_markdown_table(
+                handle,
+                _summary_series(completed, "outcome_label", "UNKNOWN_OUTCOME").value_counts(),
+            )
+
+        completed_groups = [
+            ("Completed Outcomes by Semantic Readiness", "v2balanced_semantic_readiness"),
+            ("Completed Outcomes by Entry Location Phase 15m", "entry_location_phase_15m"),
+            ("Completed Outcomes by Entry Location Quality 15m", "entry_location_quality_15m"),
+            ("Completed Outcomes by Layer5 Direction", "layer5_direction_bias"),
+            ("Completed Outcomes by Market-Relative Status 15m", "market_relative_status_15m"),
+            ("Completed Outcomes by Layer5 Watch Status", "layer5_watch_status"),
+        ]
+        for title, column in completed_groups:
+            handle.write(f"## {title}\n")
+            if column not in outcomes.columns:
+                _write_missing_column_note(handle, column)
+                continue
+            _write_markdown_table(
+                handle,
+                _grouped_outcome_table(completed, column),
+                empty_note="No COMPLETE outcomes yet.",
+            )
 
         sections = [
-            ("Outcome Label Distribution", outcomes["outcome_label"].fillna("UNKNOWN_OUTCOME").value_counts()),
-            (
-                "Outcome by Semantic Readiness",
-                pd.crosstab(
-                    outcomes["v2balanced_semantic_readiness"].fillna("NO_SETUP").replace("", "NO_SETUP"),
-                    outcomes["outcome_label"].fillna("UNKNOWN_OUTCOME").replace("", "UNKNOWN_OUTCOME"),
-                ),
-            ),
-            (
-                "Outcome by Layer5 Direction",
-                pd.crosstab(
-                    outcomes["layer5_direction_bias"].fillna("NO_DIRECTION").replace("", "NO_DIRECTION"),
-                    outcomes["outcome_label"].fillna("UNKNOWN_OUTCOME").replace("", "UNKNOWN_OUTCOME"),
-                ),
-            ),
-            (
-                "Outcome by Market-Relative Status 15m",
-                pd.crosstab(
-                    outcomes["market_relative_status_15m"].fillna("UNKNOWN_MARKET_CONTEXT").replace("", "UNKNOWN_MARKET_CONTEXT"),
-                    outcomes["outcome_label"].fillna("UNKNOWN_OUTCOME").replace("", "UNKNOWN_OUTCOME"),
-                ),
-            ),
-            (
-                "Outcome by Entry Location Phase 15m",
-                pd.crosstab(
-                    outcomes["entry_location_phase_15m"].fillna("UNKNOWN_LOCATION").replace("", "UNKNOWN_LOCATION"),
-                    outcomes["outcome_label"].fillna("UNKNOWN_OUTCOME").replace("", "UNKNOWN_OUTCOME"),
-                ),
-            ),
+            ("Outcome Label Distribution", _summary_series(outcomes, "outcome_label", "UNKNOWN_OUTCOME").value_counts()),
+            ("Outcome by Semantic Readiness", _grouped_outcome_table(outcomes, "v2balanced_semantic_readiness")),
+            ("Outcome by Layer5 Direction", _grouped_outcome_table(outcomes, "layer5_direction_bias")),
+            ("Outcome by Market-Relative Status 15m", _grouped_outcome_table(outcomes, "market_relative_status_15m")),
+            ("Outcome by Entry Location Phase 15m", _grouped_outcome_table(outcomes, "entry_location_phase_15m")),
         ]
         for title, table in sections:
             handle.write(f"## {title}\n")
@@ -595,14 +679,16 @@ def write_summary(outcomes: pd.DataFrame, path: Path = SUMMARY_PATH) -> None:
             "outcome_reason",
         ]
         examples = [
+            ("Top MISSED_MOVE Cases", ["MISSED_MOVE"]),
             ("Top GOOD_WAIT Examples", ["GOOD_WAIT"]),
             ("Top BAD_WAIT Examples", ["BAD_WAIT"]),
             ("Top GOOD_AVOID Examples", ["GOOD_AVOID"]),
             ("Top BAD_AVOID Examples", ["BAD_AVOID"]),
+            ("Top FALSE_WATCH Cases", ["FALSE_WATCH"]),
             ("Legacy Ready Protected Examples", ["LEGACY_READY_PROTECTED", "LEGACY_TRIGGER_PROTECTED"]),
         ]
         for title, labels in examples:
-            subset = outcomes[outcomes["outcome_label"].isin(labels)].copy()
+            subset = outcomes[_summary_series(outcomes, "outcome_label", "UNKNOWN_OUTCOME").isin(labels)].copy()
             handle.write(f"## {title}\n")
             if subset.empty:
                 handle.write("No examples yet.\n\n")
@@ -611,6 +697,21 @@ def write_summary(outcomes: pd.DataFrame, path: Path = SUMMARY_PATH) -> None:
             subset = subset.sort_values("_sort_abs_mfe", ascending=False, na_position="last")
             handle.write(subset[[col for col in example_cols if col in subset.columns]].head(10).to_markdown(index=False))
             handle.write("\n\n")
+
+        review_sections = [
+            ("Review Table: MISSED_MOVE", ["MISSED_MOVE"]),
+            ("Review Table: BAD_WAIT", ["BAD_WAIT"]),
+            ("Review Table: BAD_AVOID", ["BAD_AVOID"]),
+            ("Review Table: FALSE_WATCH", ["FALSE_WATCH"]),
+        ]
+        for title, labels in review_sections:
+            handle.write(f"## {title}\n")
+            table = _case_review_table(outcomes, labels)
+            if table.empty:
+                handle.write("No cases yet.\n\n")
+            else:
+                handle.write(table.to_markdown(index=False))
+                handle.write("\n\n")
 
 
 async def run_tracker() -> None:
