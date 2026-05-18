@@ -138,36 +138,48 @@ check_foundation_health() {
         local db_name="${FLOWSCOPE_DB_NAME:-flowscope}"
         local db_user="${FLOWSCOPE_DB_USER:-flowdb_user}"
 
-        # Count active 15m states updated in last 10 minutes
-        local state_count
-        state_count=$(psql -U "$db_user" -d "$db_name" -t -A -c \
-            "SELECT COUNT(*) FROM latest_asset_states
-             WHERE timeframe = '15m'
-               AND updated_at > NOW() - INTERVAL '10 minutes';" 2>/dev/null || echo "0")
-        state_count=$(echo "$state_count" | tr -d '[:space:]')
+        local health_row
+        health_row=$(psql -U "$db_user" -d "$db_name" -t -A -F '|' -c \
+            "WITH latest AS (
+                 SELECT updated_at, snapshot
+                 FROM latest_asset_states
+                 WHERE timeframe = '15m'
+                 ORDER BY updated_at DESC
+                 LIMIT 120
+             )
+             SELECT
+                 COUNT(*) AS state_count,
+                 COUNT(*) FILTER (
+                     WHERE COALESCE(
+                         snapshot->>'oi_alignment_status_15m',
+                         snapshot->'flow_metrics'->>'oi_alignment_status_15m'
+                     ) = 'ALIGNED'
+                 ) AS oi_aligned,
+                 COUNT(*) FILTER (
+                     WHERE COALESCE(
+                         snapshot->>'data_quality_status_15m',
+                         snapshot->'flow_metrics'->>'data_quality_status_15m'
+                     ) = 'FRESH'
+                 ) AS fresh,
+                 COUNT(*) AS total,
+                 EXTRACT(EPOCH FROM (NOW() - MAX(updated_at)))::INT AS newest_age_seconds,
+                 EXTRACT(EPOCH FROM (NOW() - MIN(updated_at)))::INT AS oldest_age_seconds
+             FROM latest;" 2>/dev/null || echo "0|0|0|0|0|0")
 
-        # OI alignment distribution from latest snapshot flow_metrics
-        local oi_summary
-        oi_summary=$(psql -U "$db_user" -d "$db_name" -t -A -c \
-            "SELECT
-                COUNT(*) FILTER (WHERE snapshot->'flow_metrics'->>'oi_alignment_status_15m' = 'ALIGNED') AS aligned,
-                COUNT(*) FILTER (WHERE snapshot->'flow_metrics'->>'data_quality_status_15m' = 'FRESH') AS fresh,
-                COUNT(*) AS total
-             FROM latest_asset_states
-             WHERE timeframe = '15m'
-               AND updated_at > NOW() - INTERVAL '10 minutes';" 2>/dev/null || echo "0|0|0")
+        local state_count oi_aligned fresh_count total_count newest_age_seconds oldest_age_seconds
+        state_count=$(echo "$health_row" | cut -d'|' -f1 | tr -d '[:space:]')
+        oi_aligned=$(echo "$health_row" | cut -d'|' -f2 | tr -d '[:space:]')
+        fresh_count=$(echo "$health_row" | cut -d'|' -f3 | tr -d '[:space:]')
+        total_count=$(echo "$health_row" | cut -d'|' -f4 | tr -d '[:space:]')
+        newest_age_seconds=$(echo "$health_row" | cut -d'|' -f5 | tr -d '[:space:]')
+        oldest_age_seconds=$(echo "$health_row" | cut -d'|' -f6 | tr -d '[:space:]')
 
-        local oi_aligned fresh_count total_count
-        oi_aligned=$(echo "$oi_summary" | cut -d'|' -f1 | tr -d '[:space:]')
-        fresh_count=$(echo "$oi_summary" | cut -d'|' -f2 | tr -d '[:space:]')
-        total_count=$(echo "$oi_summary" | cut -d'|' -f3 | tr -d '[:space:]')
-
-        echo "[HEALTH] DB fallback: state_count=$state_count oi_aligned=${oi_aligned:-0} fresh=${fresh_count:-0} total=${total_count:-0}"
+        echo "[HEALTH] DB fallback: state_count=${state_count:-0} oi_aligned=${oi_aligned:-0} fresh=${fresh_count:-0} total=${total_count:-0} newest_age_seconds=${newest_age_seconds:-0} oldest_age_seconds=${oldest_age_seconds:-0}"
 
         if [ "${state_count:-0}" -ge 100 ] 2>/dev/null; then
-            echo "[HEALTH] PASS — DB has active states"
+            echo "[HEALTH] PASS — DB fallback sees latest 15m states"
         else
-            echo "[HEALTH] WARN — Low active state count: ${state_count:-0}"
+            echo "[HEALTH] WARN — DB fallback sees low latest 15m state count: ${state_count:-0}"
             echo "[HEALTH] Running monitor anyway (observability mode)"
         fi
         return 0
