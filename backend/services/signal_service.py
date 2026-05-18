@@ -1249,12 +1249,57 @@ class SignalService:
             closed_timeframes=self.closed_timeframes,
             now=now,
         )
-        
+
+        # --- Carry forward market-relative context from previous state ---
+        # build_flow_metrics rebuilds FlowMetrics from scratch with default
+        # market-relative fields (UNKNOWN_MARKET_CONTEXT, sample_size=0, etc.).
+        # When called from the stream tick path for a single symbol, the full
+        # cross-universe _apply_market_relative_context() is not re-run, so
+        # the scanner would serve stale defaults until the next snapshot cycle.
+        # Preserve the previous state's market-relative fields so the scanner
+        # continues to show the last-computed market-relative context.
+        _MARKET_RELATIVE_CARRY_FIELDS = (
+            "btc_return",
+            "eth_return",
+            "top120_median_return",
+            "top120_breadth_positive",
+            "top120_breadth_negative",
+            "top120_breadth_net",
+            "market_return_sample_size",
+            "token_vs_btc_return",
+            "token_vs_eth_return",
+            "token_vs_market_return",
+            "return_percentile",
+            "return_rank",
+            "market_relative_status",
+            "market_relative_reason",
+            "relative_strength_score",
+            "relative_weakness_score",
+            "market_independence_score",
+        )
+        for tf in TIMEFRAME_ORDER:
+            prev_state = self.states_by_timeframe.get(tf, {}).get(symbol)
+            if prev_state is None:
+                continue
+            prev_metrics = prev_state.flow_metrics
+            for base_field in _MARKET_RELATIVE_CARRY_FIELDS:
+                attr = f"{base_field}_{tf}"
+                prev_val = getattr(prev_metrics, attr, None)
+                if prev_val is None:
+                    continue
+                # Only carry forward if the freshly built value is still at
+                # its default (i.e. _apply_market_relative_context has not
+                # run yet for this cycle).
+                current_val = getattr(flow_metrics, attr, None)
+                default_val = flow_metrics.model_fields.get(attr)
+                if default_val is not None and current_val == default_val.default:
+                    setattr(flow_metrics, attr, prev_val)
+
         # --- Data Quality Scoring (D, G) ---
         # Fetch current history point for age/source reference
         hist = self.history.get(symbol)
         latest_point = hist[-1] if hist else None
-        
+
         # Timeframe-aware OI SLA (F)
         oi_sla_map = {
             "15m": 300.0,

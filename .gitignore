@@ -36,3 +36,18 @@ scratch/
 nul
 *.dump
 *.dump.sha256
+
+# Logs
+logs/
+
+# Frontend (explicit paths)
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+
+# Forward shadow generated outputs (per-run, not baselines)
+artifacts/forward_shadow_daily_summary.md
+artifacts/forward_shadow_observations.csv
+artifacts/forward_shadow_observations_registry.csv
+artifacts/forward_shadow_outcomes.csv
+artifacts/forward_shadow_outcome_summary.md

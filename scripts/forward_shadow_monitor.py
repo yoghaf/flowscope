@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import sys
 import warnings
 import pandas as pd
@@ -20,6 +21,105 @@ from backend.services.entry_location_semantics import (
 from sqlalchemy import select, func
 
 ACTIVE_STATE_WINDOW_MINUTES = 10
+REGISTRY_PATH = REPO_ROOT / "artifacts" / "forward_shadow_observations_registry.csv"
+
+
+def _observation_registry_key(row: dict) -> str:
+    """Build a semantic dedup key matching the outcome tracker's observation_key()."""
+    return "|".join([
+        str(_clean_value(row.get("symbol"), "")).upper(),
+        str(_clean_value(row.get("timeframe"), "15m")),
+        str(_clean_value(row.get("timestamp"), "")),
+        str(_clean_value(row.get("layer5_watch_status"), "NONE")),
+        str(_clean_value(row.get("layer5_direction_bias"), "NO_DIRECTION")),
+        str(_clean_value(row.get("v2balanced_semantic_readiness"), "NO_SETUP")),
+        str(_clean_value(row.get("market_relative_status_15m"), "UNKNOWN_MARKET_CONTEXT")),
+        str(_clean_value(
+            row.get("entry_location_phase_15m") or row.get("entry_location_label_15m"),
+            "UNKNOWN_LOCATION",
+        )),
+    ])
+
+
+def _observation_registry_id(row: dict) -> str:
+    return hashlib.sha256(_observation_registry_key(row).encode("utf-8")).hexdigest()
+
+
+def _append_to_registry(
+    current_run_df: pd.DataFrame,
+    registry_path: Path = REGISTRY_PATH,
+) -> dict:
+    """Append unique observations from the current run to the append-only registry.
+
+    Returns summary dict with registry_total_observations,
+    new_registry_rows_added, duplicate_registry_rows_skipped.
+    """
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load existing registry
+    if registry_path.exists() and registry_path.stat().st_size > 0:
+        try:
+            existing = pd.read_csv(registry_path)
+        except Exception:
+            existing = pd.DataFrame()
+    else:
+        existing = pd.DataFrame()
+
+    # Compute observation IDs for current run
+    if current_run_df.empty:
+        return {
+            "registry_total_observations": len(existing),
+            "new_registry_rows_added": 0,
+            "duplicate_registry_rows_skipped": 0,
+        }
+
+    current_run = current_run_df.copy()
+    current_run["observation_id"] = current_run.apply(
+        lambda r: _observation_registry_id(r.to_dict()), axis=1
+    )
+
+    if existing.empty:
+        # First run — write everything
+        _write_csv_utf8(current_run, registry_path)
+        return {
+            "registry_total_observations": len(current_run),
+            "new_registry_rows_added": len(current_run),
+            "duplicate_registry_rows_skipped": 0,
+        }
+
+    # Compute existing IDs
+    if "observation_id" not in existing.columns:
+        existing["observation_id"] = existing.apply(
+            lambda r: _observation_registry_id(r.to_dict()), axis=1
+        )
+
+    existing_ids = set(existing["observation_id"].dropna())
+    new_mask = ~current_run["observation_id"].isin(existing_ids)
+    new_rows = current_run[new_mask]
+    duplicates_skipped = int((~new_mask).sum())
+
+    if not new_rows.empty:
+        # Align columns before appending
+        for col in new_rows.columns:
+            if col not in existing.columns:
+                existing[col] = None
+        for col in existing.columns:
+            if col not in new_rows.columns:
+                new_rows = new_rows.copy()
+                new_rows[col] = None
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            merged = pd.concat([existing, new_rows[existing.columns]], ignore_index=True)
+        _write_csv_utf8(merged, registry_path)
+        total = len(merged)
+    else:
+        total = len(existing)
+
+    return {
+        "registry_total_observations": total,
+        "new_registry_rows_added": len(new_rows),
+        "duplicate_registry_rows_skipped": duplicates_skipped,
+    }
 LAYER5_HARD_RISK_REASONS = {
     "oi_delta_unreliable",
     "exhaustion_oi_climax",
@@ -1011,15 +1111,22 @@ async def run_forward_monitor():
             df.at[idx, f"entry_location_reason_{entry_tf}"] = reason
             df.at[idx, f"opposite_signal_watch_{entry_tf}"] = opposite_watch
     _write_csv_utf8(df, csv_path)
+
+    # --- Append to persistent registry ---
+    registry_summary = _append_to_registry(df)
     
     current_count = len(candidates)
     total_logged = len(df)
     
     print(f"Current Run Observations: {current_count}")
     print(f"Total Logged Observations: {total_logged}")
+    print(f"Registry Total Observations: {registry_summary['registry_total_observations']}")
+    print(f"New Registry Rows Added: {registry_summary['new_registry_rows_added']}")
+    print(f"Duplicate Registry Rows Skipped: {registry_summary['duplicate_registry_rows_skipped']}")
     print(f"Active States Scanned: {active_states_scanned}")
     print(f"Stale States Ignored: {stale_states_ignored}")
     print(f"Output CSV Path:      {csv_path.absolute()}")
+    print(f"Registry CSV Path:    {REGISTRY_PATH.absolute()}")
 
     # 4. Generate Summary (Always)
     with _open_utf8_writer(summary_path) as f:
@@ -1040,7 +1147,10 @@ async def run_forward_monitor():
         f.write(f"- **Active States Scanned**: {active_states_scanned}\n")
         f.write(f"- **Stale States Ignored**: {stale_states_ignored}\n")
         f.write(f"- **Current Run Observations**: {current_count}\n")
-        f.write(f"- **Total Logged Observations**: {total_logged}\n\n")
+        f.write(f"- **Total Logged Observations**: {total_logged}\n")
+        f.write(f"- **Registry Total Observations**: {registry_summary['registry_total_observations']}\n")
+        f.write(f"- **New Registry Rows Added**: {registry_summary['new_registry_rows_added']}\n")
+        f.write(f"- **Duplicate Registry Rows Skipped**: {registry_summary['duplicate_registry_rows_skipped']}\n\n")
 
         active_oi_df = pd.DataFrame(active_oi_rows)
         f.write("## OI Boundary Distribution\n")

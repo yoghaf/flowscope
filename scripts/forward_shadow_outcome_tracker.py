@@ -22,6 +22,7 @@ from backend.models import MarketDataBucket
 
 
 OBSERVATIONS_PATH = REPO_ROOT / "artifacts" / "forward_shadow_observations.csv"
+REGISTRY_PATH = REPO_ROOT / "artifacts" / "forward_shadow_observations_registry.csv"
 OUTCOMES_PATH = REPO_ROOT / "artifacts" / "forward_shadow_outcomes.csv"
 SUMMARY_PATH = REPO_ROOT / "artifacts" / "forward_shadow_outcome_summary.md"
 TRACKING_TIMEFRAME = "15m"
@@ -491,10 +492,19 @@ async def load_market_buckets(observations: pd.DataFrame) -> dict[str, list[Futu
     return buckets_by_symbol
 
 
-def load_observations(path: Path = OBSERVATIONS_PATH) -> pd.DataFrame:
-    if not path.exists():
-        return pd.DataFrame()
-    return pd.read_csv(path)
+def load_observations(path: Path | None = None) -> pd.DataFrame:
+    """Load observations, preferring the append-only registry when available."""
+    if path is not None:
+        if not path.exists():
+            return pd.DataFrame()
+        return pd.read_csv(path)
+    # Prefer registry (append-only, survives multiple monitor runs)
+    if REGISTRY_PATH.exists() and REGISTRY_PATH.stat().st_size > 0:
+        return pd.read_csv(REGISTRY_PATH)
+    # Fallback to per-run observations CSV
+    if OBSERVATIONS_PATH.exists():
+        return pd.read_csv(OBSERVATIONS_PATH)
+    return pd.DataFrame()
 
 
 def evaluate_observations(
