@@ -74,6 +74,15 @@ OUTCOME_COLUMNS = [
     "scenario_label",
     "scenario_disposition",
     "hard_filter_reasons",
+    # Phase 9 Shadow Taxonomy
+    "phase9_shadow_label",
+    "phase9_shadow_reason",
+    "phase9_entry_candidate_shadow",
+    "phase9_wait_subtype",
+    "phase9_range_subtype",
+    "phase9_late_subtype",
+    "phase9_risk_subtype",
+    "phase9_block_subtype",
 ]
 
 MEANINGFUL_MOVE = 0.015
@@ -435,6 +444,15 @@ def _base_outcome_row(
         "scenario_label",
         "scenario_disposition",
         "hard_filter_reasons",
+        # Phase 9 Shadow Taxonomy
+        "phase9_shadow_label",
+        "phase9_shadow_reason",
+        "phase9_entry_candidate_shadow",
+        "phase9_wait_subtype",
+        "phase9_range_subtype",
+        "phase9_late_subtype",
+        "phase9_risk_subtype",
+        "phase9_block_subtype",
     ]:
         row[column] = _clean_value(observation.get(column))
     return row
@@ -664,6 +682,34 @@ def write_summary(outcomes: pd.DataFrame, path: Path = SUMMARY_PATH) -> None:
             handle.write(f"## {title}\n")
             handle.write(table.to_markdown() if not table.empty else "No data.")
             handle.write("\n\n")
+
+        # --- Phase 9 Shadow Taxonomy Outcome Grouping ---
+        phase9_groups = [
+            ("Outcome by Phase 9 Shadow Label", "phase9_shadow_label"),
+            ("Outcome by Phase 9 Wait Subtype", "phase9_wait_subtype"),
+            ("Outcome by Phase 9 Range Subtype", "phase9_range_subtype"),
+            ("Outcome by Phase 9 Late Subtype", "phase9_late_subtype"),
+            ("Outcome by Phase 9 Risk Subtype", "phase9_risk_subtype"),
+            ("Outcome by Phase 9 Block Subtype", "phase9_block_subtype"),
+        ]
+        for title, column in phase9_groups:
+            handle.write(f"## {title}\n")
+            if column not in outcomes.columns:
+                _write_missing_column_note(handle, column)
+                continue
+            non_null = _summary_series(outcomes, column, "").replace("", pd.NA).dropna()
+            if non_null.empty:
+                handle.write("No data with Phase 9 labels yet.\n\n")
+                continue
+            filtered = outcomes[_summary_series(outcomes, column, "").replace("", pd.NA).notna()].copy()
+            if filtered.empty:
+                handle.write("No data with Phase 9 labels yet.\n\n")
+                continue
+            _write_markdown_table(
+                handle,
+                _grouped_outcome_table(filtered, column),
+                empty_note="No data with Phase 9 labels yet.",
+            )
 
         example_cols = [
             "symbol",

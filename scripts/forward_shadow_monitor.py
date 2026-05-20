@@ -18,6 +18,10 @@ from backend.services.entry_location_semantics import (
     ENTRY_LOCATION_TIMEFRAMES,
     classify_entry_location,
 )
+from backend.services.phase9_shadow_taxonomy import (
+    PHASE9_RESULT_KEYS,
+    classify_phase9_shadow,
+)
 from sqlalchemy import select, func
 
 ACTIVE_STATE_WINDOW_MINUTES = 10
@@ -936,6 +940,9 @@ async def run_forward_monitor():
                         candidate[f"opposite_signal_watch_{entry_tf}"] = (
                             candidate.get(f"opposite_signal_watch_{entry_tf}") or opposite_watch
                         )
+                    # Phase 9 Shadow Taxonomy (observability only)
+                    phase9_result = classify_phase9_shadow(candidate)
+                    candidate.update(phase9_result)
                     candidates.append(candidate)
 
                 if active_symbols:
@@ -1027,7 +1034,11 @@ async def run_forward_monitor():
         "v2balanced_semantic_readiness", "v2balanced_readiness_reason",
         "semantic_gate_enabled", "semantic_gate_shadow_decision",
         "semantic_gate_shadow_reason", "semantic_gate_live_effect",
-        "bucket_is_closed", "bucket_completion_pct", "volume_z_reliable", "oi_delta_z_reliable"
+        "bucket_is_closed", "bucket_completion_pct", "volume_z_reliable", "oi_delta_z_reliable",
+        # Phase 9 Shadow Taxonomy
+        "phase9_shadow_label", "phase9_shadow_reason", "phase9_entry_candidate_shadow",
+        "phase9_wait_subtype", "phase9_range_subtype", "phase9_late_subtype",
+        "phase9_risk_subtype", "phase9_block_subtype",
     ]
     
     if candidates:
@@ -1110,6 +1121,10 @@ async def run_forward_monitor():
             df.at[idx, f"entry_location_quality_{entry_tf}"] = quality
             df.at[idx, f"entry_location_reason_{entry_tf}"] = reason
             df.at[idx, f"opposite_signal_watch_{entry_tf}"] = opposite_watch
+        # Phase 9 Shadow Taxonomy (observability only, second pass)
+        phase9_result = classify_phase9_shadow(df.loc[idx].to_dict())
+        for p9_key in PHASE9_RESULT_KEYS:
+            df.at[idx, p9_key] = phase9_result[p9_key]
     _write_csv_utf8(df, csv_path)
 
     # --- Append to persistent registry ---
@@ -1847,7 +1862,69 @@ async def run_forward_monitor():
             f.write("\n\n")
             
             f.write("## 16. Compression Status\n")
-            f.write(compression_counts.to_markdown() + "\n")
+            f.write(compression_counts.to_markdown() + "\n\n")
+
+            # --- Phase 9 Shadow Taxonomy Summary ---
+            f.write("## 17. Phase 9 Shadow Entry Taxonomy\n")
+            f.write("> [!NOTE]\n")
+            f.write("> Phase 9 labels are **shadow-only** — no live entry behavior is changed.\n\n")
+            if "phase9_shadow_label" in df.columns:
+                p9_label_counts = (
+                    df["phase9_shadow_label"]
+                    .fillna("SHADOW_NO_SETUP")
+                    .replace("", "SHADOW_NO_SETUP")
+                    .value_counts()
+                )
+                f.write("### Shadow Label Distribution\n")
+                f.write(p9_label_counts.to_markdown())
+                f.write("\n\n")
+
+                p9_candidate_count = int(
+                    df["phase9_entry_candidate_shadow"]
+                    .apply(lambda v: str(v).strip().lower() in {"true", "1", "yes"})
+                    .sum()
+                )
+                f.write(f"- **Shadow Entry Candidates**: {p9_candidate_count} / {len(df)}\n\n")
+
+                for subtype_col, subtype_title in [
+                    ("phase9_wait_subtype", "Wait Subtype Distribution"),
+                    ("phase9_range_subtype", "Range Subtype Distribution"),
+                    ("phase9_late_subtype", "Late Subtype Distribution"),
+                    ("phase9_risk_subtype", "Risk Subtype Distribution"),
+                    ("phase9_block_subtype", "Block Subtype Distribution"),
+                ]:
+                    if subtype_col in df.columns:
+                        subtype_series = (
+                            df[subtype_col]
+                            .dropna()
+                            .replace("", pd.NA)
+                            .dropna()
+                        )
+                        if not subtype_series.empty:
+                            f.write(f"### {subtype_title}\n")
+                            f.write(subtype_series.value_counts().to_markdown())
+                            f.write("\n\n")
+
+                # Cross-tab: shadow label by semantic readiness
+                p9_by_readiness = pd.crosstab(
+                    df["v2balanced_semantic_readiness"].fillna("NO_SETUP").replace("", "NO_SETUP"),
+                    df["phase9_shadow_label"].fillna("SHADOW_NO_SETUP").replace("", "SHADOW_NO_SETUP"),
+                )
+                f.write("### Shadow Label by Semantic Readiness\n")
+                f.write(p9_by_readiness.to_markdown())
+                f.write("\n\n")
+
+                # Cross-tab: shadow label by entry location
+                if "entry_location_phase_15m" in df.columns:
+                    p9_by_location = pd.crosstab(
+                        df["entry_location_phase_15m"].fillna("UNKNOWN_LOCATION").replace("", "UNKNOWN_LOCATION"),
+                        df["phase9_shadow_label"].fillna("SHADOW_NO_SETUP").replace("", "SHADOW_NO_SETUP"),
+                    )
+                    f.write("### Shadow Label by Entry Location Phase 15m\n")
+                    f.write(p9_by_location.to_markdown())
+                    f.write("\n\n")
+            else:
+                f.write("Phase 9 shadow taxonomy columns not yet populated.\n\n")
 
 
     print(f"Summary generated at: {summary_path.absolute()}")
