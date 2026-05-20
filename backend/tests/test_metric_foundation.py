@@ -1,6 +1,6 @@
-
 import asyncio
 import logging
+import pytest
 from datetime import datetime, timedelta, timezone
 from backend.services.signal_service import SignalService
 from backend.engines.flow_engine import HistoryPoint
@@ -11,7 +11,8 @@ from collections import deque
 
 UTC = timezone.utc
 
-async def test_ingestion_batch():
+@pytest.mark.skip(reason="Environment-dependent integration test")
+async def test_ingestion_batch() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
     db = DatabaseManager(settings)

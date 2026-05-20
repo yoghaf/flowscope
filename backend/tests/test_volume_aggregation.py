@@ -79,7 +79,7 @@ class TestVolumeAggregation(unittest.TestCase):
             price=60000, volume=100, open_interest=1000, funding_rate=0.0001,
             long_short_ratio=1.0, taker_buy_sell_ratio=1.0,
             spot_volume=0, futures_volume=100,
-            futures_volume_1h=5000.0, # Official 1h volume so far
+            futures_ohlc_1h={"open": 60000.0, "high": 60000.0, "low": 60000.0, "close": 60000.0, "volume": 5000.0}, # Official 1h volume so far
             long_liquidations=0, short_liquidations=0, exchange_count=1
         )
         bucket = TimeframeBucket.from_point(self.symbol, self.tf, p1, None)
@@ -90,7 +90,7 @@ class TestVolumeAggregation(unittest.TestCase):
             price=60000, volume=120, open_interest=1000, funding_rate=0.0001,
             long_short_ratio=1.0, taker_buy_sell_ratio=1.0,
             spot_volume=0, futures_volume=120,
-            futures_volume_1h=5500.0, # Official 1h volume now
+            futures_ohlc_1h={"open": 60000.0, "high": 60000.0, "low": 60000.0, "close": 60000.0, "volume": 5500.0}, # Official 1h volume now
             long_liquidations=0, short_liquidations=0, exchange_count=1
         )
         bucket.apply_point(p2)
@@ -103,7 +103,7 @@ class TestVolumeAggregation(unittest.TestCase):
             price=60000, volume=500, open_interest=1000, funding_rate=0.0001,
             long_short_ratio=1.0, taker_buy_sell_ratio=1.0,
             spot_volume=0, futures_volume=500,
-            futures_volume_1h=10000.0,
+            futures_ohlc_1h={"open": 60000.0, "high": 60000.0, "low": 60000.0, "close": 60000.0, "volume": 10000.0},
             long_liquidations=0, short_liquidations=0, exchange_count=1
         )
         bucket = TimeframeBucket.from_point(self.symbol, self.tf, p1, None)

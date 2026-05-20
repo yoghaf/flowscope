@@ -168,7 +168,8 @@ def test_flow_metrics_uses_oi_for_oi_and_volume_for_volume() -> None:
 
     metrics = store.build_flow_metrics("TESTUSDT", closed_timeframes=frozenset(), now=start + timedelta(hours=6))
 
-    assert metrics.oi_delta_15m == 100.0
+    import pytest
+    assert metrics.oi_change_15m == pytest.approx(100.0 / 12200.0)
     assert metrics.volume_change_15m != metrics.oi_change_15m
     assert metrics.long_short_ratio_level_15m != metrics.taker_buy_sell_ratio_level_15m
     assert metrics.funding_level_15m == previous.funding_rate_close

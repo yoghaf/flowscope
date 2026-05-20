@@ -71,6 +71,7 @@ DecisionType = Literal[
 
 
 class FlowMetrics(BaseModel):
+    model_config = {"extra": "allow"}
     data_valid: bool = True
     data_status_15m: DataStatus = "VALID"
     data_status_1h: DataStatus = "VALID"

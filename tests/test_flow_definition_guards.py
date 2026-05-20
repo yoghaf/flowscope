@@ -71,6 +71,7 @@ def bearish_flow_metrics(**overrides: float) -> FlowMetrics:
         "recent_low_15m": 0.95,
         "range_mid_15m": 0.985,
         "atr_15m": 0.005,
+        "oi_delta_reliable_15m": True,
     }
     values.update(overrides)
     return FlowMetrics(**values)

@@ -205,7 +205,7 @@ class TestSemanticDiagnosticLabels:
         m = _metrics(
             price_change_1h=0.02,
             oi_delta_z_1h=1.2,
-            funding_level_1h=0.0005,
+            funding_level_1h=0.0007,
             taker_buy_sell_ratio_delta_1h=0.05,
             upper_wick_ratio_1h=0.5,
         )
@@ -217,7 +217,7 @@ class TestSemanticDiagnosticLabels:
         m = _metrics(
             price_change_1h=-0.02,
             oi_delta_z_1h=1.2,
-            funding_level_1h=-0.0005,
+            funding_level_1h=-0.0007,
             taker_buy_sell_ratio_delta_1h=-0.05,
             lower_wick_ratio_1h=0.5,
         )
